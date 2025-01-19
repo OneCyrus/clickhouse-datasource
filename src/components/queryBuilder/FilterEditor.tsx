@@ -7,6 +7,7 @@ import labels from 'labels';
 import { styles } from 'styles';
 import { Datasource } from 'data/CHDatasource';
 import useUniqueMapKeys from 'hooks/useUniqueMapKeys';
+import useUniqueColumnValues from 'hooks/useUniqueColumnValues';
 
 const boolValues: Array<SelectableValue<boolean>> = [
   { value: true, label: 'True' },
@@ -101,12 +102,24 @@ export const FilterValueEditor = (props: {
   allColumns: readonly TableColumn[];
   filter: Filter;
   onFilterChange: (filter: Filter) => void;
+  datasource?: Datasource;
+  database?: string;
+  table?: string;
 }) => {
+
+  
+
   const { filter, onFilterChange, allColumns: fieldsList } = props;
   const getOptions = () => {
     const matchedFilter = fieldsList.find((f) => f.name === filter.key);
     return matchedFilter?.picklistValues || [];
   };
+  
+  let column = utils.isStringFilter(filter) ? filter.key : "";
+  // debugger;
+  let t = useUniqueColumnValues(props.datasource, column, props.database, props.table)
+  console.log(t);
+
   if (utils.isNullFilter(filter)) {
     return <></>;
   } else if ([FilterOperator.IsAnything, FilterOperator.IsEmpty, FilterOperator.IsNotEmpty].includes(filter.operator)) {
@@ -160,7 +173,7 @@ export const FilterValueEditor = (props: {
         </div>
       );
     }
-
+    
     return (
       <FilterValueSingleStringItem
         value={filter.value}
@@ -208,7 +221,7 @@ export const FilterEditor = (props: {
   if (filter.mapKey && !mapKeys.includes(filter.mapKey)) {
     mapKeyOptions.push({ label: filter.mapKey, value: filter.mapKey });
   }
-
+  
   const getFields = () => {
     const values = (filter.restrictToFields || fieldsList).map(f => {
       let label = f.label || f.name;
@@ -395,7 +408,7 @@ export const FilterEditor = (props: {
         onChange={(e) => onFilterOperatorChange(e.value!)}
         menuPlacement={'bottom'}
       />
-      <FilterValueEditor filter={filter} onFilterChange={onFilterValueChange} allColumns={fieldsList} />
+      <FilterValueEditor filter={filter} onFilterChange={onFilterValueChange} allColumns={fieldsList} datasource={props.datasource} database={props.database} table={props.table} />
       <Button
         data-testid="query-builder-filters-remove-button"
         icon="trash-alt"

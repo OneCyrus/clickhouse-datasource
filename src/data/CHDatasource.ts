@@ -531,6 +531,11 @@ export class Datasource
     return this.fetchData(rawSql);
   }
 
+  async fetchUniqueColumnValues(column: string, db: string, table: string): Promise<string[]> {
+    const rawSql = `SELECT DISTINCT ${column} as values FROM "${db}"."${table}" LIMIT 1000`;
+    return this.fetchData(rawSql);
+  }
+
   async fetchEntities() {
     return this.fetchTables();
   }
