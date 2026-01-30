@@ -1,20 +1,21 @@
 import {
-  ArrayDataFrame,
+  arrayToDataFrame,
   CoreApp,
   DataQueryRequest,
   DataQueryResponse,
   SupplementaryQueryType,
   TimeRange,
-  TypedVariableModel,
   toDataFrame,
+  TypedVariableModel,
 } from '@grafana/data';
-import { DataQuery } from '@grafana/schema';
-import { Observable, of } from 'rxjs';
 import { DataSourceWithBackend } from '@grafana/runtime';
+import { DataQuery } from '@grafana/schema';
 import { mockDatasource } from '__mocks__/datasource';
-import { CHBuilderQuery, CHQuery, CHSqlQuery, EditorType } from 'types/sql';
-import { ColumnHint, QueryType, BuilderMode, QueryBuilderOptions} from 'types/queryBuilder';
 import { cloneDeep } from 'lodash';
+import { Observable, of } from 'rxjs';
+import { BuilderMode, ColumnHint, QueryBuilderOptions, QueryType } from 'types/queryBuilder';
+import { CHBuilderQuery, CHQuery, CHSqlQuery, EditorType } from 'types/sql';
+import { AdHocFilter } from './adHocFilter';
 import { Datasource } from './CHDatasource';
 import * as logs from './logs';
 
@@ -100,13 +101,193 @@ describe('ClickHouseDatasource', () => {
       expect(spyOnGetVars).toHaveBeenCalled();
       expect(val).toEqual({ rawSql: `1=1`, editorType: EditorType.SQL });
     });
+
+    it('should apply ad-hoc filters correctly with template variables for table names', async () => {
+      // Setup the query with template variables for table names
+      const query = {
+        rawSql: 'SELECT * FROM ${database}.${table}',
+        editorType: EditorType.SQL,
+      } as CHQuery;
+
+      // Mock the ad-hoc filter
+      const adHocFilter = new AdHocFilter();
+
+      // The resolved table name after template variable substitution
+      const resolvedSql = 'SELECT * FROM test_db.test_table';
+
+      // The expected final SQL with ad-hoc filters applied
+      const sqlWithAdHocFilters = `SELECT * FROM test_db.test_table settings additional_table_filters={'test_db.test_table' : ' column = \\'value\\' '}`;
+
+      // Mock the template variable resolution
+      const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => resolvedSql);
+      const spyOnGetVars = jest.spyOn(templateSrvMock, 'getVariables').mockImplementation(() => []);
+
+      // Setup ad-hoc filters
+      const adHocFilters = [
+        { key: 'column', operator: '=', value: 'value' },
+        { key: 'column.nested', operator: '=', value: 'value2' }
+      ];
+
+      // Mock getAdhocFilters to return our test filters
+      jest.spyOn(templateSrvMock, 'getAdhocFilters').mockImplementation(() => adHocFilters);
+
+      // Mock adHocFilter.apply to return our expected modified SQL
+      const applyFilterSpy = jest.spyOn(adHocFilter, 'apply').mockImplementation(() => sqlWithAdHocFilters);
+
+      // Create datasource instance with our mocked ad-hoc filter
+      const ds = createInstance({});
+      ds.adHocFilter = adHocFilter;
+
+      // Resolve variables
+      const result = ds.applyTemplateVariables(query, {}, adHocFilters);
+
+      // Verify template variables were resolved before ad-hoc filters were applied
+      expect(spyOnReplace).toHaveBeenCalled();
+      expect(spyOnGetVars).toHaveBeenCalled();
+
+      // Verify that apply was called with the resolved SQL
+      expect(applyFilterSpy).toHaveBeenCalledWith(resolvedSql, adHocFilters, false);
+
+      // Verify that the final query contains the ad-hoc filters
+      expect(result.rawSql).toEqual(sqlWithAdHocFilters);
+    });
+
+    it('should apply ad-hoc filters correctly with JSON and template variables for table names', async () => {
+      // Setup the query with template variables for table names
+      const query = {
+        rawSql: 'SELECT * FROM ${database}.${table}',
+        editorType: EditorType.SQL,
+      } as CHQuery;
+
+      // Mock the ad-hoc filter
+      const adHocFilter = new AdHocFilter();
+
+      // The resolved table name after template variable substitution
+      const resolvedSql = 'SELECT * FROM test_db.test_table';
+
+      // The expected final SQL with ad-hoc filters applied
+      const sqlWithAdHocFilters = `SELECT * FROM test_db.test_table settings additional_table_filters={'test_db.test_table' : ' column = \\'value\\' '}`;
+
+      // Mock the template variable resolution
+      const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => resolvedSql);
+      const spyOnGetVars = jest.spyOn(templateSrvMock, 'getVariables').mockImplementation(() => [{name: 'clickhouse_adhoc_use_json'}]);
+
+      // Setup ad-hoc filters
+      const adHocFilters = [
+        { key: 'column', operator: '=', value: 'value' },
+        { key: 'column.nested', operator: '=', value: 'value2' }
+      ];
+
+      // Mock getAdhocFilters to return our test filters
+      jest.spyOn(templateSrvMock, 'getAdhocFilters').mockImplementation(() => adHocFilters);
+
+      // Mock adHocFilter.apply to return our expected modified SQL
+      const applyFilterSpy = jest.spyOn(adHocFilter, 'apply').mockImplementation(() => sqlWithAdHocFilters);
+
+      // Create datasource instance with our mocked ad-hoc filter
+      const ds = createInstance({});
+      ds.adHocFilter = adHocFilter;
+
+      // Resolve variables
+      const result = ds.applyTemplateVariables(query, {}, adHocFilters);
+
+      // Verify template variables were resolved before ad-hoc filters were applied
+      expect(spyOnReplace).toHaveBeenCalled();
+      expect(spyOnGetVars).toHaveBeenCalled();
+
+      // Verify that apply was called with the resolved SQL
+      expect(applyFilterSpy).toHaveBeenCalledWith(resolvedSql, adHocFilters, true);
+
+      // Verify that the final query contains the ad-hoc filters
+      expect(result.rawSql).toEqual(sqlWithAdHocFilters);
+    });
+
+
+    it('should expand $__adHocFilters macro with single quotes', async () => {
+      const query = {
+        rawSql: "SELECT * FROM complex_table settings $__adHocFilters('my_table')",
+        editorType: EditorType.SQL,
+      } as CHQuery;
+
+      const adHocFilters = [
+        { key: 'key', operator: '=', value: 'val' },
+        { key: 'keyNum', operator: '=', value: '123' },
+      ];
+
+      const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation((x) => x);
+      const spyOnGetVars = jest.spyOn(templateSrvMock, 'getVariables').mockImplementation(() => []);
+
+      const result = createInstance({}).applyTemplateVariables(query, {}, adHocFilters);
+
+      expect(spyOnReplace).toHaveBeenCalled();
+      expect(spyOnGetVars).toHaveBeenCalled();
+      expect(result.rawSql).toEqual(
+        "SELECT * FROM complex_table settings additional_table_filters={'my_table': ' key = \\'val\\' AND keyNum = \\'123\\' '}"
+      );
+    });
+
+    it('should expand $__adHocFilters macro with double quotes', async () => {
+      const query = {
+        rawSql: 'SELECT * FROM complex_table settings $__adHocFilters("my_table")',
+        editorType: EditorType.SQL,
+      } as CHQuery;
+
+      const adHocFilters = [{ key: 'key', operator: '=', value: 'val' }];
+
+      const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation((x) => x);
+      const spyOnGetVars = jest.spyOn(templateSrvMock, 'getVariables').mockImplementation(() => []);
+
+      const result = createInstance({}).applyTemplateVariables(query, {}, adHocFilters);
+
+      expect(spyOnReplace).toHaveBeenCalled();
+      expect(spyOnGetVars).toHaveBeenCalled();
+      expect(result.rawSql).toEqual(
+        "SELECT * FROM complex_table settings additional_table_filters={'my_table': ' key = \\'val\\' '}"
+      );
+    });
+
+    it('should expand $__adHocFilters macro to empty object when no filters are present', async () => {
+      const query = {
+        rawSql: "SELECT * FROM complex_table settings $__adHocFilters('my_table')",
+        editorType: EditorType.SQL,
+      } as CHQuery;
+
+      const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation((x) => x);
+      const spyOnGetVars = jest.spyOn(templateSrvMock, 'getVariables').mockImplementation(() => []);
+
+      const result = createInstance({}).applyTemplateVariables(query, {}, []);
+
+      expect(spyOnReplace).toHaveBeenCalled();
+      expect(spyOnGetVars).toHaveBeenCalled();
+      expect(result.rawSql).toEqual('SELECT * FROM complex_table settings additional_table_filters={}');
+    });
+
+    it('should handle $__adHocFilters macro with spaces', async () => {
+      const query = {
+        rawSql: "SELECT * FROM complex_table settings $__adHocFilters(  'my_table'  )",
+        editorType: EditorType.SQL,
+      } as CHQuery;
+
+      const adHocFilters = [{ key: 'key', operator: '=', value: 'val' }];
+
+      const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation((x) => x);
+      const spyOnGetVars = jest.spyOn(templateSrvMock, 'getVariables').mockImplementation(() => []);
+
+      const result = createInstance({}).applyTemplateVariables(query, {}, adHocFilters);
+
+      expect(spyOnReplace).toHaveBeenCalled();
+      expect(spyOnGetVars).toHaveBeenCalled();
+      expect(result.rawSql).toEqual(
+        "SELECT * FROM complex_table settings additional_table_filters={'my_table': ' key = \\'val\\' '}"
+      );
+    });
   });
 
   describe('Tag Keys', () => {
     it('should Fetch Default Tags When No Second AdHoc Variable', async () => {
       const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => '$clickhouse_adhoc_query');
       const ds = cloneDeep(mockDatasource);
-      const frame = new ArrayDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
+      const frame = arrayToDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
       jest.spyOn(ds, 'getDefaultDatabase').mockImplementation(() => undefined!); // Disable default DB
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
 
@@ -123,7 +304,7 @@ describe('ClickHouseDatasource', () => {
 
     it('should Fetch Tags With Default Database', async () => {
       const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => '$clickhouse_adhoc_query');
-      const frame = new ArrayDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
+      const frame = arrayToDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
       const ds = cloneDeep(mockDatasource);
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
 
@@ -140,7 +321,7 @@ describe('ClickHouseDatasource', () => {
 
     it('should Fetch Tags From Query', async () => {
       const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => 'select name from foo');
-      const frame = new ArrayDataFrame([{ name: 'foo' }]);
+      const frame = arrayToDataFrame([{ name: 'foo' }]);
       const ds = cloneDeep(mockDatasource);
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
 
@@ -156,7 +337,7 @@ describe('ClickHouseDatasource', () => {
     });
     it('returns no tags when CH version is less than 22.7 ', async () => {
       const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => 'select name from foo');
-      const frame = new ArrayDataFrame([{ version: '21.9.342' }]);
+      const frame = arrayToDataFrame([{ version: '21.9.342' }]);
       const ds = cloneDeep(mockDatasource);
       ds.adHocFiltersStatus = 2;
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
@@ -171,8 +352,8 @@ describe('ClickHouseDatasource', () => {
 
     it('returns tags when CH version is greater than 22.7 ', async () => {
       const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => 'select name from foo');
-      const frameVer = new ArrayDataFrame([{ version: '23.2.212' }]);
-      const frameData = new ArrayDataFrame([{ name: 'foo' }]);
+      const frameVer = arrayToDataFrame([{ version: '23.2.212' }]);
+      const frameData = arrayToDataFrame([{ name: 'foo' }]);
       const ds = cloneDeep(mockDatasource);
       ds.adHocFiltersStatus = 2;
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((request) => {
@@ -193,7 +374,7 @@ describe('ClickHouseDatasource', () => {
       const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => '$clickhouse_adhoc_query');
       const ds = cloneDeep(mockDatasource);
       ds.settings.jsonData.defaultDatabase = undefined;
-      const frame = new ArrayDataFrame([{ bar: 'foo' }]);
+      const frame = arrayToDataFrame([{ bar: 'foo' }]);
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
       const values = await ds.getTagValues({ key: 'foo.bar' });
       expect(spyOnReplace).toHaveBeenCalled();
@@ -209,7 +390,7 @@ describe('ClickHouseDatasource', () => {
     it('should Fetch Tag Values from Query', async () => {
       const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => 'select name from bar');
       const ds = cloneDeep(mockDatasource);
-      const frame = new ArrayDataFrame([{ name: 'foo' }]);
+      const frame = arrayToDataFrame([{ name: 'foo' }]);
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
       const values = await ds.getTagValues({ key: 'name' });
       expect(spyOnReplace).toHaveBeenCalled();
@@ -220,6 +401,132 @@ describe('ClickHouseDatasource', () => {
       );
 
       expect(values).toEqual([{ text: 'foo' }]);
+    });
+
+    it('should Fetch Tag Values from Schema with . in column name', async () => {
+      const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => '$clickhouse_adhoc_query');
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.defaultDatabase = undefined;
+      const frame = arrayToDataFrame([{ ['bar.fizz']: 'foo' }]);
+      const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+      const values = await ds.getTagValues({ key: 'foo.bar.fizz' });
+      expect(spyOnReplace).toHaveBeenCalled();
+      const expected = { rawSql: 'select distinct bar.fizz from foo limit 1000' };
+
+      expect(spyOnQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ targets: expect.arrayContaining([expect.objectContaining(expected)]) })
+      );
+
+      expect(values).toEqual([{ text: 'foo' }]);
+    });
+  });
+
+  describe('Hide Table Name In AdHoc Filters', () => {
+    it('should return only column names when hideTableNameInAdhocFilters is true', async () => {
+      jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => 'foo');
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.hideTableNameInAdhocFilters = true;
+      const frame = arrayToDataFrame([{ name: 'foo', type: 'String', table: 'table' }]);
+      jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+
+      const keys = await ds.getTagKeys();
+      expect(keys).toEqual([{ text: 'foo' }]);
+    });
+
+    it('should return table.column when hideTableNameInAdhocFilters is false', async () => {
+      jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => 'foo');
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.hideTableNameInAdhocFilters = false;
+      const frame = arrayToDataFrame([{ name: 'foo', type: 'String', table: 'table' }]);
+      jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+
+      const keys = await ds.getTagKeys();
+      expect(keys).toEqual([{ text: 'table.foo' }]);
+    });
+
+    it('should return table.column when hideTableNameInAdhocFilters is undefined (default)', async () => {
+      jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => 'foo');
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.hideTableNameInAdhocFilters = undefined;
+      const frame = arrayToDataFrame([{ name: 'foo', type: 'String', table: 'table' }]);
+      jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+
+      const keys = await ds.getTagKeys();
+      expect(keys).toEqual([{ text: 'table.foo' }]);
+    });
+
+    it('should fetch tag values with column name when hideTableNameInAdhocFilters is true', async () => {
+      const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => 'foo');
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.hideTableNameInAdhocFilters = true;
+      const frame = arrayToDataFrame([{ bar: 'value1' }, { bar: 'value2' }]);
+      const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+
+      const values = await ds.getTagValues({ key: 'bar' });
+      expect(spyOnReplace).toHaveBeenCalled();
+      const expected = { rawSql: 'select distinct bar from foo limit 1000' };
+
+      expect(spyOnQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ targets: expect.arrayContaining([expect.objectContaining(expected)]) })
+      );
+
+      expect(values).toEqual([{ text: 'value1' }, { text: 'value2' }]);
+    });
+
+    it('should fetch tag values with table.column format when hideTableNameInAdhocFilters is false', async () => {
+      const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => '$clickhouse_adhoc_query');
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.defaultDatabase = undefined;
+      ds.settings.jsonData.hideTableNameInAdhocFilters = false;
+      const frame = arrayToDataFrame([{ bar: 'value1' }, { bar: 'value2' }]);
+      const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+
+      const values = await ds.getTagValues({ key: 'foo.bar' });
+      expect(spyOnReplace).toHaveBeenCalled();
+      const expected = { rawSql: 'select distinct bar from foo limit 1000' };
+
+      expect(spyOnQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ targets: expect.arrayContaining([expect.objectContaining(expected)]) })
+      );
+
+      expect(values).toEqual([{ text: 'value1' }, { text: 'value2' }]);
+    });
+
+    it('should handle nested column names with dots when hideTableNameInAdhocFilters is true', async () => {
+      const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => 'foo');
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.hideTableNameInAdhocFilters = true;
+      const frame = arrayToDataFrame([{ 'nested.field': 'value1' }, { 'nested.field': 'value2' }]);
+      const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+
+      const values = await ds.getTagValues({ key: 'nested.field' });
+      expect(spyOnReplace).toHaveBeenCalled();
+      const expected = { rawSql: 'select distinct nested.field from foo limit 1000' };
+
+      expect(spyOnQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ targets: expect.arrayContaining([expect.objectContaining(expected)]) })
+      );
+
+      expect(values).toEqual([{ text: 'value1' }, { text: 'value2' }]);
+    });
+
+    it('should handle nested column names with dots when hideTableNameInAdhocFilters is false', async () => {
+      const spyOnReplace = jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => '$clickhouse_adhoc_query');
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.defaultDatabase = undefined;
+      ds.settings.jsonData.hideTableNameInAdhocFilters = false;
+      const frame = arrayToDataFrame([{ 'nested.field': 'value1' }, { 'nested.field': 'value2' }]);
+      const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+
+      const values = await ds.getTagValues({ key: 'foo.nested.field' });
+      expect(spyOnReplace).toHaveBeenCalled();
+      const expected = { rawSql: 'select distinct nested.field from foo limit 1000' };
+
+      expect(spyOnQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ targets: expect.arrayContaining([expect.objectContaining(expected)]) })
+      );
+
+      expect(values).toEqual([{ text: 'value1' }, { text: 'value2' }]);
     });
   });
 
@@ -249,10 +556,84 @@ describe('ClickHouseDatasource', () => {
     });
   });
 
+  describe.skip('fetchPathsForJSONColumns', () => {
+    it('sends a correct query when database and table names are provided', async () => {
+      const ds = cloneDeep(mockDatasource);
+      const frame = arrayToDataFrame([
+        JSON.stringify({ keys: 'a.b.c', values: ['Int64'] }),
+        JSON.stringify({ keys: 'a.b.d', values: ['String'] }),
+        JSON.stringify({ keys: 'a.b.e', values: ['Bool'] }),
+      ]);
+      const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+      await ds.fetchPathsForJSONColumns('db_name', 'table_name', 'jsonCol');
+      const expected = {
+        rawSql:
+          'SELECT arrayJoin(distinctJSONPathsAndTypes(jsonCol)) FROM "db_name"."table_name" SETTINGS max_execution_time=10',
+      };
+
+      expect(spyOnQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ targets: expect.arrayContaining([expect.objectContaining(expected)]) })
+      );
+    });
+
+    it('sends a correct query when only table name is provided', async () => {
+      const ds = cloneDeep(mockDatasource);
+      const frame = arrayToDataFrame([
+        JSON.stringify({ keys: 'a.b.c', values: ['Int64'] }),
+        JSON.stringify({ keys: 'a.b.d', values: ['String'] }),
+        JSON.stringify({ keys: 'a.b.e', values: ['Bool'] }),
+      ]);
+      const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+      await ds.fetchPathsForJSONColumns('', 'table_name', 'jsonCol');
+      const expected = {
+        rawSql: 'SELECT arrayJoin(distinctJSONPathsAndTypes(jsonCol)) FROM "table_name" SETTINGS max_execution_time=10',
+      };
+
+      expect(spyOnQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ targets: expect.arrayContaining([expect.objectContaining(expected)]) })
+      );
+    });
+
+    it('sends a correct query when table name contains a dot', async () => {
+      const ds = cloneDeep(mockDatasource);
+      const frame = arrayToDataFrame([
+        JSON.stringify({ keys: 'a.b.c', values: ['Int64'] }),
+        JSON.stringify({ keys: 'a.b.d', values: ['String'] }),
+        JSON.stringify({ keys: 'a.b.e', values: ['Bool'] }),
+      ]);
+      const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+      await ds.fetchPathsForJSONColumns('', 'table.name', 'jsonCol');
+      const expected = {
+        rawSql: 'SELECT arrayJoin(distinctJSONPathsAndTypes(jsonCol)) FROM "table.name" SETTINGS max_execution_time=10',
+      };
+
+      expect(spyOnQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ targets: expect.arrayContaining([expect.objectContaining(expected)]) })
+      );
+    });
+
+    it('returns correct json columns', async () => {
+      const ds = cloneDeep(mockDatasource);
+      const frame = arrayToDataFrame([
+        JSON.stringify({ keys: 'a.b.c', values: ['Int64'] }),
+        JSON.stringify({ keys: 'a.b.d', values: ['String'] }),
+        JSON.stringify({ keys: 'a.b.e', values: ['Bool'] }),
+      ]);
+      jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+
+      const jsonColumns = await ds.fetchPathsForJSONColumns('db_name', 'table_name', 'jsonCol');
+      expect(jsonColumns).toMatchObject([
+        { name: 'jsonCol.a.b.c', label: 'jsonCol.a.b.c', type: 'Int64', picklistValues: [] },
+        { name: 'jsonCol.a.b.d', label: 'jsonCol.a.b.d', type: 'String', picklistValues: [] },
+        { name: 'jsonCol.a.b.e', label: 'jsonCol.a.b.e', type: 'Bool', picklistValues: [] },
+      ]);
+    });
+  });
+
   describe('fetchColumnsFromTable', () => {
     it('sends a correct query when database and table names are provided', async () => {
       const ds = cloneDeep(mockDatasource);
-      const frame = new ArrayDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
+      const frame = arrayToDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
       await ds.fetchColumnsFromTable('db_name', 'table_name');
       const expected = { rawSql: 'DESC TABLE "db_name"."table_name"' };
@@ -264,7 +645,7 @@ describe('ClickHouseDatasource', () => {
 
     it('sends a correct query when only table name is provided', async () => {
       const ds = cloneDeep(mockDatasource);
-      const frame = new ArrayDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
+      const frame = arrayToDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
       await ds.fetchColumnsFromTable('', 'table_name');
       const expected = { rawSql: 'DESC TABLE "table_name"' };
@@ -276,7 +657,7 @@ describe('ClickHouseDatasource', () => {
 
     it('sends a correct query when table name contains a dot', async () => {
       const ds = cloneDeep(mockDatasource);
-      const frame = new ArrayDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
+      const frame = arrayToDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_) => of({ data: [frame] }));
 
       await ds.fetchColumnsFromTable('', 'table.name');
@@ -291,13 +672,13 @@ describe('ClickHouseDatasource', () => {
   describe('fetchColumnsFromAliasTable', () => {
     it('sends a correct query when full table name is provided', async () => {
       const ds = cloneDeep(mockDatasource);
-      const frame = new ArrayDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
+      const frame = arrayToDataFrame([{ name: 'foo', type: 'string', table: 'table' }]);
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
       await ds.fetchColumnsFromAliasTable('"db_name"."table_name"');
       const expected = { rawSql: 'SELECT alias, select, "type" FROM "db_name"."table_name"' };
 
       expect(spyOnQuery).toHaveBeenCalledWith(
-          expect.objectContaining({ targets: expect.arrayContaining([expect.objectContaining(expected)]) })
+        expect.objectContaining({ targets: expect.arrayContaining([expect.objectContaining(expected)]) })
       );
     });
   });
@@ -305,12 +686,14 @@ describe('ClickHouseDatasource', () => {
   describe('getAliasTable', () => {
     it('returns the matching table alias', async () => {
       const ds = cloneDeep(mockDatasource);
-      ds.settings.jsonData.aliasTables = [{
-        targetDatabase: 'db_name',
-        targetTable: 'table_name',
-        aliasDatabase: 'alias_db',
-        aliasTable: 'alias_table'
-      }];
+      ds.settings.jsonData.aliasTables = [
+        {
+          targetDatabase: 'db_name',
+          targetTable: 'table_name',
+          aliasDatabase: 'alias_db',
+          aliasTable: 'alias_table',
+        },
+      ];
       const result = ds.getAliasTable('db_name', 'table_name');
       const expected = '"alias_db"."alias_table"';
 
@@ -319,12 +702,14 @@ describe('ClickHouseDatasource', () => {
 
     it('returns null when no alias matches found', async () => {
       const ds = cloneDeep(mockDatasource);
-      ds.settings.jsonData.aliasTables = [{
-        targetDatabase: 'db_name',
-        targetTable: 'table_name',
-        aliasDatabase: 'alias_db',
-        aliasTable: 'alias_table'
-      }];
+      ds.settings.jsonData.aliasTables = [
+        {
+          targetDatabase: 'db_name',
+          targetTable: 'table_name',
+          aliasDatabase: 'alias_db',
+          aliasTable: 'alias_table',
+        },
+      ];
       const result = ds.getAliasTable('other_db', 'other_table');
       expect(result).toBeNull();
     });
@@ -366,7 +751,7 @@ describe('ClickHouseDatasource', () => {
         columns: [
           { name: 'created_at', hint: ColumnHint.Time },
           { name: 'level', hint: ColumnHint.LogLevel },
-        ]
+        ],
       },
     };
     const request: DataQueryRequest<CHQuery> = {
@@ -391,16 +776,52 @@ describe('ClickHouseDatasource', () => {
       datasource = cloneDeep(mockDatasource);
     });
 
+    describe('getSupportedSupplementaryQueryTypes', () => {
+      it('should return LogsVolume for empty dsRequest', async () => {
+        const result = datasource.getSupportedSupplementaryQueryTypes();
+        expect(result).toEqual([SupplementaryQueryType.LogsVolume]);
+      });
+
+      it('should return LogsVolume when all targets use Builder editor', async () => {
+        const dsRequest: DataQueryRequest<CHQuery> = {
+          ...request,
+          targets: [
+            {
+              ...query,
+              editorType: EditorType.Builder,
+            },
+          ],
+        };
+        const result = datasource.getSupportedSupplementaryQueryTypes(dsRequest);
+        expect(result).toEqual([SupplementaryQueryType.LogsVolume]);
+      });
+
+      it('should return empty array when any target uses SQL editor', async () => {
+        const dsRequest: DataQueryRequest<CHQuery> = {
+          ...request,
+          targets: [
+            {
+              ...query,
+              editorType: EditorType.SQL,
+              queryType: query.builderOptions.queryType,
+            },
+          ],
+        };
+        const result = datasource.getSupportedSupplementaryQueryTypes(dsRequest);
+        expect(result).toEqual([]);
+      });
+    });
+
     describe('getSupplementaryLogsVolumeQuery', () => {
       it('should return undefined if any of the conditions are not met', async () => {
-        [QueryType.Table, QueryType.TimeSeries, QueryType.Traces].forEach(queryType => {
+        [QueryType.Table, QueryType.TimeSeries, QueryType.Traces].forEach((queryType) => {
           expect(
             datasource.getSupplementaryLogsVolumeQuery(request, {
               ...query,
               builderOptions: {
                 ...query.builderOptions,
-                queryType
-              }
+                queryType,
+              },
             })
           ).toBeUndefined();
         });
@@ -410,7 +831,7 @@ describe('ClickHouseDatasource', () => {
               ...query,
               builderOptions: {
                 ...query.builderOptions,
-                mode
+                mode,
               },
             })
           ).toBeUndefined();
@@ -419,7 +840,7 @@ describe('ClickHouseDatasource', () => {
           datasource.getSupplementaryLogsVolumeQuery(request, {
             ...query,
             editorType: EditorType.SQL,
-            queryType: undefined
+            queryType: undefined,
           })
         ).toBeUndefined();
         expect(
@@ -445,7 +866,7 @@ describe('ClickHouseDatasource', () => {
             ...query,
             builderOptions: {
               ...query.builderOptions,
-              columns: query.builderOptions.columns?.filter(c => c.hint !== ColumnHint.Time)
+              columns: query.builderOptions.columns?.filter((c) => c.hint !== ColumnHint.Time),
             } as QueryBuilderOptions,
           })
         ).toBeUndefined();
@@ -459,7 +880,7 @@ describe('ClickHouseDatasource', () => {
           ...query,
           builderOptions: {
             ...query.builderOptions,
-            columns: query.builderOptions.columns?.filter(c => c.hint !== ColumnHint.LogLevel)
+            columns: query.builderOptions.columns?.filter((c) => c.hint !== ColumnHint.LogLevel),
           } as QueryBuilderOptions,
         });
         expect(result?.rawSql).toEqual(
@@ -546,6 +967,41 @@ describe('ClickHouseDatasource', () => {
           { range, targets: ['initialTarget'] }
         );
       });
+    });
+  });
+
+  describe('modifyQuery', () => {
+    const query: CHBuilderQuery = {
+      pluginVersion: '',
+      refId: 'A',
+      editorType: EditorType.Builder,
+      rawSql: '',
+      builderOptions: {
+        database: 'default',
+        table: 'logs',
+        queryType: QueryType.Logs,
+        mode: BuilderMode.List,
+        columns: [{ name: 'LogAttributes', hint: ColumnHint.LogLabels, type: 'Map(String, String)' }],
+      },
+    };
+
+    let datasource: Datasource;
+    beforeEach(() => {
+      datasource = cloneDeep(mockDatasource);
+    });
+
+    it('should set mapKey to columnName for Map type LogLabels', () => {
+      const frame = {
+        fields: [{ name: 'labels', values: { get: () => ({ service_name: 'value' }), length: 1 } }],
+      } as any;
+
+      const result = datasource.modifyQuery(query, {
+        type: 'ADD_FILTER',
+        options: { key: 'service_name', value: 'my-service' },
+        frame,
+      } as any);
+
+      expect((result as CHBuilderQuery).builderOptions.filters![0].mapKey).toBe('service_name');
     });
   });
 });

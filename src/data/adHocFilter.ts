@@ -1,3 +1,4 @@
+import { AdHocVariableFilter } from '@grafana/data';
 import { getTable } from './ast';
 
 export class AdHocFilter {
@@ -10,7 +11,33 @@ export class AdHocFilter {
     }
   }
 
-  apply(sql: string, adHocFilters: AdHocVariableFilter[]): string {
+  buildFilterString(adHocFilters: AdHocVariableFilter[], useJSON = false): string {
+    if (!adHocFilters || adHocFilters.length === 0) {
+      return '';
+    }
+
+    const validFilters = adHocFilters.filter((filter: AdHocVariableFilter) => {
+      const valid = isValid(filter);
+      if (!valid) {
+        console.warn('Invalid adhoc filter will be ignored:', filter);
+      }
+      return valid;
+    });
+
+    const filters = validFilters
+      .map((f, i) => {
+        const key = escapeKey(f.key, useJSON);
+        const value = escapeValueBasedOnOperator(f.value, f.operator);
+        const condition = i !== validFilters.length - 1 ? (f.condition ? f.condition : 'AND') : '';
+        const operator = convertOperatorToClickHouseOperator(f.operator);
+        return ` ${key} ${operator} ${value} ${condition}`;
+      })
+      .join('');
+
+    return filters;
+  }
+
+  apply(sql: string, adHocFilters: AdHocVariableFilter[], useJSON = false): string {
     if (sql === '' || !adHocFilters || adHocFilters.length === 0) {
       return sql;
     }
@@ -28,22 +55,7 @@ export class AdHocFilter {
       return sql;
     }
 
-    const filters = adHocFilters
-      .filter((filter: AdHocVariableFilter) => {
-        const valid = isValid(filter);
-        if (!valid) {
-          console.warn('Invalid adhoc filter will be ignored:', filter);
-        }
-        return valid;
-      })
-      .map((f, i) => {
-        const key = f.key.includes('.') ? f.key.split('.')[1] : f.key;
-        const value = escapeValueBasedOnOperator(f.value, f.operator);
-        const condition = i !== adHocFilters.length - 1 ? (f.condition ? f.condition : 'AND') : '';
-        const operator = convertOperatorToClickHouseOperator(f.operator);
-        return ` ${key} ${operator} ${value} ${condition}`;
-      })
-      .join('');
+    const filters = this.buildFilterString(adHocFilters, useJSON);
 
     if (filters === '') {
       return sql;
@@ -55,23 +67,46 @@ export class AdHocFilter {
 }
 
 function isValid(filter: AdHocVariableFilter): boolean {
-  return filter.key !== undefined && filter.operator !== undefined && filter.value !== undefined;
+  return filter.key !== undefined && filter.key !== '' && filter.operator !== undefined && filter.value !== undefined;
 }
 
-function escapeValueBasedOnOperator(s: string, operator: AdHocVariableFilterOperator): string {
+function escapeKey(s: string, isJSON = false): string {
+  if (['ResourceAttributes', 'ScopeAttributes', 'LogAttributes'].includes(s.split('.')[0])) {
+    if (isJSON) {
+      return s;
+    }
+
+    // Map syntax
+    const parts = s.split('.');
+    const prefix = parts.shift();
+
+    return `${prefix}[\\'${parts.join('.')}\\']`;
+  }
+
+  // Convert arrayElement syntax to bracket notation
+  if (s.startsWith('arrayElement(') && s.endsWith(')')) {
+    const match = s.match(/arrayElement\((.*?),\s*['"](.*?)['"]\)/);
+    if (match) {
+      const [_, array, key] = match;
+      return `${array}[\\'${key}\\']`;
+    }
+  }
+  return s.includes('.') ? s.split('.').slice(1).join('.') : s;
+}
+
+function escapeValueBasedOnOperator(s: string, operator: string): string {
   if (operator === 'IN') {
     // Allow list of values without parentheses
     if (s.length > 2 && s[0] !== '(' && s[s.length - 1] !== ')') {
-      s = `(${s})`
+      s = `(${s})`;
     }
-
     return s.replace(/'/g, "\\'");
   } else {
     return `\\'${s}\\'`;
   }
 }
 
-function convertOperatorToClickHouseOperator(operator: AdHocVariableFilterOperator): string {
+function convertOperatorToClickHouseOperator(operator: string): string {
   if (operator === '=~') {
     return 'ILIKE';
   }
@@ -80,12 +115,3 @@ function convertOperatorToClickHouseOperator(operator: AdHocVariableFilterOperat
   }
   return operator;
 }
-
-type AdHocVariableFilterOperator = '>' | '<' | '=' | '!=' | '=~' | '!~' | 'IN';
-
-export type AdHocVariableFilter = {
-  key: string;
-  operator: AdHocVariableFilterOperator;
-  value: string;
-  condition?: string;
-};

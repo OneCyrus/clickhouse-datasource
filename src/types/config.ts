@@ -1,4 +1,6 @@
 import { DataSourceJsonData, KeyValue } from '@grafana/data';
+import otel, { defaultLogsTable, defaultTraceTable } from 'otel';
+import { TimeUnit } from './queryBuilder';
 
 export interface CHConfig extends DataSourceJsonData {
   /**
@@ -21,7 +23,10 @@ export interface CHConfig extends DataSourceJsonData {
   defaultDatabase?: string;
   defaultTable?: string;
 
+  connMaxLifetime?: string;
   dialTimeout?: string;
+  maxIdleConns?: string;
+  maxOpenConns?: string;
   queryTimeout?: string;
   validateSql?: boolean;
 
@@ -32,9 +37,14 @@ export interface CHConfig extends DataSourceJsonData {
 
   httpHeaders?: CHHttpHeader[];
   forwardGrafanaHeaders?: boolean;
-  
+
   customSettings?: CHCustomSetting[];
   enableSecureSocksProxy?: boolean;
+  enableRowLimit?: boolean;
+
+  hideTableNameInAdhocFilters?: boolean;
+
+  pdcInjected?: boolean;
 }
 
 interface CHSecureConfigProperties {
@@ -56,7 +66,6 @@ export interface CHCustomSetting {
   setting: string;
   value: string;
 }
-
 
 export interface CHLogsConfig {
   defaultDatabase?: string;
@@ -90,6 +99,16 @@ export interface CHTracesConfig {
   startTimeColumn?: string;
   tagsColumn?: string;
   serviceTagsColumn?: string;
+  kindColumn?: string;
+  statusCodeColumn?: string;
+  statusMessageColumn?: string;
+  stateColumn?: string;
+  instrumentationLibraryNameColumn?: string;
+  instrumentationLibraryVersionColumn?: string;
+
+  flattenNested?: boolean;
+  traceEventsColumnPrefix?: string;
+  traceLinksColumnPrefix?: string;
 }
 
 export interface AliasTableEntry {
@@ -103,3 +122,17 @@ export enum Protocol {
   Native = 'native',
   Http = 'http',
 }
+
+export const defaultCHAdditionalSettingsConfig: Partial<CHConfig> = {
+  logs: {
+    defaultTable: defaultLogsTable,
+    otelVersion: otel.getLatestVersion().version,
+    selectContextColumns: true,
+    contextColumns: [],
+  },
+  traces: {
+    defaultTable: defaultTraceTable,
+    otelVersion: otel.getLatestVersion().version,
+    durationUnit: TimeUnit.Nanoseconds,
+  },
+};

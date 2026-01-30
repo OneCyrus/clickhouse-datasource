@@ -43,7 +43,7 @@ const CHEditorByType = (props: CHQueryEditorProps) => {
    * For example, selecting an entry from the query history will cause the local state to fall out of sync.
    * The "key" property is present on these historical entries.
    */
-  const queryKey = query.key || ''
+  const queryKey = query.key || '';
   const lastKey = useRef<string>(queryKey);
   if (queryKey !== lastKey.current && query.editorType === EditorType.Builder) {
     builderOptionsDispatch(setAllOptions((query as CHBuilderQuery).builderOptions || {}));
@@ -53,11 +53,11 @@ const CHEditorByType = (props: CHQueryEditorProps) => {
   /**
    * Sync builder options when switching from SQL Editor to Query Builder
    */
-  const lastEditorType = useRef<EditorType>();
+  const lastEditorType = useRef<EditorType | undefined>(undefined);
   if (query.editorType !== lastEditorType.current && query.editorType === EditorType.Builder) {
     builderOptionsDispatch(setAllOptions((query as CHBuilderQuery).builderOptions || {}));
-    lastEditorType.current = query.editorType;
   }
+  lastEditorType.current = query.editorType;
 
   // Prevent trying to run empty query on load
   const shouldSkipChanges = useRef<boolean>(true);
@@ -76,7 +76,7 @@ const CHEditorByType = (props: CHQueryEditorProps) => {
       editorType: EditorType.Builder,
       rawSql: generateSql(builderOptions),
       builderOptions,
-      format: mapQueryBuilderOptionsToGrafanaFormat(builderOptions)
+      format: mapQueryBuilderOptionsToGrafanaFormat(builderOptions),
     });
 
     // TODO: fix dependency warning with "useEffectEvent" once added to stable version of react

@@ -1,16 +1,22 @@
-import { ColumnHint, QueryBuilderOptions, QueryType } from "types/queryBuilder";
-import { columnLabelToPlaceholder, dataFrameHasLogLabelWithName, isBuilderOptionsRunnable, transformQueryResponseWithTraceAndLogLinks, tryApplyColumnHints } from "./utils";
-import { newMockDatasource } from "__mocks__/datasource";
-import { CoreApp, DataFrame, DataQueryRequest, DataQueryResponse, Field, FieldType } from "@grafana/data";
-import { CHBuilderQuery, CHQuery, EditorType } from "types/sql";
-import { logColumnHintsToAlias } from "./sqlGenerator";
+import { ColumnHint, QueryBuilderOptions, QueryType } from 'types/queryBuilder';
+import {
+  columnLabelToPlaceholder,
+  dataFrameHasLogLabelWithName,
+  isBuilderOptionsRunnable,
+  transformQueryResponseWithTraceAndLogLinks,
+  tryApplyColumnHints,
+} from './utils';
+import { newMockDatasource } from '__mocks__/datasource';
+import { CoreApp, DataFrame, DataQueryRequest, DataQueryResponse, Field, FieldType } from '@grafana/data';
+import { CHBuilderQuery, CHQuery, EditorType } from 'types/sql';
+import { logColumnHintsToAlias } from './sqlGenerator';
 
 describe('isBuilderOptionsRunnable', () => {
   it('should return false for empty builder options', () => {
     const opts: QueryBuilderOptions = {
       database: 'default',
       table: 'test',
-      queryType: QueryType.Table
+      queryType: QueryType.Table,
     };
 
     const runnable = isBuilderOptionsRunnable(opts);
@@ -22,9 +28,7 @@ describe('isBuilderOptionsRunnable', () => {
       database: 'default',
       table: 'test',
       queryType: QueryType.Table,
-      columns: [
-        { name: 'valid_column' }
-      ]
+      columns: [{ name: 'valid_column' }],
     };
 
     const runnable = isBuilderOptionsRunnable(opts);
@@ -58,9 +62,7 @@ describe('tryApplyColumnHints', () => {
   });
 
   it('does not apply hints to column with existing hint', () => {
-    const columns = [
-      { name: 'time', alias: undefined, hint: ColumnHint.TraceServiceName },
-    ];
+    const columns = [{ name: 'time', alias: undefined, hint: ColumnHint.TraceServiceName }];
 
     tryApplyColumnHints(columns);
 
@@ -73,8 +75,8 @@ describe('tryApplyColumnHints', () => {
       { name: 'LogLevel', alias: undefined, hint: undefined },
     ];
     const hintMap: Map<ColumnHint, string> = new Map([
-      [ColumnHint.Time, "super_custom_timestamp"],
-      [ColumnHint.LogLevel, "LogLevel"]
+      [ColumnHint.Time, 'super_custom_timestamp'],
+      [ColumnHint.LogLevel, 'LogLevel'],
     ]);
 
     tryApplyColumnHints(columns, hintMap);
@@ -89,8 +91,8 @@ describe('tryApplyColumnHints', () => {
       { name: 'other name', alias: 'LogLevel', hint: undefined },
     ];
     const hintMap: Map<ColumnHint, string> = new Map([
-      [ColumnHint.Time, "super_custom_timestamp"],
-      [ColumnHint.LogLevel, "LogLevel"]
+      [ColumnHint.Time, 'super_custom_timestamp'],
+      [ColumnHint.LogLevel, 'LogLevel'],
     ]);
 
     tryApplyColumnHints(columns, hintMap);
@@ -109,7 +111,9 @@ describe('columnLabelToPlaceholder', () => {
 });
 
 describe('transformQueryResponseWithTraceAndLogLinks', () => {
-  const buildTestRequestResponse = (builderOptions: Partial<QueryBuilderOptions>): [DataQueryRequest<CHQuery>, DataQueryResponse] => {
+  const buildTestRequestResponse = (
+    builderOptions: Partial<QueryBuilderOptions>
+  ): [DataQueryRequest<CHQuery>, DataQueryResponse] => {
     const inputQuery: CHBuilderQuery = {
       refId: 'A',
       editorType: EditorType.Builder,
@@ -117,10 +121,10 @@ describe('transformQueryResponseWithTraceAndLogLinks', () => {
         database: '',
         table: '',
         queryType: QueryType.Traces,
-        ...builderOptions
+        ...builderOptions,
       },
       pluginVersion: '',
-      rawSql: ''
+      rawSql: '',
     };
 
     const request: DataQueryRequest<CHQuery> = {
@@ -132,20 +136,22 @@ describe('transformQueryResponseWithTraceAndLogLinks', () => {
       targets: [inputQuery],
       timezone: '',
       app: CoreApp.Explore,
-      startTime: 0
+      startTime: 0,
     };
 
     const field: Field = {
       name: 'traceID',
       type: FieldType.string,
       config: {},
-      values: []
-    }
-    const data: DataFrame[] = [{
-      fields: [field],
-      length: 1,
-      refId: 'A'
-    }];
+      values: [],
+    };
+    const data: DataFrame[] = [
+      {
+        fields: [field],
+        length: 1,
+        refId: 'A',
+      },
+    ];
     const response: DataQueryResponse = { data };
 
     return [request, response];
@@ -162,7 +168,7 @@ describe('transformQueryResponseWithTraceAndLogLinks', () => {
 
     const builderOptions: Partial<QueryBuilderOptions> = {
       queryType: QueryType.Traces,
-      columns: [{ name: 'a' }]
+      columns: [{ name: 'a' }],
     };
 
     const [request, response] = buildTestRequestResponse(builderOptions);
@@ -187,11 +193,13 @@ describe('transformQueryResponseWithTraceAndLogLinks', () => {
     const getDefaultLogsDatabase = jest.spyOn(mockDatasource, 'getDefaultLogsDatabase');
     const getDefaultLogsTable = jest.spyOn(mockDatasource, 'getDefaultLogsTable');
     const getDefaultLogsColumns = jest.spyOn(mockDatasource, 'getDefaultLogsColumns');
+    const getDefaultTraceEventsColumnPrefix = jest.spyOn(mockDatasource, 'getDefaultTraceEventsColumnPrefix');
+    const getDefaultTraceLinksColumnPrefix = jest.spyOn(mockDatasource, 'getDefaultTraceLinksColumnPrefix');
 
     const builderOptions: Partial<QueryBuilderOptions> = {
-      queryType: QueryType.Logs
+      queryType: QueryType.Logs,
     };
-    
+
     const [request, response] = buildTestRequestResponse(builderOptions);
     const out = transformQueryResponseWithTraceAndLogLinks(mockDatasource, request, response);
 
@@ -203,10 +211,48 @@ describe('transformQueryResponseWithTraceAndLogLinks', () => {
     expect(getDefaultTraceColumns).toHaveBeenCalled();
     expect(getDefaultLogsDatabase).not.toHaveBeenCalled();
     expect(getDefaultLogsTable).not.toHaveBeenCalled();
-    expect(getDefaultLogsColumns).not.toHaveBeenCalled();
+    // getDefaultLogsColumns is now called to get traceIdColumnName for correlation
+    expect(getDefaultLogsColumns).toHaveBeenCalled();
+    expect(getDefaultTraceEventsColumnPrefix).toHaveBeenCalled();
+    expect(getDefaultTraceLinksColumnPrefix).toHaveBeenCalled();
+  });
+
+  it('includes TraceId filter in View logs link query using configured column', async () => {
+    const mockDatasource = newMockDatasource();
+    // Mock that TraceId is configured
+    jest.spyOn(mockDatasource, 'getDefaultLogsColumns').mockReturnValue(
+      new Map([[ColumnHint.TraceId, 'TraceId']])
+    );
+
+    const builderOptions: Partial<QueryBuilderOptions> = {
+      queryType: QueryType.Traces,
+      columns: [{ name: 'a' }],
+    };
+
+    const [request, response] = buildTestRequestResponse(builderOptions);
+    const out = transformQueryResponseWithTraceAndLogLinks(mockDatasource, request, response);
+
+    const links = out?.data[0]?.fields[0]?.config?.links;
+    const viewLogsLink = links?.find((link: any) => link.title === 'View logs');
+
+    const logsQuery = viewLogsLink?.internal?.query as CHBuilderQuery;
+    expect(logsQuery.builderOptions.columns).toBeDefined();
+
+    // TraceId column should be in the columns array
+    const traceIdColumn = logsQuery.builderOptions.columns?.find(
+      (c) => c.hint === ColumnHint.TraceId
+    );
+    expect(traceIdColumn).toBeDefined();
+    expect(traceIdColumn?.name).toBe('TraceId');
+
+    // Filter should have the TraceId hint and column name as key
+    const traceIdFilter = logsQuery.builderOptions.filters?.find(
+      (f) => (f as any).hint === ColumnHint.TraceId
+    ) as any;
+    expect(traceIdFilter).toBeDefined();
+    expect(traceIdFilter.key).toBe('TraceId');
   });
 });
-
 
 describe('dataFrameHasLogLabelWithName', () => {
   const logLabelsFieldName = logColumnHintsToAlias.get(ColumnHint.LogLabels);

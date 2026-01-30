@@ -1,9 +1,18 @@
-import { CoreApp, DataFrame, DataQueryRequest, DataQueryResponse } from "@grafana/data";
-import { ColumnHint, FilterOperator, OrderByDirection, QueryBuilderOptions, QueryType, SelectedColumn, StringFilter } from "types/queryBuilder"
-import { CHBuilderQuery, CHQuery, EditorType } from "types/sql";
-import { Datasource } from "./CHDatasource";
-import { pluginVersion } from "utils/version";
-import { logColumnHintsToAlias } from "./sqlGenerator";
+import { CoreApp, DataFrame, DataQueryRequest, DataQueryResponse } from '@grafana/data';
+import {
+  ColumnHint,
+  FilterOperator,
+  OrderByDirection,
+  QueryBuilderOptions,
+  QueryType,
+  SelectedColumn,
+  StringFilter,
+} from 'types/queryBuilder';
+import { CHBuilderQuery, CHQuery, EditorType } from 'types/sql';
+import { Datasource } from './CHDatasource';
+import { pluginVersion } from 'utils/version';
+import { logColumnHintsToAlias, generateSql } from './sqlGenerator';
+import otel from 'otel';
 
 /**
  * Returns true if the builder options contain enough information to start showing a query
@@ -116,20 +125,31 @@ export const columnLabelToPlaceholder = (label: string) => label.toLowerCase().r
  * Mutates the DataQueryResponse to include trace/log links on the traceID field.
  * The link will open a second query editor in split view
  * on the explore page with the selected trace ID.
- * 
+ *
  * Requires defaults to be configured when crossing query types.
  */
-export const transformQueryResponseWithTraceAndLogLinks = (datasource: Datasource, req: DataQueryRequest<CHQuery>, res: DataQueryResponse): DataQueryResponse => {
+export const transformQueryResponseWithTraceAndLogLinks = (
+  datasource: Datasource,
+  req: DataQueryRequest<CHQuery>,
+  res: DataQueryResponse
+): DataQueryResponse => {
   res.data.forEach((frame: DataFrame) => {
-    const originalQuery = req.targets.find(t => t.refId === frame.refId) as CHBuilderQuery;
+    const originalQuery = req.targets.find((t) => t.refId === frame.refId) as CHBuilderQuery;
     if (!originalQuery) {
       return;
     }
 
-    const traceField = frame.fields.find(field => field.name.toLowerCase() === 'traceid' || field.name.toLowerCase() === 'trace_id');
+    const traceField = frame.fields.find(
+      (field) => field.name.toLowerCase() === 'traceid' || field.name.toLowerCase() === 'trace_id'
+    );
     if (!traceField) {
       return;
     }
+
+    // Get the configured TraceId column name for use in both trace and logs queries
+    const defaultLogsColumns = datasource.getDefaultLogsColumns();
+    // Use traces config traceIdColumn if available, otherwise fallback to logs default
+    const traceIdColumnName = datasource.getTracesTraceIdColumn() || defaultLogsColumns.get(ColumnHint.TraceId) || 'TraceId';
 
     const traceIdQuery: CHBuilderQuery = {
       datasource: datasource,
@@ -143,10 +163,13 @@ export const transformQueryResponseWithTraceAndLogLinks = (datasource: Datasourc
       rawSql: '',
       builderOptions: {} as QueryBuilderOptions,
       pluginVersion,
-      refId: 'Trace ID'
+      refId: 'Trace ID',
     };
 
-    if (originalQuery.editorType === EditorType.Builder && originalQuery.builderOptions.queryType === QueryType.Traces) {
+    if (
+      originalQuery.editorType === EditorType.Builder &&
+      originalQuery.builderOptions.queryType === QueryType.Traces
+    ) {
       // Copy fields directly from trace search
 
       traceIdQuery.builderOptions = {
@@ -157,15 +180,21 @@ export const transformQueryResponseWithTraceAndLogLinks = (datasource: Datasourc
           ...originalQuery.builderOptions.meta,
           minimized: true,
           isTraceIdMode: true,
-          traceId: '${__value.raw}'
-        }
+          traceId: '${__value.raw}',
+        },
       };
     } else {
       // Create new query based on trace defaults
 
       const otelVersion = datasource.getTraceOtelVersion();
+      const otelConfig = otel.getVersion(otelVersion);
+      const traceEventsColumnPrefix = datasource.getDefaultTraceEventsColumnPrefix();
+      const traceLinksColumnPrefix = datasource.getDefaultTraceLinksColumnPrefix();
       const options: QueryBuilderOptions = {
-        database: datasource.getDefaultTraceDatabase() || traceIdQuery.builderOptions.database || datasource.getDefaultDatabase(),
+        database:
+          datasource.getDefaultTraceDatabase() ||
+          traceIdQuery.builderOptions.database ||
+          datasource.getDefaultDatabase(),
         table: datasource.getDefaultTraceTable() || datasource.getDefaultTable() || traceIdQuery.builderOptions.table,
         queryType: QueryType.Traces,
         columns: [],
@@ -178,12 +207,18 @@ export const transformQueryResponseWithTraceAndLogLinks = (datasource: Datasourc
           traceDurationUnit: datasource.getDefaultTraceDurationUnit(),
           otelEnabled: Boolean(otelVersion),
           otelVersion: otelVersion,
-        }
+          traceEventsColumnPrefix: traceEventsColumnPrefix,
+          traceLinksColumnPrefix: traceLinksColumnPrefix,
+        },
       };
 
-      const defaultColumns = datasource.getDefaultTraceColumns();
-      for (let [hint, colName] of defaultColumns) {
-        options.columns!.push({ name: colName, hint });
+      if (otelConfig?.traceColumnMap) {
+        options.columns = Array.from(otelConfig.traceColumnMap, ([hint, name]) => ({ name, hint }));
+      } else {
+        const defaultColumns = datasource.getDefaultTraceColumns();
+        for (let [hint, colName] of defaultColumns) {
+          options.columns!.push({ name: colName, hint });
+        }
       }
 
       traceIdQuery.builderOptions = options;
@@ -195,7 +230,7 @@ export const transformQueryResponseWithTraceAndLogLinks = (datasource: Datasourc
       rawSql: '',
       builderOptions: {} as QueryBuilderOptions,
       pluginVersion,
-      refId: 'Trace Logs'
+      refId: 'Trace Logs',
     };
 
     if (originalQuery.editorType === EditorType.Builder && originalQuery.builderOptions.queryType === QueryType.Logs) {
@@ -207,24 +242,27 @@ export const transformQueryResponseWithTraceAndLogLinks = (datasource: Datasourc
             type: 'string',
             operator: FilterOperator.Equals,
             filterType: 'custom',
-            key: '',
+            key: traceIdColumnName,
             hint: ColumnHint.TraceId,
             condition: 'AND',
-            value: '${__value.raw}'
-          } as StringFilter
+            value: '${__value.raw}',
+          } as StringFilter,
         ],
         orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC }],
         meta: {
           ...originalQuery.builderOptions.meta,
           minimized: true,
-        }
+        },
       };
     } else {
       // Create new query based on log defaults
 
       const otelVersion = datasource.getLogsOtelVersion();
       const options: QueryBuilderOptions = {
-        database: datasource.getDefaultLogsDatabase() || traceLogsQuery.builderOptions.database || datasource.getDefaultDatabase(),
+        database:
+          datasource.getDefaultLogsDatabase() ||
+          traceLogsQuery.builderOptions.database ||
+          datasource.getDefaultDatabase(),
         table: datasource.getDefaultLogsTable() || datasource.getDefaultTable() || traceLogsQuery.builderOptions.table,
         queryType: QueryType.Logs,
         columns: [],
@@ -234,28 +272,38 @@ export const transformQueryResponseWithTraceAndLogLinks = (datasource: Datasourc
             type: 'string',
             operator: FilterOperator.Equals,
             filterType: 'custom',
-            key: '',
+            key: traceIdColumnName,
             hint: ColumnHint.TraceId,
             condition: 'AND',
-            value: '${__value.raw}'
-          } as StringFilter
+            value: '${__value.raw}',
+          } as StringFilter,
         ],
         meta: {
           minimized: true,
           otelEnabled: Boolean(otelVersion),
           otelVersion: otelVersion,
-        }
+        },
       };
 
-      const defaultColumns = datasource.getDefaultLogsColumns();
-      for (let [hint, colName] of defaultColumns) {
+      for (let [hint, colName] of defaultLogsColumns) {
         options.columns!.push({ name: colName, hint });
+      }
+
+      // Ensure TraceId column is in the array so filter can find it via hint lookup
+      if (!options.columns!.find((c) => c.hint === ColumnHint.TraceId)) {
+        options.columns!.push({ name: traceIdColumnName, hint: ColumnHint.TraceId });
       }
 
       traceLogsQuery.builderOptions = options;
     }
 
+    // Generate rawSql for Dashboard mode to preserve query through serialization
     const openInNewWindow = req.app !== CoreApp.Explore;
+    if (openInNewWindow) {
+      traceLogsQuery.rawSql = generateSql(traceLogsQuery.builderOptions || {});
+    } else {
+      traceLogsQuery.rawSql = '';
+    }
     traceField.config.links = [];
     traceField.config.links!.push({
       title: 'View trace',
@@ -267,10 +315,10 @@ export const transformQueryResponseWithTraceAndLogLinks = (datasource: Datasourc
         datasourceName: traceIdQuery.datasource?.type!,
         panelsState: {
           trace: {
-            spanId: '${__value.raw}'
-          }
-        }
-      }
+            spanId: '${__value.raw}',
+          },
+        },
+      },
     });
     traceField.config.links!.push({
       title: 'View logs',
@@ -280,17 +328,16 @@ export const transformQueryResponseWithTraceAndLogLinks = (datasource: Datasourc
         query: traceLogsQuery,
         datasourceUid: traceLogsQuery.datasource?.uid!,
         datasourceName: traceLogsQuery.datasource?.type!,
-      }
-    }); 
+      },
+    });
   });
 
   return res;
 };
 
-
 /**
  * Returns true if the dataframe contains a log label that matches the provided name.
- * 
+ *
  * This function exists for the logs panel, when clicking "filter for value" on a single log row.
  * A dataframe will be provided for that single row, and we need to check the labels object to see if it
  * contains a field with that name. If it does then we can create a filter using the labels column hint.
@@ -301,7 +348,7 @@ export const dataFrameHasLogLabelWithName = (frame: DataFrame | undefined, name:
   }
 
   const logLabelsFieldName = logColumnHintsToAlias.get(ColumnHint.LogLabels);
-  const field = frame.fields.find(f => f.name === logLabelsFieldName);
+  const field = frame.fields.find((f) => f.name === logLabelsFieldName);
   if (!field || !field.values || field.values.length < 1 || !field.values.get(0)) {
     return false;
   }
@@ -310,4 +357,4 @@ export const dataFrameHasLogLabelWithName = (frame: DataFrame | undefined, name:
   const labelKeys = Object.keys(labels);
 
   return labelKeys.includes(name);
-}
+};

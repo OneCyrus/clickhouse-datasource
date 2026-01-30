@@ -23,7 +23,7 @@ export interface QueryBuilderOptions {
   database: string;
   table: string;
   queryType: QueryType;
-  
+
   mode?: BuilderMode; // TODO: no longer required?
 
   columns?: SelectedColumn[];
@@ -39,7 +39,7 @@ export interface QueryBuilderOptions {
   meta?: {
     /**
      * When enabled, will hide most/all of the query builder options.
-     * 
+     *
      * Intended to be used for trace ID lookups where we only care to show the visualization panel
      */
     minimized?: boolean;
@@ -56,10 +56,18 @@ export interface QueryBuilderOptions {
     isTraceIdMode?: boolean;
     traceId?: string;
 
+    /**
+     * True if "Nested" column types should be treated as if they
+     * were created with flatten_nested=1. Applies to trace Events and Links columns.
+     */
+    flattenNested?: boolean;
+    traceEventsColumnPrefix?: string;
+    traceLinksColumnPrefix?: string;
+
     // Logs & Traces
     otelEnabled?: boolean;
     otelVersion?: string;
-  }
+  };
 }
 
 export enum AggregateType {
@@ -76,7 +84,7 @@ export type AggregateColumn = {
   aggregateType: AggregateType;
   column: string;
   alias?: string;
-}
+};
 
 export interface Field {
   name: string;
@@ -112,6 +120,20 @@ export interface TableColumn {
   aggregatable?: boolean;
 }
 
+export interface SqlFunction {
+  name: string;
+  isAggregate: boolean;
+  caseInsensitive: boolean;
+  aliasTo: string;
+  origin: string;
+  description: string;
+  syntax: string;
+  arguments: string;
+  returnedValue: string;
+  examples: string;
+  categories: string;
+}
+
 /**
  * Some columns are used to enable certain features.
  * This enum defines the different use cases that a column may be used for in the query generator.
@@ -133,6 +155,11 @@ export enum ColumnHint {
   TraceTags = 'trace_tags',
   TraceServiceTags = 'trace_service_tags',
   TraceStatusCode = 'trace_status_code',
+  TraceKind = 'trace_kind',
+  TraceStatusMessage = 'trace_status_message',
+  TraceInstrumentationLibraryName = 'instrumentation_library_name',
+  TraceInstrumentationLibraryVersion = 'instrumentation_library_version',
+  TraceState = 'trace_state',
 }
 
 /**
@@ -225,7 +252,7 @@ export interface CommonFilterProps {
   /**
    * If provided, SQL generator will ignore "key" and instead
    * find the intended column by the hint.
-   * 
+   *
    * Note that the column MUST be present in the selected columns array in order
    * for the filter to be applied unless key is also provided.
    */

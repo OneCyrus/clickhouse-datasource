@@ -1,4 +1,4 @@
-import { ColumnHint } from "types/queryBuilder";
+import { ColumnHint } from 'types/queryBuilder';
 
 export default {
   components: {
@@ -8,7 +8,7 @@ export default {
           label: 'Server address',
           placeholder: 'Server address',
           tooltip: 'ClickHouse host address',
-          error: 'Server address required'
+          error: 'Server address required',
         },
         serverPort: {
           label: 'Server port',
@@ -17,12 +17,12 @@ export default {
           secureNativePort: '9440',
           secureHttpPort: '8443',
           tooltip: 'ClickHouse server port',
-          error: 'Port is required'
+          error: 'Port is required',
         },
         path: {
           label: 'HTTP URL Path',
           tooltip: 'Additional URL path for HTTP requests',
-          placeholder: 'additional-path'
+          placeholder: 'additional-path',
         },
         protocol: {
           label: 'Protocol',
@@ -70,6 +70,18 @@ export default {
           label: 'Enable Secure Socks Proxy',
           tooltip: 'Enable proxying the datasource connection through the secure socks proxy to a different network.',
         },
+        enableRowLimit: {
+          label: 'Enable row limit',
+          testid: 'data-testid enable-row-limit-switch',
+          tooltip:
+            'Enable using the Grafana row limit setting to limit the number of rows returned from Clickhouse. Ensure the appropriate permissions are set for your user. Only supported for Grafana >= 11.0.0. Defaults to false.',
+        },
+        hideTableNameInAdhocFilters: {
+          label: 'Hide table name in ad hoc filters',
+          testid: 'data-testid hide-table-name-in-adhoc-filters-switch',
+          tooltip:
+            'Show only column names in ad hoc filter keys instead of the full "table.column" format. This simplifies the filter interface when working with schemas that have many tables. Defaults to false.',
+        },
       },
       HttpHeadersConfig: {
         title: 'HTTP Headers',
@@ -88,7 +100,11 @@ export default {
       },
       AliasTableConfig: {
         title: 'Column Alias Tables',
-        descriptionParts: ['Provide alias tables with a', '(`alias` String, `select` String, `type` String)', 'schema to use as a source for column selection.'],
+        descriptionParts: [
+          'Provide alias tables with a',
+          '(`alias` String, `select` String, `type` String)',
+          'schema to use as a source for column selection.',
+        ],
         addTableLabel: 'Add Table',
         targetDatabaseLabel: 'Target Database',
         targetDatabasePlaceholder: '(optional)',
@@ -104,33 +120,51 @@ export default {
           label: 'Default database',
           description: 'the default database used by the query builder',
           name: 'defaultDatabase',
-          placeholder: 'default'
+          placeholder: 'default',
         },
         table: {
           label: 'Default table',
           description: 'the default table used by the query builder',
           name: 'defaultTable',
-          placeholder: 'table'
+          placeholder: 'table',
         },
       },
       QuerySettingsConfig: {
         title: 'Query settings',
+        connMaxLifetime: {
+          label: 'Connection Max Lifetime (minutes)',
+          name: 'connMaxLifetime',
+          placeholder: '5',
+          tooltip: 'Maximum lifetime of a connection in minutes',
+        },
         dialTimeout: {
           label: 'Dial Timeout (seconds)',
-          tooltip: 'Timeout in seconds for connection',
           name: 'dialTimeout',
           placeholder: '10',
+          tooltip: 'Timeout in seconds for connection',
+        },
+        maxIdleConns: {
+          label: 'Max Idle Connections',
+          name: 'maxIdleConns',
+          placeholder: '25',
+          tooltip: 'Maximum number of idle connections',
+        },
+        maxOpenConns: {
+          label: 'Max Open Connections',
+          name: 'maxOpenConns',
+          placeholder: '50',
+          tooltip: 'Maximum number of open connections',
         },
         queryTimeout: {
           label: 'Query Timeout (seconds)',
-          tooltip: 'Timeout in seconds for read queries',
           name: 'queryTimeout',
           placeholder: '60',
+          tooltip: 'Timeout in seconds for read queries',
         },
         validateSql: {
           label: 'Validate SQL',
           tooltip: 'Validate SQL in the editor.',
-        }
+        },
       },
       TracesConfig: {
         title: 'Traces configuration',
@@ -139,54 +173,90 @@ export default {
           label: 'Default trace database',
           description: 'the default database used by the trace query builder',
           name: 'defaultDatabase',
-          placeholder: 'default'
+          placeholder: 'default',
         },
         defaultTable: {
           label: 'Default trace table',
           description: 'the default table used by the trace query builder',
-          name: 'defaultTable'
+          name: 'defaultTable',
         },
         columns: {
-         title: 'Default columns',
-         description: 'Default columns for trace queries. Leave empty to disable.',
-         
-         traceId: {
-          label: 'Trace ID column',
-          tooltip: 'Column for the trace ID'
+          title: 'Default columns',
+          description: 'Default columns for trace queries. Leave empty to disable.',
+
+          traceId: {
+            label: 'Trace ID column',
+            tooltip: 'Column for the trace ID',
           },
           spanId: {
             label: 'Span ID column',
-            tooltip: 'Column for the span ID'
+            tooltip: 'Column for the span ID',
           },
           parentSpanId: {
             label: 'Parent Span ID column',
-            tooltip: 'Column for the parent span ID'
+            tooltip: 'Column for the parent span ID',
           },
           serviceName: {
             label: 'Service Name column',
-            tooltip: 'Column for the service name'
+            tooltip: 'Column for the service name',
           },
           operationName: {
             label: 'Operation Name column',
-            tooltip: 'Column for the operation name'
+            tooltip: 'Column for the operation name',
           },
           startTime: {
             label: 'Start Time column',
-            tooltip: 'Column for the start time'
+            tooltip: 'Column for the start time',
           },
           durationTime: {
             label: 'Duration Time column',
-            tooltip: 'Column for the duration time'
+            tooltip: 'Column for the duration time',
           },
           tags: {
             label: 'Tags column',
-            tooltip: 'Column for the trace tags'
+            tooltip: 'Column for the trace tags',
           },
           serviceTags: {
             label: 'Service Tags column',
-            tooltip: 'Column for the service tags'
-          }
-        }
+            tooltip: 'Column for the service tags',
+          },
+          flattenNested: {
+            label: 'Use Flatten Nested',
+            tooltip: 'Enable if your traces table was created with flatten_nested=1',
+          },
+          eventsPrefix: {
+            label: 'Events prefix',
+            tooltip: 'Prefix for the events column (Events.Timestamp, Events.Name, etc.)',
+          },
+          linksPrefix: {
+            label: 'Links prefix',
+            tooltip: 'Prefix for the trace references column (Links.TraceId, Links.TraceState, etc.)',
+          },
+          kind: {
+            label: 'Kind column',
+            tooltip: 'Column for the trace kind',
+          },
+          statusCode: {
+            label: 'Status Code column',
+            tooltip: 'Column for the trace status code',
+          },
+          statusMessage: {
+            label: 'Status Message column',
+            tooltip: 'Column for the trace status message',
+          },
+          instrumentationLibraryName: {
+            label: 'Library Name column',
+            tooltip: 'Column for the instrumentation library name',
+          },
+          instrumentationLibraryVersion: {
+            label: 'Library Version column',
+            tooltip: 'Column for the instrumentation library version',
+          },
+          state: {
+            label: 'State column',
+            tooltip: 'Column for the trace state',
+          },
+        },
       },
       LogsConfig: {
         title: 'Logs configuration',
@@ -195,45 +265,46 @@ export default {
           label: 'Default log database',
           description: 'the default database used by the logs query builder',
           name: 'defaultDatabase',
-          placeholder: 'default'
+          placeholder: 'default',
         },
         defaultTable: {
           label: 'Default log table',
           description: 'the default table used by the logs query builder',
-          name: 'defaultTable'
+          name: 'defaultTable',
         },
         columns: {
           title: 'Default columns',
           description: 'Default columns for log queries. Leave empty to disable.',
-          
+
           time: {
             label: 'Time column',
-            tooltip: 'Column for the log timestamp'
+            tooltip: 'Column for the log timestamp',
           },
           level: {
             label: 'Log Level column',
-            tooltip: 'Column for the log level'
+            tooltip: 'Column for the log level',
           },
           message: {
             label: 'Log Message column',
-            tooltip: 'Column for log message'
-          }
-         },
-         contextColumns: {
+            tooltip: 'Column for log message',
+          },
+        },
+        contextColumns: {
           title: 'Context columns',
-          description: 'These columns are used to narrow down a single log row to its original service/container/pod source. At least one is required for the log context feature to work.',
+          description:
+            'These columns are used to narrow down a single log row to its original service/container/pod source. At least one is required for the log context feature to work.',
 
           selectContextColumns: {
             label: 'Auto-Select Columns',
-            tooltip: 'When enabled, will always include context columns in log queries'
+            tooltip: 'When enabled, will always include context columns in log queries',
           },
           columns: {
             label: 'Context Columns',
-            tooltip: 'Comma separated list of column names to use for identifying a log\'s source',
-            placeholder: 'Column name (enter key to add)'
+            tooltip: "Comma separated list of column names to use for identifying a log's source",
+            placeholder: 'Column name (enter key to add)',
           },
-         }
-      }
+        },
+      },
     },
     EditorTypeSwitcher: {
       label: 'Editor Type',
@@ -252,12 +323,12 @@ export default {
     },
     expandBuilderButton: {
       label: 'Show full query',
-      tooltip: 'Shows the full query builder'
+      tooltip: 'Shows the full query builder',
     },
     QueryTypeSwitcher: {
       label: 'Query Type',
       tooltip: 'Sets the layout for the query builder',
-      sqlTooltip: 'Sets the panel type for explore view'
+      sqlTooltip: 'Sets the panel type for explore view',
     },
     DatabaseSelect: {
       label: 'Database',
@@ -271,15 +342,15 @@ export default {
     },
     ColumnsEditor: {
       label: 'Columns',
-      tooltip: 'A list of columns to include in the query'
+      tooltip: 'A list of columns to include in the query',
     },
     OtelVersionSelect: {
       label: 'Use OTel',
-      tooltip: 'Enables Open Telemetry schema versioning'
+      tooltip: 'Enables Open Telemetry schema versioning',
     },
     LimitEditor: {
       label: 'Limit',
-      tooltip: 'Limits the number of rows returned by the query'
+      tooltip: 'Limits the number of rows returned by the query',
     },
     SqlPreview: {
       label: 'SQL Preview',
@@ -301,7 +372,7 @@ export default {
       label: 'Filters',
       tooltip: `List of filters`,
       addLabel: 'Filter',
-      mapKeyPlaceholder: 'map key'
+      mapKeyPlaceholder: 'map key',
     },
     GroupByEditor: {
       label: 'Group By',
@@ -310,32 +381,32 @@ export default {
     LogsQueryBuilder: {
       logTimeColumn: {
         label: 'Time',
-        tooltip: 'Column that contains the log timestamp'
+        tooltip: 'Column that contains the log timestamp',
       },
       logLevelColumn: {
         label: 'Log Level',
-        tooltip: 'Column that contains the log level'
+        tooltip: 'Column that contains the log level',
       },
       logMessageColumn: {
         label: 'Message',
-        tooltip: 'Column that contains the log message'
+        tooltip: 'Column that contains the log message',
       },
       logLabelsColumn: {
         label: 'Labels',
-        tooltip: 'A column with a key/value structure for log labels'
+        tooltip: 'A column with a key/value structure for log labels',
       },
       liveView: {
         label: 'Live View',
-        tooltip: 'Enable to update logs in real time'
+        tooltip: 'Enable to update logs in real time',
       },
       logMessageFilter: {
         label: 'Message Filter',
         tooltip: 'Applies a LIKE filter to the log message body',
-        clearButton: 'Clear'
+        clearButton: 'Clear',
       },
       logLevelFilter: {
         label: 'Level Filter',
-        tooltip: 'Applies a filter to the log level'
+        tooltip: 'Applies a filter to the log level',
       },
     },
     TimeSeriesQueryBuilder: {
@@ -345,7 +416,7 @@ export default {
       builderModeTooltip: 'Switches the query builder between the simple and aggregate modes',
       timeColumn: {
         label: 'Time',
-        tooltip: 'Column to use for the time series'
+        tooltip: 'Column to use for the time series',
       },
     },
     TableQueryBuilder: {
@@ -365,50 +436,86 @@ export default {
       columns: {
         traceId: {
           label: 'Trace ID Column',
-          tooltip: 'Column that contains the trace ID'
+          tooltip: 'Column that contains the trace ID',
         },
         spanId: {
           label: 'Span ID Column',
-          tooltip: 'Column that contains the span ID'
+          tooltip: 'Column that contains the span ID',
         },
         parentSpanId: {
           label: 'Parent Span ID Column',
-          tooltip: 'Column that contains the parent span ID'
+          tooltip: 'Column that contains the parent span ID',
         },
         serviceName: {
           label: 'Service Name Column',
-          tooltip: 'Column that contains the service name'
+          tooltip: 'Column that contains the service name',
         },
         operationName: {
           label: 'Operation Name Column',
-          tooltip: 'Column that contains the operation name'
+          tooltip: 'Column that contains the operation name',
         },
         startTime: {
           label: 'Start Time Column',
-          tooltip: 'Column that contains the start time'
+          tooltip: 'Column that contains the start time',
         },
         durationTime: {
           label: 'Duration Time Column',
-          tooltip: 'Column that contains the duration time'
+          tooltip: 'Column that contains the duration time',
         },
         durationUnit: {
           label: 'Duration Unit',
-          tooltip: 'The unit of time used for the duration time'
+          tooltip: 'The unit of time used for the duration time',
         },
         tags: {
           label: 'Tags Column',
-          tooltip: 'Column that contains the trace tags'
+          tooltip: 'Column that contains the trace tags',
         },
         serviceTags: {
           label: 'Service Tags Column',
-          tooltip: 'Column that contains the service tags'
+          tooltip: 'Column that contains the service tags',
+        },
+        flattenNested: {
+          label: 'Use Flatten Nested',
+          tooltip: 'Enable if your traces table was created with flatten_nested=1',
+        },
+        eventsPrefix: {
+          label: 'Events Prefix',
+          tooltip: 'Prefix for the events column',
+        },
+        linksPrefix: {
+          label: 'Links Prefix',
+          tooltip: 'Prefix for the trace references column',
+        },
+        kind: {
+          label: 'Kind Column',
+          tooltip: 'Column that contains the trace kind',
+        },
+        statusCode: {
+          label: 'Status Code Column',
+          tooltip: 'Column that contains the trace status code',
+        },
+        statusMessage: {
+          label: 'Status Message Column',
+          tooltip: 'Column that contains the trace status message',
+        },
+        instrumentationLibraryName: {
+          label: 'Library Name Column',
+          tooltip: 'Column that contains the instrumentation library name (Optional)',
+        },
+        instrumentationLibraryVersion: {
+          label: 'Library Version Column',
+          tooltip: 'Column that contains the instrumentation library version (Optional)',
+        },
+        state: {
+          label: 'State Column',
+          tooltip: 'Column that contains the trace state',
         },
         traceIdFilter: {
           label: 'Trace ID',
-          tooltip: 'filter by a specific trace ID'
-        }
+          tooltip: 'filter by a specific trace ID',
+        },
       },
-    }
+    },
   },
   types: {
     EditorType: {
@@ -437,6 +544,11 @@ export default {
       [ColumnHint.TraceTags]: 'Tags',
       [ColumnHint.TraceServiceTags]: 'Service Tags',
       [ColumnHint.TraceStatusCode]: 'Status Code',
-    }
-  }
-}
+      [ColumnHint.TraceKind]: 'Kind',
+      [ColumnHint.TraceStatusMessage]: 'Status Message',
+      [ColumnHint.TraceInstrumentationLibraryName]: 'Instrumentation Library Name',
+      [ColumnHint.TraceInstrumentationLibraryVersion]: 'Instrumentation Library Version',
+      [ColumnHint.TraceState]: 'State',
+    },
+  },
+};

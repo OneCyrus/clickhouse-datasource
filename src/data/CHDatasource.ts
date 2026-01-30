@@ -1,4 +1,5 @@
 import {
+  AdHocVariableFilter,
   DataFrame,
   DataFrameView,
   DataQueryRequest,
@@ -6,6 +7,7 @@ import {
   DataSourceInstanceSettings,
   DataSourceWithLogsContextSupport,
   DataSourceWithSupplementaryQueriesSupport,
+  Field,
   getTimeZone,
   getTimeZoneInfo,
   LogRowContextOptions,
@@ -19,25 +21,30 @@ import {
   TypedVariableModel,
 } from '@grafana/data';
 import { DataSourceWithBackend, getTemplateSrv } from '@grafana/runtime';
-import { Observable, map, firstValueFrom } from 'rxjs';
+import LogsContextPanel from 'components/LogsContextPanel';
+import { cloneDeep, isEmpty, isString } from 'lodash';
+import otel from 'otel';
+import { createElement as createReactElement, ReactNode } from 'react';
+import { firstValueFrom, map, Observable } from 'rxjs';
 import { CHConfig } from 'types/config';
-import { EditorType, CHQuery } from 'types/sql';
 import {
-  QueryType,
   AggregateColumn,
   AggregateType,
   BuilderMode,
+  ColumnHint,
   Filter,
   FilterOperator,
-  TableColumn,
   OrderByDirection,
   QueryBuilderOptions,
-  ColumnHint,
-  TimeUnit,
+  QueryType,
   SelectedColumn,
+  SqlFunction,
+  TableColumn,
+  TimeUnit,
 } from 'types/queryBuilder';
+import { CHQuery, EditorType } from 'types/sql';
+import { pluginVersion } from 'utils/version';
 import { AdHocFilter } from './adHocFilter';
-import { cloneDeep, isEmpty, isString } from 'lodash';
 import {
   DEFAULT_LOGS_ALIAS,
   getIntervalInfo,
@@ -47,16 +54,11 @@ import {
   TIME_FIELD_ALIAS,
 } from './logs';
 import { generateSql, getColumnByHint, logAliasToColumnHints } from './sqlGenerator';
-import otel from 'otel';
-import { createElement as createReactElement, ReactNode } from 'react';
 import { dataFrameHasLogLabelWithName, transformQueryResponseWithTraceAndLogLinks } from './utils';
-import { pluginVersion } from 'utils/version';
-import LogsContextPanel from 'components/LogsContextPanel';
 
 export class Datasource
   extends DataSourceWithBackend<CHQuery, CHConfig>
-  implements DataSourceWithSupplementaryQueriesSupport<CHQuery>,
-  DataSourceWithLogsContextSupport<CHQuery>
+  implements DataSourceWithSupplementaryQueriesSupport<CHQuery>, DataSourceWithLogsContextSupport<CHQuery>
 {
   // This enables default annotation support for 7.2+
   annotations = {};
@@ -120,7 +122,10 @@ export class Datasource
     }
   }
 
-  getSupportedSupplementaryQueryTypes(): SupplementaryQueryType[] {
+  getSupportedSupplementaryQueryTypes(dsRequest?: DataQueryRequest<CHQuery>): SupplementaryQueryType[] {
+    if (dsRequest && dsRequest.targets.some((t) => t.editorType !== EditorType.Builder)) {
+      return [];
+    }
     return [SupplementaryQueryType.LogsVolume];
   }
 
@@ -135,8 +140,6 @@ export class Datasource
       return undefined;
     }
 
-    
-
     const timeColumn = getColumnByHint(query.builderOptions, ColumnHint.Time);
     if (timeColumn === undefined) {
       return undefined;
@@ -147,7 +150,7 @@ export class Datasource
     columns.push({
       name: getTimeFieldRoundingClause(logsVolumeRequest.scopedVars, timeColumn.name),
       alias: TIME_FIELD_ALIAS,
-      hint: ColumnHint.Time
+      hint: ColumnHint.Time,
     });
 
     const logLevelColumn = getColumnByHint(query.builderOptions, ColumnHint.LogLevel);
@@ -157,7 +160,11 @@ export class Datasource
       const llf = `toString("${logLevelColumn.name}")`;
       let level: keyof typeof LOG_LEVEL_TO_IN_CLAUSE;
       for (level in LOG_LEVEL_TO_IN_CLAUSE) {
-        aggregates.push({ aggregateType: AggregateType.Sum, column: `multiSearchAny(${llf}, [${LOG_LEVEL_TO_IN_CLAUSE[level]}])`, alias: level });
+        aggregates.push({
+          aggregateType: AggregateType.Sum,
+          column: `multiSearchAny(${llf}, [${LOG_LEVEL_TO_IN_CLAUSE[level]}])`,
+          alias: level,
+        });
       }
     } else {
       // Count all logs if level column isn't selected
@@ -168,7 +175,7 @@ export class Datasource
       });
     }
 
-    const filters = (query.builderOptions.filters?.slice() || []).map(f => {
+    const filters = (query.builderOptions.filters?.slice() || []).map((f) => {
       // In order for a hinted filter to work, the hinted column must be SELECTed OR provide "key"
       // For this histogram query the "level" column isn't selected, so we must find the original column name
       if (f.hint && !f.key) {
@@ -228,24 +235,40 @@ export class Datasource
     return frame?.fields[1]?.values.map((text, i) => ({ text, value: ids.get(i) }));
   }
 
-  applyTemplateVariables(query: CHQuery, scoped: ScopedVars): CHQuery {
+  applyTemplateVariables(query: CHQuery, scoped: ScopedVars, filters: AdHocVariableFilter[] = []): CHQuery {
     let rawQuery = query.rawSql || '';
-    // we want to skip applying ad hoc filters when we are getting values for ad hoc filters
     const templateSrv = getTemplateSrv();
+    const templateSrvVariables = templateSrv.getVariables() || [];
+
+    // resolve template variables
+    rawQuery = this.applyConditionalAll(rawQuery, templateSrvVariables);
+    rawQuery = this.replace(rawQuery, scoped) || '';
+
     if (!this.skipAdHocFilter) {
-      const adHocFilters = (templateSrv as any)?.getAdhocFilters(this.name);
-      if (this.adHocFiltersStatus === AdHocFilterStatus.disabled && adHocFilters?.length > 0) {
+      if (this.adHocFiltersStatus === AdHocFilterStatus.disabled && filters.length > 0) {
         throw new Error(
           `Unable to apply ad hoc filters. Upgrade ClickHouse to >=${this.adHocCHVerReq.major}.${this.adHocCHVerReq.minor} or remove ad hoc filters for the dashboard.`
         );
       }
-      rawQuery = this.adHocFilter.apply(rawQuery, adHocFilters);
+
+      const useJSON = Boolean(templateSrvVariables.find(v => v.name === 'clickhouse_adhoc_use_json'));
+
+      // Check if query contains $__adHocFilters macro
+      const hasMacro = /\$__adHocFilters\s*\(\s*['"](.+?)['"]\s*\)/.test(rawQuery);
+
+      // Apply $__adHocFilters macro before automatic filter application
+      rawQuery = this.applyAdHocFiltersMacro(rawQuery, filters, useJSON);
+
+      // Only apply automatic filters if the macro was not used
+      if (!hasMacro) {
+        rawQuery = this.adHocFilter.apply(rawQuery, filters, useJSON);
+      }
     }
     this.skipAdHocFilter = false;
-    rawQuery = this.applyConditionalAll(rawQuery, getTemplateSrv().getVariables());
+
     return {
       ...query,
-      rawSql: this.replace(rawQuery, scoped) || '',
+      rawSql: rawQuery,
     };
   }
 
@@ -278,46 +301,84 @@ export class Datasource
     return rawQuery;
   }
 
+  applyAdHocFiltersMacro(rawQuery: string, filters: AdHocVariableFilter[], useJSON = false): string {
+    if (!rawQuery) {
+      return rawQuery;
+    }
+
+    // Match $__adHocFilters('table_name') or $__adHocFilters("table_name")
+    const regex = /\$__adHocFilters\s*\(\s*['"](.+?)['"]\s*\)/g;
+
+    return rawQuery.replace(regex, (match, tableName) => {
+      const filterStr = this.adHocFilter.buildFilterString(filters, useJSON);
+      if (filterStr === '') {
+        return 'additional_table_filters={}';
+      }
+      return `additional_table_filters={'${tableName}': '${filterStr}'}`;
+    });
+  }
+
   // Support filtering by field value in Explore
   modifyQuery(query: CHQuery, action: QueryFixAction): CHQuery {
     if (query.editorType !== EditorType.Builder || !action.options || !action.options.key || !action.options.value) {
       return query;
     }
 
-    const columnName = action.options.key;
+    let columnName = action.options.key || '';
     const actionFrame: DataFrame | undefined = (action as any).frame;
     const actionValue = action.options.value;
+    let mapKey = '';
+
+    // Convert flattened/merged OTel attributes into column+path pair
+    if (['ResourceAttributes', 'ScopeAttributes', 'LogAttributes'].includes(columnName.split('.')[0])) {
+      const prefixIndex = columnName.indexOf('.');
+      mapKey = columnName.substring(prefixIndex + 1);
+      columnName = columnName.substring(0, prefixIndex);
+    }
 
     // Find selected column by alias/name
-    const lookupByAlias = query.builderOptions.columns?.find(c => c.alias === columnName); // Check all aliases first,
-    const lookupByName = query.builderOptions.columns?.find(c => c.name === columnName);   // then try matching column name
-    const lookupByLogsAlias = logAliasToColumnHints.has(columnName) ? getColumnByHint(query.builderOptions, logAliasToColumnHints.get(columnName)!) : undefined;
-    const lookupByLogLabels = dataFrameHasLogLabelWithName(actionFrame, columnName) && getColumnByHint(query.builderOptions, ColumnHint.LogLabels);
+    const lookupByAlias = query.builderOptions.columns?.find((c) => c.alias === columnName); // Check all aliases first,
+    const lookupByName = query.builderOptions.columns?.find((c) => c.name === columnName); // then try matching column name
+    const lookupByLogsAlias = logAliasToColumnHints.has(columnName)
+      ? getColumnByHint(query.builderOptions, logAliasToColumnHints.get(columnName)!)
+      : undefined;
+    const lookupByLogLabels =
+      dataFrameHasLogLabelWithName(actionFrame, columnName) &&
+      getColumnByHint(query.builderOptions, ColumnHint.LogLabels);
     const column = lookupByAlias || lookupByName || lookupByLogsAlias || lookupByLogLabels;
-    
-    let nextFilters: Filter[] = (query.builderOptions.filters?.slice() || []);
+    const columnType = column ? column.type || '' : '';
+    const hasMapKey = (mapKey ||= lookupByLogLabels ? columnName : '') !== '';
+
+    let nextFilters: Filter[] = query.builderOptions.filters?.slice() || [];
     if (action.type === 'ADD_FILTER') {
       // we need to remove *any other EQ or NE* for the same field,
       // because we don't want to end up with two filters like `level=info` AND `level=error`
-      nextFilters = nextFilters.filter(f =>
-        !(
-          f.type === 'string' &&
-          ((column && column.hint && f.hint) ? f.hint === column.hint : f.key === columnName) &&
-          (f.operator === FilterOperator.IsAnything || f.operator === FilterOperator.Equals || f.operator === FilterOperator.NotEquals)
-        ) &&
-        !(
-          f.type.toLowerCase().startsWith('map') &&
-          (column && lookupByLogLabels && f.mapKey === columnName) &&
-          (f.operator === FilterOperator.IsAnything || f.operator === FilterOperator.Equals || f.operator === FilterOperator.NotEquals)
-        )
+      nextFilters = nextFilters.filter(
+        (f) =>
+          !(
+            f.type === 'string' &&
+            (column && column.hint && f.hint ? f.hint === column.hint : f.key === columnName) &&
+            (f.operator === FilterOperator.IsAnything ||
+              f.operator === FilterOperator.Equals ||
+              f.operator === FilterOperator.NotEquals)
+          ) &&
+          !(
+            (f.type.startsWith('Map') || f.type.startsWith('JSON')) &&
+            column &&
+            hasMapKey &&
+            f.mapKey === mapKey &&
+            (f.operator === FilterOperator.IsAnything ||
+              f.operator === FilterOperator.Equals ||
+              f.operator === FilterOperator.NotEquals)
+          )
       );
 
       nextFilters.push({
         condition: 'AND',
-        key: (column && column.hint) ? '' : columnName,
-        hint: (column && column.hint) ? column.hint : undefined,
-        mapKey: lookupByLogLabels ? columnName : undefined,
-        type: lookupByLogLabels ? 'Map(String, String)' : 'string',
+        key: column && column.hint ? '' : columnName,
+        hint: column && column.hint ? column.hint : undefined,
+        mapKey: hasMapKey ? mapKey : undefined,
+        type: hasMapKey ? (columnType.startsWith('Map') ? 'Map(String, String)' : 'JSON') : 'String',
         filterType: 'custom',
         operator: FilterOperator.Equals,
         value: actionValue,
@@ -326,32 +387,31 @@ export class Datasource
       // with this we might want to add multiple values as NE filters
       // for example, `level != info` AND `level != debug`
       // thus, here we remove only exactly matching NE filters or an existing EQ filter for this field
-      nextFilters = nextFilters.filter(f =>
-        !(
-          (f.type === 'string' &&
-            ((column && column.hint && f.hint) ? f.hint === column.hint : f.key === columnName) &&
-            'value' in f && f.value === actionValue &&
-            (f.operator === FilterOperator.IsAnything || f.operator === FilterOperator.NotEquals)
-          ) ||
-          (
-            f.type === 'string' &&
-            ((column && column.hint && f.hint) ? f.hint === column.hint : f.key === columnName) &&
-            (f.operator === FilterOperator.IsAnything || f.operator === FilterOperator.Equals)
-          ) ||
-          (
-            f.type.toLowerCase().startsWith('map') &&
-            (column && lookupByLogLabels && f.mapKey === columnName) &&
-            (f.operator === FilterOperator.IsAnything || f.operator === FilterOperator.Equals)
+      nextFilters = nextFilters.filter(
+        (f) =>
+          !(
+            (f.type === 'string' &&
+              (column && column.hint && f.hint ? f.hint === column.hint : f.key === columnName) &&
+              'value' in f &&
+              f.value === actionValue &&
+              (f.operator === FilterOperator.IsAnything || f.operator === FilterOperator.NotEquals)) ||
+            (f.type === 'string' &&
+              (column && column.hint && f.hint ? f.hint === column.hint : f.key === columnName) &&
+              (f.operator === FilterOperator.IsAnything || f.operator === FilterOperator.Equals)) ||
+            ((f.type.startsWith('Map') || f.type.startsWith('JSON')) &&
+              column &&
+              hasMapKey &&
+              f.mapKey === mapKey &&
+              (f.operator === FilterOperator.IsAnything || f.operator === FilterOperator.Equals))
           )
-        )
       );
 
       nextFilters.push({
         condition: 'AND',
-        key: (column && column.hint) ? '' : columnName,
-        hint: (column && column.hint) ? column.hint : undefined,
-        mapKey: lookupByLogLabels ? columnName : undefined,
-        type: lookupByLogLabels ? 'Map(String, String)' : 'string',
+        key: column && column.hint ? '' : columnName,
+        hint: column && column.hint ? column.hint : undefined,
+        mapKey: hasMapKey ? mapKey : undefined,
+        type: hasMapKey ? (columnType.startsWith('Map') ? 'Map(String, String)' : 'JSON') : 'String',
         filterType: 'custom',
         operator: FilterOperator.NotEquals,
         value: actionValue,
@@ -450,7 +510,7 @@ export class Datasource
   }
 
   getLogContextColumnNames(): string[] {
-    return this.settings.jsonData.logs?.contextColumns || [];
+    return this.settings.jsonData.logs?.contextColumns?.length ? this.settings.jsonData.logs?.contextColumns : [];
   }
 
   /**
@@ -458,7 +518,7 @@ export class Datasource
    */
   getLogsOtelVersion(): string | undefined {
     const logConfig = this.settings.jsonData.logs;
-    return logConfig?.otelEnabled ? (logConfig.otelVersion || undefined) : undefined;
+    return logConfig?.otelEnabled ? logConfig.otelVersion || undefined : undefined;
   }
 
   getDefaultTraceDatabase(): string | undefined {
@@ -493,6 +553,14 @@ export class Datasource
     traceConfig.startTimeColumn && result.set(ColumnHint.Time, traceConfig.startTimeColumn);
     traceConfig.tagsColumn && result.set(ColumnHint.TraceTags, traceConfig.tagsColumn);
     traceConfig.serviceTagsColumn && result.set(ColumnHint.TraceServiceTags, traceConfig.serviceTagsColumn);
+    traceConfig.kindColumn && result.set(ColumnHint.TraceKind, traceConfig.kindColumn);
+    traceConfig.statusCodeColumn && result.set(ColumnHint.TraceStatusCode, traceConfig.statusCodeColumn);
+    traceConfig.statusMessageColumn && result.set(ColumnHint.TraceStatusMessage, traceConfig.statusMessageColumn);
+    traceConfig.instrumentationLibraryNameColumn &&
+      result.set(ColumnHint.TraceInstrumentationLibraryName, traceConfig.instrumentationLibraryNameColumn);
+    traceConfig.instrumentationLibraryVersionColumn &&
+      result.set(ColumnHint.TraceInstrumentationLibraryVersion, traceConfig.instrumentationLibraryVersionColumn);
+    traceConfig.stateColumn && result.set(ColumnHint.TraceState, traceConfig.stateColumn);
 
     return result;
   }
@@ -502,11 +570,44 @@ export class Datasource
    */
   getTraceOtelVersion(): string | undefined {
     const traceConfig = this.settings.jsonData.traces;
-    return traceConfig?.otelEnabled ? (traceConfig.otelVersion || undefined) : undefined;
+    return traceConfig?.otelEnabled ? traceConfig.otelVersion || undefined : undefined;
   }
 
   getDefaultTraceDurationUnit(): TimeUnit {
-    return this.settings.jsonData.traces?.durationUnit as TimeUnit || TimeUnit.Nanoseconds;
+    return (this.settings.jsonData.traces?.durationUnit as TimeUnit) || TimeUnit.Nanoseconds;
+  }
+
+  getDefaultTraceFlattenNested(): boolean {
+    return this.settings.jsonData.traces?.flattenNested || false;
+  }
+
+  getDefaultTraceEventsColumnPrefix(): string {
+    return this.settings.jsonData.traces?.traceEventsColumnPrefix || 'Events';
+  }
+
+  getDefaultTraceLinksColumnPrefix(): string {
+    return this.settings.jsonData.traces?.traceLinksColumnPrefix || 'Links';
+  }
+
+  /**
+   * Get the TraceId column name from traces configuration
+   * Used when creating logs filter to correlate with trace data
+   */
+  getTracesTraceIdColumn(): string | undefined {
+    const traceConfig = this.settings.jsonData.traces;
+    if (!traceConfig) {
+      return undefined;
+    }
+
+    const otelEnabled = traceConfig.otelEnabled;
+    const otelVersion = traceConfig.otelVersion;
+
+    const otelConfig = otel.getVersion(otelVersion);
+    if (otelEnabled && otelConfig) {
+      return otelConfig.traceColumnMap.get(ColumnHint.TraceId);
+    }
+
+    return traceConfig.traceIdColumn;
   }
 
   async fetchDatabases(): Promise<string[]> {
@@ -520,10 +621,10 @@ export class Datasource
 
   /**
    * Used to populate suggestions in the filter editor for Map columns.
-   * 
+   *
    * Samples rows to get a unique set of keys for the map.
    * May not include ALL keys for a given dataset.
-   * 
+   *
    * TODO: This query can be slow/expensive
    */
   async fetchUniqueMapKeys(mapColumn: string, db: string, table: string): Promise<string[]> {
@@ -545,6 +646,55 @@ export class Datasource
   }
 
   /**
+   * Fetches JSON column suggestions for each specified JSON column.
+   */
+  async fetchPathsForJSONColumns(
+    database: string | undefined,
+    table: string,
+    jsonColumnName: string
+  ): Promise<TableColumn[]> {
+    const prefix = Boolean(database) ? `"${database}".` : '';
+    const rawSql = `SELECT arrayJoin(distinctJSONPathsAndTypes(${jsonColumnName})) FROM ${prefix}"${table}" SETTINGS max_execution_time=10`;
+    const frame = await this.runQuery({ rawSql });
+    if (frame.fields?.length === 0) {
+      return [];
+    }
+
+    const view = new DataFrameView(frame);
+    const jsonPathsAndTypes: Array<[string, string]> = [];
+    for (let x of view) {
+      if (!x || !x[0]) {
+        continue;
+      }
+
+      const kv = typeof x[0] === 'string' ? JSON.parse(x[0]) : x[0];
+      if (!kv.keys || !kv.values) {
+        continue;
+      }
+
+      jsonPathsAndTypes.push([kv.keys, kv.values]);
+    }
+
+    const columns: TableColumn[] = [];
+    for (let pathAndTypes of jsonPathsAndTypes) {
+      const path = pathAndTypes[0];
+      const types = pathAndTypes[1];
+      if (!path || !types || types.length === 0) {
+        continue;
+      }
+
+      columns.push({
+        name: `${jsonColumnName}.${path}`,
+        label: `${jsonColumnName}.${path}`,
+        type: types[0],
+        picklistValues: [],
+      });
+    }
+
+    return columns;
+  }
+
+  /**
    * Fetches column suggestions from the table schema.
    */
   async fetchColumnsFromTable(database: string | undefined, table: string): Promise<TableColumn[]> {
@@ -555,12 +705,55 @@ export class Datasource
       return [];
     }
     const view = new DataFrameView(frame);
-    return view.map(item => ({
+    const columns: TableColumn[] = view.map((item) => ({
       name: item[0],
       type: item[1],
       label: item[0],
       picklistValues: [],
     }));
+
+    return columns;
+
+    // TODO: wait for JSON function perf improvements
+    // const results = await Promise.all(
+    //   columns
+    //     .filter((c) => c.type.startsWith('JSON'))
+    //     .map((c) => this.fetchPathsForJSONColumns(database, table, c.name))
+    // );
+    // return [...columns, ...results.flat()];
+  }
+
+  /**
+   * Fetches SQL functions from server.
+   */
+  async fetchSqlFunctions(): Promise<SqlFunction[]> {
+    const rawSql = `
+      SELECT
+        name, is_aggregate, case_insensitive, alias_to, origin, description,
+        syntax, arguments, returned_value, examples, categories
+      FROM system.functions
+      LIMIT 10000
+    `;
+    const frame = await this.runQuery({ rawSql });
+    if (frame.fields?.length === 0) {
+      return [];
+    }
+    const view = new DataFrameView(frame);
+    const sqlFunctions: SqlFunction[] = view.map((item) => ({
+      name: String(item[0]),
+      isAggregate: Boolean(item[1]),
+      caseInsensitive: Boolean(item[2]),
+      aliasTo: String(item[3]),
+      origin: String(item[4]),
+      description: String(item[5]),
+      syntax: String(item[6]),
+      arguments: String(item[7]),
+      returnedValue: String(item[8]),
+      examples: String(item[9]),
+      categories: String(item[10]),
+    }));
+
+    return sqlFunctions;
   }
 
   /**
@@ -573,7 +766,7 @@ export class Datasource
       return [];
     }
     const view = new DataFrameView(frame);
-    return view.map(item => ({
+    return view.map((item) => ({
       name: item[1],
       type: item[2],
       label: item[0],
@@ -583,11 +776,12 @@ export class Datasource
 
   getAliasTable(targetDatabase: string | undefined, targetTable: string): string | null {
     const aliasEntries = this.settings?.jsonData?.aliasTables || [];
-    const matchedEntry = aliasEntries.find(e => {
-      const matchDatabase = !e.targetDatabase || (e.targetDatabase === targetDatabase);
-      const matchTable = e.targetTable === targetTable;
-      return matchDatabase && matchTable;
-    }) || null;
+    const matchedEntry =
+      aliasEntries.find((e) => {
+        const matchDatabase = !e.targetDatabase || e.targetDatabase === targetDatabase;
+        const matchTable = e.targetTable === targetTable;
+        return matchDatabase && matchTable;
+      }) || null;
 
     if (matchedEntry === null) {
       return null;
@@ -638,10 +832,12 @@ export class Datasource
         };
       });
 
-    return super.query({
-      ...request,
-      targets,
-    }).pipe(map((res: DataQueryResponse) => transformQueryResponseWithTraceAndLogLinks(this, request, res)));
+    return super
+      .query({
+        ...request,
+        targets,
+      })
+      .pipe(map((res: DataQueryResponse) => transformQueryResponseWithTraceAndLogLinks(this, request, res)));
   }
 
   private runQuery(request: Partial<CHQuery>, options?: any): Promise<DataFrame> {
@@ -675,8 +871,9 @@ export class Datasource
       return frame.fields.map((f) => ({ text: f.name }));
     }
     const view = new DataFrameView(frame);
+    const hideTableName = this.settings.jsonData.hideTableNameInAdhocFilters || false;
     return view.map((item) => ({
-      text: `${item[2]}.${item[0]}`,
+      text: hideTableName ? item[0] : `${item[2]}.${item[0]}`,
     }));
   }
 
@@ -689,16 +886,7 @@ export class Datasource
     return this.fetchTagValuesFromSchema(key);
   }
 
-  private async fetchTagValuesFromSchema(key: string): Promise<MetricFindValue[]> {
-    const { from } = this.getTagSource();
-    const [table, col] = key.split('.');
-    const source = from?.includes('.') ? `${from.split('.')[0]}.${table}` : table;
-    const rawSql = `select distinct ${col} from ${source} limit 1000`;
-    const frame = await this.runQuery({ rawSql });
-    if (frame.fields?.length === 0) {
-      return [];
-    }
-    const field = frame.fields[0];
+  private fieldValuesToMetricFindValues(field: Field): MetricFindValue[] {
     // Convert to string to avoid https://github.com/grafana/grafana/issues/12209
     return field.values
       .filter((value) => value !== null)
@@ -707,16 +895,56 @@ export class Datasource
       });
   }
 
+  private async fetchTagValuesFromSchema(key: string): Promise<MetricFindValue[]> {
+    const { from } = this.getTagSource();
+    const hideTableName = this.settings.jsonData.hideTableNameInAdhocFilters || false;
+
+    let col: string;
+    let source: string;
+
+    if (hideTableName && from) {
+      // When hideTableNameInAdhocFilters is true, key is just the column name (e.g., 'bar')
+      col = key;
+      source = from;
+    } else {
+      // When hideTableNameInAdhocFilters is false, key is 'table.column' format (e.g., 'foo.bar')
+      const [table, ...colParts] = key.split('.');
+      col = colParts.join('.');
+      source = from?.includes('.') ? `${from.split('.')[0]}.${table}` : table;
+    }
+
+    const rawSql = `select distinct ${col} from ${source} limit 1000`;
+    const frame = await this.runQuery({ rawSql });
+    if (frame.fields?.length === 0) {
+      return [];
+    }
+    const field = frame.fields[0];
+    return this.fieldValuesToMetricFindValues(field);
+  }
+
   private async fetchTagValuesFromQuery(key: string): Promise<MetricFindValue[]> {
+    const tagSource = this.getTagSource();
+
+    // Check if the query contains the $__adhoc_column macro
+    if (tagSource.source && tagSource.source.includes('$__adhoc_column')) {
+      // Replace the macro with the actual column name
+      const queryWithColumn = tagSource.source.replace(/\$__adhoc_column/g, key);
+      this.skipAdHocFilter = true;
+      const frame = await this.runQuery({ rawSql: queryWithColumn });
+
+      if (frame.fields?.length === 0) {
+        return [];
+      }
+
+      const field = frame.fields[0];
+      return this.fieldValuesToMetricFindValues(field);
+    }
+
+    // Fallback to the original behavior
     const { frame } = await this.fetchTags();
     const field = frame.fields.find((f) => f.name === key);
     if (field) {
-      // Convert to string to avoid https://github.com/grafana/grafana/issues/12209
-      return field.values
-        .filter((value) => value !== null)
-        .map((value) => {
-          return { text: String(value) };
-        });
+      return this.fieldValuesToMetricFindValues(field);
     }
     return [];
   }
@@ -732,11 +960,44 @@ export class Datasource
     }
 
     if (tagSource.type === TagType.query) {
-      this.adHocFilter.setTargetTableFromQuery(tagSource.source);
+      // Check if the query contains the $__adhoc_column macro
+      if (tagSource.source.includes('$__adhoc_column')) {
+        // Extract table name from the query and get column list from system.columns
+        const tableName = this.extractTableNameFromQuery(tagSource.source);
+        if (tableName) {
+          this.adHocFilter.setTargetTableFromQuery(tagSource.source.replace(/\$__adhoc_column/g, '*'));
+
+          // Parse database.table format
+          const parts = tableName.split('.');
+          let query: string;
+          if (parts.length === 2) {
+            const [db, table] = parts;
+            query = `SELECT name, type, table FROM system.columns WHERE database = '${db}' AND table = '${table}'`;
+          } else {
+            query = `SELECT name, type, table FROM system.columns WHERE table = '${tableName}'`;
+          }
+          const results = await this.runQuery({ rawSql: query });
+          return { type: TagType.schema, frame: results };
+        }
+      } else {
+        this.adHocFilter.setTargetTableFromQuery(tagSource.source);
+      }
     }
 
     const results = await this.runQuery({ rawSql: tagSource.source });
     return { type: tagSource.type, frame: results };
+  }
+
+  private extractTableNameFromQuery(query: string): string | null {
+    // Try to extract table name from FROM clause
+    // Supports formats: FROM table, FROM database.table, FROM "database"."table"
+    const fromMatch = query.match(/FROM\s+(?:"?(\w+)"?\.)?"?(\w+)"?/i);
+    if (fromMatch) {
+      const database = fromMatch[1];
+      const table = fromMatch[2];
+      return database ? `${database}.${table}` : table;
+    }
+    return null;
   }
 
   private getTagSource() {
@@ -784,24 +1045,24 @@ export class Datasource
     const contextColumns: LogContextColumn[] = [];
 
     for (let columnName of contextColumnNames) {
-      const isMapKey = columnName.includes('[\'') && columnName.includes('\']');
+      const isMapKey = columnName.includes("['") && columnName.includes("']");
       let mapName = '';
       let keyName = '';
       if (isMapKey) {
         mapName = columnName.substring(0, columnName.indexOf('['));
-        keyName = columnName.substring(columnName.indexOf('[\'') + 2, columnName.lastIndexOf('\']'));
+        keyName = columnName.substring(columnName.indexOf("['") + 2, columnName.lastIndexOf("']"));
       }
 
-      const field = row.dataFrame.fields.find(f => (
-        // exact column name match
-        f.name === columnName ||
-        (isMapKey && (
-          // entire map was selected
-          f.name === mapName ||
-           // single key was selected from map
-          f.name === `arrayElement(${mapName}, '${keyName}')`
-        ))
-      ));
+      const field = row.dataFrame.fields.find(
+        (f) =>
+          // exact column name match
+          f.name === columnName ||
+          (isMapKey &&
+            // entire map was selected
+            (f.name === mapName ||
+              // single key was selected from map
+              f.name === `arrayElement(${mapName}, '${keyName}')`))
+      );
       if (!field) {
         continue;
       }
@@ -824,24 +1085,28 @@ export class Datasource
 
       contextColumns.push({
         name: contextColumnName,
-        value
+        value,
       });
     }
 
     return contextColumns;
   }
 
-
   /**
    * Runs a query based on a single log row and a direction (forward/backward)
-   * 
+   *
    * Will remove all filters and ORDER BYs, and will re-add them based on the configured context columns.
    * Context columns are used to narrow down to a single logging unit as defined by your logging infrastructure.
    * Typically this will be a single service, or container/pod in docker/k8s.
-   * 
+   *
    * If no context columns can be matched from the selected data frame, then the query is not run.
    */
-  async getLogRowContext(row: LogRowModel, options?: LogRowContextOptions, query?: CHQuery | undefined, cacheFilters?: boolean): Promise<DataQueryResponse> {
+  async getLogRowContext(
+    row: LogRowModel,
+    options?: LogRowContextOptions,
+    query?: CHQuery | undefined,
+    cacheFilters?: boolean
+  ): Promise<DataQueryResponse> {
     if (!query) {
       throw new Error('Missing query for log context');
     } else if (!options || !options.direction || options.limit === undefined) {
@@ -863,18 +1128,21 @@ export class Datasource
     builderOptions.orderBy.push({
       name: '',
       hint: ColumnHint.Time,
-      dir: options.direction === LogRowContextQueryDirection.Forward ? OrderByDirection.ASC : OrderByDirection.DESC
+      dir: options.direction === LogRowContextQueryDirection.Forward ? OrderByDirection.ASC : OrderByDirection.DESC,
     });
 
     builderOptions.filters = [];
     builderOptions.filters.push({
-      operator: options.direction === LogRowContextQueryDirection.Forward ? FilterOperator.GreaterThanOrEqual : FilterOperator.LessThanOrEqual,
+      operator:
+        options.direction === LogRowContextQueryDirection.Forward
+          ? FilterOperator.GreaterThanOrEqual
+          : FilterOperator.LessThanOrEqual,
       filterType: 'custom',
       hint: ColumnHint.Time,
       key: '',
       value: `fromUnixTimestamp64Nano(${row.timeEpochNs})`,
       type: 'datetime',
-      condition: 'AND'
+      condition: 'AND',
     });
 
     const contextColumns = this.getLogContextColumnsFromLogRow(row);
@@ -882,13 +1150,13 @@ export class Datasource
       throw new Error('Unable to match any log context columns');
     }
 
-    const contextColumnFilters: Filter[] = contextColumns.map(c => ({
+    const contextColumnFilters: Filter[] = contextColumns.map((c) => ({
       operator: FilterOperator.Equals,
       filterType: 'custom',
       key: c.name,
       value: c.value,
       type: 'string',
-      condition: 'AND'
+      condition: 'AND',
     }));
     builderOptions.filters.push(...contextColumnFilters);
 
@@ -907,11 +1175,15 @@ export class Datasource
   showContextToggle(row?: LogRowModel): boolean {
     return true;
   }
-  
+
   /**
    * Returns a React component that is displayed in the top portion of the log context panel
    */
-  getLogRowContextUi(row: LogRowModel, runContextQuery?: (() => void) | undefined, query?: CHQuery | undefined): ReactNode {
+  getLogRowContextUi(
+    row: LogRowModel,
+    runContextQuery?: (() => void) | undefined,
+    query?: CHQuery | undefined
+  ): ReactNode {
     const contextColumns = this.getLogContextColumnsFromLogRow(row);
     return createReactElement(LogsContextPanel, { columns: contextColumns, datasourceUid: this.uid });
   }
