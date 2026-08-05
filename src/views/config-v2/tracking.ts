@@ -113,6 +113,15 @@ export const trackClickhouseConfigV2TracesConfig = (props: {
   reportInteraction('clickhouse_config_v2_traces_config', props);
 };
 
+// Metrics config section
+export const trackClickhouseConfigV2MetricsConfig = (props: {
+  defaultDatabase?: string;
+  defaultTable?: string;
+  timeColumn?: string;
+}) => {
+  reportInteraction('clickhouse_config_v2_metrics_config', props);
+};
+
 // Column Alias Tables section
 export const trackClickhouseConfigV2ColumnAliasTableAdded = () => {
   reportInteraction('clickhouse_config_v2_column_alias_table_added');

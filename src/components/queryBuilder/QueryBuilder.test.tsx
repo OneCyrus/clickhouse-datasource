@@ -86,7 +86,7 @@ describe('QueryBuilder', () => {
   it('maps configured signal types to compact modes', () => {
     expect(getDefaultCompactMode('logs')).toBe('otel-logs');
     expect(getDefaultCompactMode('traces')).toBe('otel-traces');
-    expect(getDefaultCompactMode('metrics')).toBe('metrics');
+    expect(getDefaultCompactMode('metrics')).toBe('otel-metrics');
   });
 
   it('renders the metrics compact editor with the time-series builder and filter bar', () => {

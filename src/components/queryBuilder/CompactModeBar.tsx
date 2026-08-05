@@ -4,7 +4,7 @@ import { GrafanaTheme2 } from '@grafana/data';
 import { Icon, Input, useStyles2 } from '@grafana/ui';
 import { SignalType } from 'types/config';
 
-export type CompactMode = 'otel-logs' | 'otel-traces' | 'metrics';
+export type CompactMode = 'otel-logs' | 'otel-traces' | 'otel-metrics';
 
 interface CompactModeBarProps {
   mode: CompactMode;
@@ -30,7 +30,7 @@ export function getDefaultCompactMode(signalType: SignalType): CompactMode {
     return 'otel-traces';
   }
   if (signalType === 'metrics') {
-    return 'metrics';
+    return 'otel-metrics';
   }
   return 'otel-logs';
 }

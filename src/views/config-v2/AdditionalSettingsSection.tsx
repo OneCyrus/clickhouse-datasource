@@ -46,6 +46,7 @@ import {
   trackClickhouseConfigV2DefaultTableInput,
   trackClickhouseConfigV2EnableRowLimitToggle,
   trackClickhouseConfigV2LogsConfig,
+  trackClickhouseConfigV2MetricsConfig,
   trackClickhouseConfigV2QuerySettings,
   trackClickhouseConfigV2TracesConfig,
 } from './tracking';
@@ -114,6 +115,11 @@ export const AdditionalSettingsSection = (props: Props) => {
         },
       },
     });
+  };
+
+  const onUpdateMetricsConfig = (key: keyof CHMetricsConfig, value: string) => {
+    trackClickhouseConfigV2MetricsConfig({ [key]: value });
+    onMetricsConfigChange(key, value);
   };
 
   const onAliasTableConfigChange = (aliasTables: AliasTableEntry[]) => {
@@ -294,9 +300,9 @@ export const AdditionalSettingsSection = (props: Props) => {
             <Divider />
             <MetricsConfig
               metricsConfig={jsonData.metrics}
-              onDefaultDatabaseChange={(db) => onMetricsConfigChange('defaultDatabase', db)}
-              onDefaultTableChange={(table) => onMetricsConfigChange('defaultTable', table)}
-              onTimeColumnChange={(column) => onMetricsConfigChange('timeColumn', column)}
+              onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
+              onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
+              onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
             />
           </>
         )}

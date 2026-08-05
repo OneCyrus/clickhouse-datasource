@@ -237,11 +237,15 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
       jsonData: {
         ...options.jsonData,
         metrics: {
-          ...options.jsonData.metrics,
+          ...(options.jsonData.metrics || {}),
           [key]: value,
         },
       },
     });
+  };
+  const onUpdateMetricsConfig = (key: keyof CHMetricsConfig, value: string) => {
+    trackingV1.trackClickhouseConfigV1MetricsConfig({ [key]: value });
+    onMetricsConfigChange(key, value);
   };
   const onAliasTableConfigChange = (aliasTables: AliasTableEntry[]) => {
     // track events when both a target table and alias table has a value
@@ -608,9 +612,9 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
               <MetricsConfig
                 variant="single-table"
                 metricsConfig={jsonData.metrics}
-                onDefaultDatabaseChange={(db) => onMetricsConfigChange('defaultDatabase', db)}
-                onDefaultTableChange={(table) => onMetricsConfigChange('defaultTable', table)}
-                onTimeColumnChange={(column) => onMetricsConfigChange('timeColumn', column)}
+                onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
+                onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
+                onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
               />
             </>
           )}
@@ -860,9 +864,9 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
             <Divider />
             <MetricsConfig
               metricsConfig={jsonData.metrics}
-              onDefaultDatabaseChange={(db) => onMetricsConfigChange('defaultDatabase', db)}
-              onDefaultTableChange={(table) => onMetricsConfigChange('defaultTable', table)}
-              onTimeColumnChange={(column) => onMetricsConfigChange('timeColumn', column)}
+              onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
+              onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
+              onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
             />
 
             <Divider />

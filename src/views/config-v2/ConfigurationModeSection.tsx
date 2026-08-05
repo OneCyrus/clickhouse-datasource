@@ -22,6 +22,7 @@ import { TimeUnit } from 'types/queryBuilder';
 import { CONFIG_SECTION_HEADERS, CONTAINER_MIN_WIDTH } from './constants';
 import {
   trackClickhouseConfigV2LogsConfig,
+  trackClickhouseConfigV2MetricsConfig,
   trackClickhouseConfigV2QuerySettings,
   trackClickhouseConfigV2TracesConfig,
 } from './tracking';
@@ -78,11 +79,16 @@ export const ConfigurationModeSection = (props: Props) => {
       jsonData: {
         ...options.jsonData,
         metrics: {
-          ...options.jsonData.metrics,
+          ...(options.jsonData.metrics || {}),
           [key]: value,
         },
       },
     });
+  };
+
+  const onUpdateMetricsConfig = (key: keyof CHMetricsConfig, value: string) => {
+    trackClickhouseConfigV2MetricsConfig({ [key]: value });
+    onMetricsConfigChange(key, value);
   };
 
   return (
@@ -208,9 +214,9 @@ export const ConfigurationModeSection = (props: Props) => {
             <MetricsConfig
               variant="single-table"
               metricsConfig={jsonData.metrics}
-              onDefaultDatabaseChange={(db) => onMetricsConfigChange('defaultDatabase', db)}
-              onDefaultTableChange={(table) => onMetricsConfigChange('defaultTable', table)}
-              onTimeColumnChange={(column) => onMetricsConfigChange('timeColumn', column)}
+              onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
+              onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
+              onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
             />
           </>
         )}
