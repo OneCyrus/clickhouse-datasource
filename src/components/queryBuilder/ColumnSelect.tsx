@@ -1,6 +1,6 @@
 import React from 'react';
 import { SelectableValue } from '@grafana/data';
-import { InlineFormLabel, Select } from '@grafana/ui';
+import { InlineField, InlineFormLabel, Select } from '@grafana/ui';
 import { ColumnHint, SelectedColumn, TableColumn } from 'types/queryBuilder';
 import { styles } from 'styles';
 
@@ -22,15 +22,28 @@ interface ColumnSelectProps {
 const defaultFilterFn = () => true;
 
 export const ColumnSelect = (props: ColumnSelectProps) => {
-  const { allColumns, selectedColumn, onColumnChange, columnFilterFn, columnHint, label, tooltip, disabled, invalid, wide, inline, clearable } = props;
+  const {
+    allColumns,
+    selectedColumn,
+    onColumnChange,
+    columnFilterFn,
+    columnHint,
+    label,
+    tooltip,
+    disabled,
+    invalid,
+    wide,
+    inline,
+    clearable,
+  } = props;
   const selectedColumnName = selectedColumn?.name;
-  const columns: Array<SelectableValue<string>> = allColumns.
-    filter(columnFilterFn || defaultFilterFn).
-    map(c => ({ label: c.label || c.name, value: c.name }));
+  const columns: Array<SelectableValue<string>> = allColumns
+    .filter(columnFilterFn || defaultFilterFn)
+    .map((c) => ({ label: c.label || c.name, value: c.name }));
 
   // Select component WILL NOT display the value if it isn't present in the options.
   let staleOption = false;
-  if (selectedColumn && !columns.find(c => c.value === selectedColumn.name)) {
+  if (selectedColumn && !columns.find((c) => c.value === selectedColumn.name)) {
     columns.push({ label: selectedColumn.alias || selectedColumn.name, value: selectedColumn.name });
     staleOption = true;
   }
@@ -41,7 +54,7 @@ export const ColumnSelect = (props: ColumnSelectProps) => {
       return;
     }
 
-    const column = allColumns.find(c => c.name === selected!.value)!;
+    const column = allColumns.find((c) => c.name === selected!.value)!;
     const nextColumn: SelectedColumn = {
       name: column?.name || selected!.value,
       type: column?.type,
@@ -53,18 +66,21 @@ export const ColumnSelect = (props: ColumnSelectProps) => {
     }
 
     onColumnChange(nextColumn);
-  }
+  };
 
   const labelStyle = 'query-keyword ' + (inline ? styles.QueryEditor.inlineField : '');
 
   return (
-    <div className="gf-form">
-      <InlineFormLabel width={wide ? 12 : 8} className={labelStyle} tooltip={tooltip}>
-        {label}
-      </InlineFormLabel>
+    <InlineField
+      label={
+        <InlineFormLabel width={wide ? 12 : 8} className={labelStyle} tooltip={tooltip}>
+          {label}
+        </InlineFormLabel>
+      }
+      disabled={disabled}
+      invalid={invalid || staleOption}
+    >
       <Select<string | undefined>
-        disabled={disabled}
-        invalid={invalid || staleOption}
         options={columns}
         value={selectedColumnName}
         placeholder={selectedColumnName || undefined}
@@ -74,6 +90,6 @@ export const ColumnSelect = (props: ColumnSelectProps) => {
         isClearable={clearable === undefined || clearable}
         allowCustomValue
       />
-    </div>
+    </InlineField>
   );
 };

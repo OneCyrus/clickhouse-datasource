@@ -1,19 +1,14 @@
 import React from 'react';
 import { SelectableValue } from '@grafana/data';
-import { Button, InlineFormLabel, Select } from '@grafana/ui';
-import {
-  OrderBy,
-  OrderByDirection,
-  QueryBuilderOptions,
-  TableColumn,
-} from 'types/queryBuilder';
+import { Button, InlineField, InlineFormLabel, Select, Stack } from '@grafana/ui';
+import { OrderBy, OrderByDirection, QueryBuilderOptions, TableColumn } from 'types/queryBuilder';
 import allLabels from 'labels';
 import { styles } from 'styles';
 import { isAggregateQuery } from 'data/sqlGenerator';
 
 interface OrderByItemProps {
   columnOptions: Array<SelectableValue<string>>;
-  index: number,
+  index: number;
   orderByItem: OrderBy;
   updateOrderByItem: (index: number, orderByItem: OrderBy) => void;
   removeOrderByItem: (index: number) => void;
@@ -28,7 +23,7 @@ const OrderByItem = (props: OrderByItemProps) => {
   const { columnOptions, index, orderByItem, updateOrderByItem, removeOrderByItem } = props;
 
   return (
-    <>
+    <Stack direction="row" wrap="wrap" alignItems="flex-start" justifyContent="flex-start" gap={0}>
       <Select
         disabled={Boolean(orderByItem.hint)}
         placeholder={orderByItem.hint ? allLabels.types.ColumnHint[orderByItem.hint] : undefined}
@@ -36,7 +31,7 @@ const OrderByItem = (props: OrderByItemProps) => {
         className={styles.Common.inlineSelect}
         width={36}
         options={columnOptions}
-        onChange={e => updateOrderByItem(index, { ...orderByItem, name: e.value! })}
+        onChange={(e) => updateOrderByItem(index, { ...orderByItem, name: e.value! })}
         allowCustomValue
         menuPlacement={'bottom'}
       />
@@ -45,7 +40,7 @@ const OrderByItem = (props: OrderByItemProps) => {
         className={styles.Common.inlineSelect}
         width={12}
         options={sortOptions}
-        onChange={e => updateOrderByItem(index, { ...orderByItem, dir: e.value! })}
+        onChange={(e) => updateOrderByItem(index, { ...orderByItem, dir: e.value! })}
         menuPlacement={'bottom'}
       />
       <Button
@@ -55,8 +50,9 @@ const OrderByItem = (props: OrderByItemProps) => {
         size="sm"
         icon="trash-alt"
         onClick={() => removeOrderByItem(index)}
+        aria-label="order-by-remove-item"
       />
-    </>
+    </Stack>
   );
 };
 
@@ -106,8 +102,11 @@ export const OrderByEditor = (props: OrderByEditorProps) => {
       {orderBy.map((orderByItem, index) => {
         const key = `${index}-${orderByItem.name}-${orderByItem.hint || ''}-${orderByItem.dir}`;
         return (
-          <div className="gf-form" key={key} data-testid="query-builder-orderby-item-wrapper">
-            { index === 0 ? fieldLabel : fieldSpacer }
+          <InlineField
+            label={index === 0 ? fieldLabel : fieldSpacer}
+            key={key}
+            data-testid="query-builder-orderby-item-wrapper"
+          >
             <OrderByItem
               columnOptions={orderByOptions}
               index={index}
@@ -115,12 +114,11 @@ export const OrderByEditor = (props: OrderByEditorProps) => {
               updateOrderByItem={updateOrderByItem}
               removeOrderByItem={removeOrderByItem}
             />
-          </div>
+          </InlineField>
         );
       })}
 
-      <div className="gf-form">
-        {orderBy.length === 0 ? fieldLabel : fieldSpacer}
+      <InlineField label={orderBy.length === 0 ? fieldLabel : fieldSpacer}>
         <Button
           data-testid="query-builder-orderby-add-button"
           icon="plus-circle"
@@ -131,20 +129,23 @@ export const OrderByEditor = (props: OrderByEditorProps) => {
         >
           {addLabel}
         </Button>
-      </div>
+      </InlineField>
     </>
   );
 };
 
-export const getOrderByOptions = (builder: QueryBuilderOptions, allColumns: readonly TableColumn[]): Array<SelectableValue<string>> => {
+export const getOrderByOptions = (
+  builder: QueryBuilderOptions,
+  allColumns: readonly TableColumn[]
+): Array<SelectableValue<string>> => {
   let allOptions: Array<SelectableValue<string>> = [];
 
   if (isAggregateQuery(builder)) {
-    builder.columns?.forEach(c => {
+    builder.columns?.forEach((c) => {
       allOptions.push({ label: c.alias || c.name, value: c.name });
     });
 
-    builder.aggregates!.forEach(a => {
+    builder.aggregates!.forEach((a) => {
       let label = `${a.aggregateType}(${a.column})`;
       let value = label;
 
@@ -157,16 +158,16 @@ export const getOrderByOptions = (builder: QueryBuilderOptions, allColumns: read
     });
 
     if (builder.groupBy && builder.groupBy.length > 0) {
-      builder.groupBy.forEach(g => allOptions.push({ label: g, value: g }));
+      builder.groupBy.forEach((g) => allOptions.push({ label: g, value: g }));
     }
   } else {
-    allColumns.forEach(c => allOptions.push({ label: c.label || c.name, value: c.name }));
+    allColumns.forEach((c) => allOptions.push({ label: c.label || c.name, value: c.name }));
   }
 
   // Add selected value to the list if it does not exist.
-  const allValues = new Set(allOptions.map(o => o.value));
-  const customValues = builder.orderBy?.filter(o => !allValues.has(o.name));
-  customValues?.forEach(o => allOptions.push({ label: o.name, value: o.name }));
+  const allValues = new Set(allOptions.map((o) => o.value));
+  const customValues = builder.orderBy?.filter((o) => !allValues.has(o.name));
+  customValues?.forEach((o) => allOptions.push({ label: o.name, value: o.name }));
 
   return allOptions;
 };

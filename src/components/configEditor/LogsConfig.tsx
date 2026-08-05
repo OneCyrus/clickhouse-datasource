@@ -1,96 +1,112 @@
 import React from 'react';
 import { ConfigSection, ConfigSubSection } from 'components/experimental/ConfigSection';
-import { Input, Field, InlineFormLabel, TagsInput } from '@grafana/ui';
+import { Input, Field, InlineField, InlineFormLabel, TagsInput } from '@grafana/ui';
 import { OtelVersionSelect } from 'components/queryBuilder/OtelVersionSelect';
 import { ColumnHint } from 'types/queryBuilder';
-import otel, { defaultLogsTable } from 'otel';
+import otel from 'otel';
 import { LabeledInput } from './LabeledInput';
-import { CHLogsConfig } from 'types/config';
+import { CHLogsConfig, ConfigMode, defaultCHAdditionalSettingsConfig } from 'types/config';
 import allLabels from 'labels';
 import { columnLabelToPlaceholder } from 'data/utils';
 import { Switch } from 'components/queryBuilder/Switch';
 
 interface LogsConfigProps {
   logsConfig?: CHLogsConfig;
+  variant?: ConfigMode;
   onDefaultDatabaseChange: (v: string) => void;
   onDefaultTableChange: (v: string) => void;
   onOtelEnabledChange: (v: boolean) => void;
   onOtelVersionChange: (v: string) => void;
+  onFilterTimeColumnChange: (v: string) => void;
   onTimeColumnChange: (v: string) => void;
   onLevelColumnChange: (v: string) => void;
   onMessageColumnChange: (v: string) => void;
   onSelectContextColumnsChange: (v: boolean) => void;
   onContextColumnsChange: (v: string[]) => void;
+  onShowLogLinksChange: (v: boolean) => void;
 }
 
 export const LogsConfig = (props: LogsConfigProps) => {
   const {
-    onDefaultDatabaseChange, onDefaultTableChange,
-    onOtelEnabledChange, onOtelVersionChange,
-    onTimeColumnChange, onLevelColumnChange, onMessageColumnChange,
-    onSelectContextColumnsChange, onContextColumnsChange
+    onDefaultDatabaseChange,
+    onDefaultTableChange,
+    onOtelEnabledChange,
+    onOtelVersionChange,
+    onFilterTimeColumnChange,
+    onTimeColumnChange,
+    onLevelColumnChange,
+    onMessageColumnChange,
+    onSelectContextColumnsChange,
+    onContextColumnsChange,
+    onShowLogLinksChange,
   } = props;
   let {
-    defaultDatabase, defaultTable,
-    otelEnabled, otelVersion,
-    timeColumn, levelColumn, messageColumn,
-    selectContextColumns, contextColumns
-  } = (props.logsConfig || {});
+    defaultDatabase,
+    defaultTable,
+    otelEnabled,
+    otelVersion,
+    filterTimeColumn,
+    timeColumn,
+    levelColumn,
+    messageColumn,
+    selectContextColumns,
+    contextColumns,
+    showLogLinks,
+  } = props.logsConfig || {};
   const labels = allLabels.components.Config.LogsConfig;
+  const sectionLabels = props.variant === 'single-table' ? labels.variants.singleTable : labels;
 
   const otelConfig = otel.getVersion(otelVersion);
   if (otelEnabled && otelConfig) {
+    filterTimeColumn = otelConfig.logColumnMap.get(ColumnHint.FilterTime);
     timeColumn = otelConfig.logColumnMap.get(ColumnHint.Time);
     levelColumn = otelConfig.logColumnMap.get(ColumnHint.LogLevel);
     messageColumn = otelConfig.logColumnMap.get(ColumnHint.LogMessage);
   }
 
-  const onContextColumnsChangeTrimmed = (columns: string[]) => onContextColumnsChange(columns.map(c => c.trim()).filter(c => c));
+  const onContextColumnsChangeTrimmed = (columns: string[]) =>
+    onContextColumnsChange(columns.map((c) => c.trim()).filter((c) => c));
 
   return (
-    <ConfigSection
-      title={labels.title}
-      description={labels.description}
-    >
+    <ConfigSection title={sectionLabels.title} description={sectionLabels.description}>
       <div id="logs-config" />
-      <Field
-        label={labels.defaultDatabase.label}
-        description={labels.defaultDatabase.description}
-      >
+      <Field label={labels.defaultDatabase.label} description={labels.defaultDatabase.description}>
         <Input
           name={labels.defaultDatabase.name}
           width={40}
           value={defaultDatabase || ''}
-          onChange={e => onDefaultDatabaseChange(e.currentTarget.value)}
+          onChange={(e) => onDefaultDatabaseChange(e.currentTarget.value)}
           label={labels.defaultDatabase.label}
           aria-label={labels.defaultDatabase.label}
           placeholder={labels.defaultDatabase.placeholder}
         />
       </Field>
-      <Field
-        label={labels.defaultTable.label}
-        description={labels.defaultTable.description}
-      >
+      <Field label={labels.defaultTable.label} description={labels.defaultTable.description}>
         <Input
           name={labels.defaultTable.name}
           width={40}
           value={defaultTable || ''}
-          onChange={e => onDefaultTableChange(e.currentTarget.value)}
+          onChange={(e) => onDefaultTableChange(e.currentTarget.value)}
           label={labels.defaultTable.label}
           aria-label={labels.defaultTable.label}
-          placeholder={defaultLogsTable}
+          placeholder={defaultCHAdditionalSettingsConfig.logs?.defaultTable!}
         />
       </Field>
-      <ConfigSubSection
-        title={labels.columns.title}
-        description={labels.columns.description}
-      >
+      <ConfigSubSection title={labels.columns.title} description={labels.columns.description}>
         <OtelVersionSelect
           enabled={otelEnabled || false}
           selectedVersion={otelVersion || ''}
           onEnabledChange={onOtelEnabledChange}
           onVersionChange={onOtelVersionChange}
           wide
+        />
+        <LabeledInput
+          disabled={otelEnabled}
+          label={labels.columns.filterTime.label}
+          placeholder={columnLabelToPlaceholder(labels.columns.filterTime.label)}
+          tooltip={labels.columns.filterTime.tooltip}
+          value={filterTimeColumn || ''}
+          onChange={onFilterTimeColumnChange}
         />
         <LabeledInput
           disabled={otelEnabled}
@@ -117,11 +133,18 @@ export const LogsConfig = (props: LogsConfigProps) => {
           onChange={onMessageColumnChange}
         />
       </ConfigSubSection>
-      <br/>
-      <ConfigSubSection
-        title={labels.contextColumns.title}
-        description={labels.contextColumns.description}
-      >
+      <br />
+      <ConfigSubSection title={labels.traceIdCorrelation.title} description={labels.traceIdCorrelation.description}>
+        <Switch
+          label={labels.traceIdCorrelation.showLogLinks.label}
+          tooltip={labels.traceIdCorrelation.showLogLinks.tooltip}
+          value={showLogLinks ?? true}
+          onChange={onShowLogLinksChange}
+          wide
+        />
+      </ConfigSubSection>
+      <br />
+      <ConfigSubSection title={labels.contextColumns.title} description={labels.contextColumns.description}>
         <Switch
           label={labels.contextColumns.selectContextColumns.label}
           tooltip={labels.contextColumns.selectContextColumns.tooltip}
@@ -129,18 +152,21 @@ export const LogsConfig = (props: LogsConfigProps) => {
           onChange={onSelectContextColumnsChange}
           wide
         />
-        <div className="gf-form">
-          <InlineFormLabel width={12} className="query-keyword" tooltip={labels.contextColumns.columns.tooltip}>
-            {labels.contextColumns.columns.label}
-          </InlineFormLabel>
+        <InlineField
+          label={
+            <InlineFormLabel width={12} className="query-keyword" tooltip={labels.contextColumns.columns.tooltip}>
+              {labels.contextColumns.columns.label}
+            </InlineFormLabel>
+          }
+        >
           <TagsInput
             placeholder={labels.contextColumns.columns.placeholder}
             tags={contextColumns || []}
             onChange={onContextColumnsChangeTrimmed}
             width={60}
           />
-        </div>
+        </InlineField>
       </ConfigSubSection>
     </ConfigSection>
   );
-}
+};

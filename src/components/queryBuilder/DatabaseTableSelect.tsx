@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { InlineFormLabel, Select } from '@grafana/ui';
+import { InlineField, InlineFieldRow, InlineFormLabel, Select } from '@grafana/ui';
 import { Datasource } from '../../data/CHDatasource';
 import labels from 'labels';
 import { styles } from '../../styles';
@@ -9,7 +9,7 @@ import useDatabases from 'hooks/useDatabases';
 export type DatabaseSelectProps = {
   datasource: Datasource;
   database: string;
-  onDatabaseChange: (value: string) => void
+  onDatabaseChange: (value: string) => void;
 };
 
 export const DatabaseSelect = (props: DatabaseSelectProps) => {
@@ -17,7 +17,7 @@ export const DatabaseSelect = (props: DatabaseSelectProps) => {
   const databases = useDatabases(datasource);
   const { label, tooltip, empty } = labels.components.DatabaseSelect;
 
-  const options = databases.map(d => ({ label: d, value: d }));
+  const options = databases.map((d) => ({ label: d, value: d }));
   options.push({ label: empty, value: '' }); // Allow a blank value
 
   // Add selected value to the list if it does not exist.
@@ -34,19 +34,22 @@ export const DatabaseSelect = (props: DatabaseSelectProps) => {
   }, [datasource, database, onDatabaseChange]);
 
   return (
-    <>
-      <InlineFormLabel width={8} className="query-keyword" tooltip={tooltip}>
-        {label}
-      </InlineFormLabel>
+    <InlineField
+      label={
+        <InlineFormLabel width={8} className="query-keyword" tooltip={tooltip}>
+          {label}
+        </InlineFormLabel>
+      }
+    >
       <Select
         className={`width-15 ${styles.Common.inlineSelect}`}
         options={options}
         value={database}
-        onChange={e => onDatabaseChange(e.value!)}
+        onChange={(e) => onDatabaseChange(e.value!)}
         menuPlacement={'bottom'}
         allowCustomValue
       ></Select>
-    </>
+    </InlineField>
   );
 };
 
@@ -62,7 +65,7 @@ export const TableSelect = (props: TableSelectProps) => {
   const tables = useTables(datasource, database);
   const { label, tooltip, empty } = labels.components.TableSelect;
 
-  const options = tables.map(t => ({ label: t, value: t }));
+  const options = tables.map((t) => ({ label: t, value: t }));
   options.push({ label: empty, value: '' }); // Allow a blank value
 
   // Include saved value in case it's no longer listed
@@ -78,26 +81,29 @@ export const TableSelect = (props: TableSelectProps) => {
   }, [database, table, tables, datasource, onTableChange]);
 
   return (
-    <>
-      <InlineFormLabel width={8} className="query-keyword" tooltip={tooltip}>
-        {label}
-      </InlineFormLabel>
+    <InlineField
+      label={
+        <InlineFormLabel width={8} className="query-keyword" tooltip={tooltip}>
+          {label}
+        </InlineFormLabel>
+      }
+    >
       <Select
         className={`width-15 ${styles.Common.inlineSelect}`}
         options={options}
         value={table}
-        onChange={e => onTableChange(e.value!)}
+        onChange={(e) => onTableChange(e.value!)}
         menuPlacement={'bottom'}
         allowCustomValue
       ></Select>
-    </>
+    </InlineField>
   );
 };
 
 export type DatabaseTableSelectProps = {
   datasource: Datasource;
   database: string;
-  onDatabaseChange: (value: string) => void
+  onDatabaseChange: (value: string) => void;
   table: string;
   onTableChange: (value: string) => void;
 };
@@ -106,9 +112,9 @@ export const DatabaseTableSelect = (props: DatabaseTableSelectProps) => {
   const { datasource, database, onDatabaseChange, table, onTableChange } = props;
 
   return (
-    <div className="gf-form">
+    <InlineFieldRow>
       <DatabaseSelect datasource={datasource} database={database} onDatabaseChange={onDatabaseChange} />
       <TableSelect datasource={datasource} database={database} table={table} onTableChange={onTableChange} />
-    </div>
+    </InlineFieldRow>
   );
-}
+};

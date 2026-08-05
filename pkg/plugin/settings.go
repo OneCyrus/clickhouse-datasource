@@ -12,6 +12,7 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/proxy"
+	sdkconfig "github.com/grafana/grafana-plugin-sdk-go/config"
 )
 
 // Settings - data loaded from grafana settings database
@@ -30,17 +31,41 @@ type Settings struct {
 	TlsClientKey       string
 
 	Username string `json:"username,omitempty"`
-	Password string `json:"-,omitempty"`
+	Password string `json:"-,omitempty"` //nolint
 
 	DefaultDatabase string `json:"defaultDatabase,omitempty"`
 
-	DialTimeout  string `json:"dialTimeout,omitempty"`
-	QueryTimeout string `json:"queryTimeout,omitempty"`
+	ConnMaxLifetime string `json:"connMaxLifetime,omitempty"`
+	DialTimeout     string `json:"dialTimeout,omitempty"`
+	QueryTimeout    string `json:"queryTimeout,omitempty"`
+	MaxIdleConns    string `json:"maxIdleConns,omitempty"`
+	MaxOpenConns    string `json:"maxOpenConns,omitempty"`
 
 	HttpHeaders           map[string]string `json:"-"`
 	ForwardGrafanaHeaders bool              `json:"forwardGrafanaHeaders,omitempty"`
 	CustomSettings        []CustomSetting   `json:"customSettings"`
 	ProxyOptions          *proxy.Options
+
+	RowLimit       int64 `json:"rowLimit,omitempty"`
+	EnableRowLimit bool  `json:"enableRowLimit,omitempty"`
+
+	// RowCapacityHint is an optional expected row count passed to sqlds as
+	// DriverSettings.RowCapacityHint. sqlds pre-allocates each data.Frame's
+	// fields to this value before scanning, avoiding per-column slice growth on large
+	// results. It is applied to every query, so leave it at 0 (the default,
+	// disabled) unless queries from this datasource reliably return a similar,
+	// large number of rows. A value larger than the typical result wastes
+	// memory.
+	RowCapacityHint int64 `json:"rowCapacityHint,omitempty"`
+
+	// EnableSchemaCache gates the in-process cache that memoizes
+	// system.tables / system.columns / DISTINCT column-value lookups used
+	// by the query builder. Defaults to true.
+	EnableSchemaCache bool `json:"enableSchemaCache,omitempty"`
+	// SchemaCacheTTLSeconds controls how long schema-introspection results
+	// are considered fresh. Defaults to 60. Set lower if users commonly run
+	// ALTER TABLE and expect the builder to reflect changes immediately.
+	SchemaCacheTTLSeconds int `json:"schemaCacheTTLSeconds,omitempty"`
 }
 
 type CustomSetting struct {
@@ -69,10 +94,10 @@ func LoadSettings(ctx context.Context, config backend.DataSourceInstanceSettings
 
 	// Deprecated: Replaced with Host for v4. Deserializes "server" field for old v3 configs.
 	if jsonData["server"] != nil {
-		settings.Host = jsonData["server"].(string)
+		settings.Host = strings.TrimSpace(jsonData["server"].(string))
 	}
 	if jsonData["host"] != nil {
-		settings.Host = jsonData["host"].(string)
+		settings.Host = strings.TrimSpace(jsonData["host"].(string))
 	}
 
 	if jsonData["port"] != nil {
@@ -142,10 +167,22 @@ func LoadSettings(ctx context.Context, config backend.DataSourceInstanceSettings
 
 	// Deprecated: Replaced with DialTimeout for v4. Deserializes "timeout" field for old v3 configs.
 	if jsonData["timeout"] != nil {
-		settings.DialTimeout = jsonData["timeout"].(string)
+		if val, ok := jsonData["timeout"].(string); !ok {
+			if val, ok := jsonData["timeout"].(float64); ok {
+				settings.DialTimeout = fmt.Sprintf("%d", int64(val))
+			}
+		} else {
+			settings.DialTimeout = val
+		}
 	}
 	if jsonData["dialTimeout"] != nil {
-		settings.DialTimeout = jsonData["dialTimeout"].(string)
+		if val, ok := jsonData["dialTimeout"].(string); !ok {
+			if val, ok := jsonData["dialTimeout"].(float64); ok {
+				settings.DialTimeout = fmt.Sprintf("%d", int64(val))
+			}
+		} else {
+			settings.DialTimeout = val
+		}
 	}
 
 	if jsonData["queryTimeout"] != nil {
@@ -181,12 +218,83 @@ func LoadSettings(ctx context.Context, config backend.DataSourceInstanceSettings
 		}
 	}
 
+	if jsonData["enableRowLimit"] != nil {
+		if enableRowLimitString, ok := jsonData["enableRowLimit"].(string); ok {
+			settings.EnableRowLimit, err = strconv.ParseBool(enableRowLimitString)
+			if err != nil {
+				backend.Logger.Warn("Failed to parse enableRowLimit value, defaulting to false", "error", err)
+			}
+		} else {
+			settings.EnableRowLimit = jsonData["enableRowLimit"].(bool)
+		}
+	}
+
+	// Default schema cache on; surface both as booleans and strings to stay
+	// consistent with the existing settings-parsing style in this file.
+	settings.EnableSchemaCache = true
+	if raw, ok := jsonData["enableSchemaCache"]; ok && raw != nil {
+		switch v := raw.(type) {
+		case bool:
+			settings.EnableSchemaCache = v
+		case string:
+			if parsed, parseErr := strconv.ParseBool(v); parseErr == nil {
+				settings.EnableSchemaCache = parsed
+			} else {
+				backend.Logger.Warn("Failed to parse enableSchemaCache value, defaulting to true", "error", parseErr)
+			}
+		}
+	}
+	if raw, ok := jsonData["schemaCacheTTLSeconds"]; ok && raw != nil {
+		switch v := raw.(type) {
+		case float64:
+			settings.SchemaCacheTTLSeconds = int(v)
+		case string:
+			if parsed, parseErr := strconv.Atoi(v); parseErr == nil {
+				settings.SchemaCacheTTLSeconds = parsed
+			} else {
+				backend.Logger.Warn("Failed to parse schemaCacheTTLSeconds value, using default", "error", parseErr)
+			}
+		}
+	}
+	if settings.SchemaCacheTTLSeconds <= 0 {
+		settings.SchemaCacheTTLSeconds = 60
+	}
+
+	if raw, ok := jsonData["rowCapacityHint"]; ok && raw != nil {
+		switch v := raw.(type) {
+		case float64:
+			settings.RowCapacityHint = int64(v)
+		case string:
+			if parsed, parseErr := strconv.ParseInt(v, 10, 64); parseErr == nil {
+				settings.RowCapacityHint = parsed
+			} else {
+				backend.Logger.Warn("Failed to parse rowCapacityHint value, defaulting to 0", "error", parseErr)
+			}
+		}
+	}
+	// A negative hint is meaningless; treat it as disabled.
+	if settings.RowCapacityHint < 0 {
+		settings.RowCapacityHint = 0
+	}
+
+	// Set default values
 	if strings.TrimSpace(settings.DialTimeout) == "" {
 		settings.DialTimeout = "10"
 	}
 	if strings.TrimSpace(settings.QueryTimeout) == "" {
 		settings.QueryTimeout = "60"
 	}
+	if strings.TrimSpace(settings.ConnMaxLifetime) == "" {
+		settings.ConnMaxLifetime = "5"
+	}
+	if strings.TrimSpace(settings.MaxIdleConns) == "" {
+		settings.MaxIdleConns = "25"
+	}
+	if strings.TrimSpace(settings.MaxOpenConns) == "" {
+		settings.MaxOpenConns = "50"
+	}
+
+	// Load secure settings
 	password, ok := config.DecryptedSecureJSONData["password"]
 	if ok {
 		settings.Password = password
@@ -218,6 +326,17 @@ func LoadSettings(ctx context.Context, config backend.DataSourceInstanceSettings
 		}
 
 		settings.ProxyOptions = proxyOpts
+	}
+
+	// This condition can be removed once the minimum supported Grafana version is 11.0.0
+	if settings.EnableRowLimit {
+		cfg := sdkconfig.GrafanaConfigFromContext(ctx)
+		sqlCfg, err := cfg.SQL()
+		if err != nil {
+			return settings, err
+		}
+
+		settings.RowLimit = sqlCfg.RowLimit
 	}
 
 	return settings, settings.isValid()

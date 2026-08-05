@@ -1,17 +1,34 @@
-import { DataSourceSettings, KeyValue } from "@grafana/data";
-import { defaultLogsTable, defaultTraceTable } from "otel";
-import { useEffect, useRef } from "react";
-import { CHConfig, CHHttpHeader, CHSecureConfig, Protocol } from "types/config";
-import { pluginVersion } from "utils/version";
+import { DataSourceSettings, KeyValue } from '@grafana/data';
+import { useEffect, useRef } from 'react';
+import { CHConfig, CHHttpHeader, CHSecureConfig, defaultCHAdditionalSettingsConfig, Protocol } from 'types/config';
+import { pluginVersion } from 'utils/version';
+
+/**
+ * Mirrors the DataSourceConfigValidationAPI interface from @grafana/data.
+ * Defined locally until this plugin updates its @grafana/data peer dependency
+ * to a version that includes DataSourceConfigValidationAPI in its exports.
+ */
+export interface ValidationAPI {
+  registerValidation: (validator: () => Promise<boolean> | boolean) => () => void;
+  validate: () => Promise<boolean>;
+  isValid: () => boolean;
+  getErrors: () => Record<string, string>;
+  setError: (field: string, message: string) => void;
+  clearError: (field: string) => void;
+}
 
 /**
  * Handles saving HTTP headers to Grafana config.
- * 
+ *
  * All header keys go to the unsecure config.
  * If the header is marked as secure, its value goes to the
  * secure json config where it is hidden.
  */
-export const onHttpHeadersChange = (headers: CHHttpHeader[], options: DataSourceSettings<CHConfig, CHSecureConfig>, onOptionsChange: (opts: DataSourceSettings<CHConfig, CHSecureConfig>) => void) => {
+export const onHttpHeadersChange = (
+  headers: CHHttpHeader[],
+  options: DataSourceSettings<CHConfig, CHSecureConfig>,
+  onOptionsChange: (opts: DataSourceSettings<CHConfig, CHSecureConfig>) => void
+) => {
   const httpHeaders: CHHttpHeader[] = [];
   const secureHttpHeaderKeys: KeyValue<boolean> = {};
   const secureHttpHeaderValues: KeyValue<string> = {};
@@ -47,23 +64,26 @@ export const onHttpHeadersChange = (headers: CHHttpHeader[], options: DataSource
     ...options,
     jsonData: {
       ...options.jsonData,
-      httpHeaders
+      httpHeaders,
     },
     secureJsonFields: {
       ...options.secureJsonFields,
-      ...secureHttpHeaderKeys
+      ...secureHttpHeaderKeys,
     },
     secureJsonData: {
       ...options.secureJsonData,
-      ...secureHttpHeaderValues
+      ...secureHttpHeaderValues,
     },
   });
-}
+};
 
 /**
  * Applies default settings and migrations to config options.
  */
-export const useConfigDefaults = (options: DataSourceSettings<CHConfig>, onOptionsChange: (opts: DataSourceSettings<CHConfig>) => void) => {
+export const useConfigDefaults = (
+  options: DataSourceSettings<CHConfig>,
+  onOptionsChange: (opts: DataSourceSettings<CHConfig>) => void
+) => {
   const appliedDefaults = useRef<boolean>(false);
   useEffect(() => {
     if (appliedDefaults.current) {
@@ -96,16 +116,16 @@ export const useConfigDefaults = (options: DataSourceSettings<CHConfig>, onOptio
     if (!jsonData.logs || jsonData.logs.defaultTable === undefined) {
       jsonData.logs = {
         ...jsonData.logs,
-        defaultTable: defaultLogsTable,
+        defaultTable: defaultCHAdditionalSettingsConfig.logs?.defaultTable,
         selectContextColumns: true,
-        contextColumns: []
+        contextColumns: [],
       };
     }
 
     if (!jsonData.traces || jsonData.traces.defaultTable === undefined) {
       jsonData.traces = {
         ...jsonData.traces,
-        defaultTable: defaultTraceTable
+        defaultTable: defaultCHAdditionalSettingsConfig.traces?.defaultTable,
       };
     }
 
@@ -115,4 +135,50 @@ export const useConfigDefaults = (options: DataSourceSettings<CHConfig>, onOptio
     });
     appliedDefaults.current = true;
   }, [options, onOptionsChange]);
-}
+};
+
+/**
+ * Factory that creates a local DataSourceConfigValidationAPI instance.
+ *
+ * Used when Grafana core does not yet pass props.validation down to the config
+ * editor. Config editors should prefer props.validation when present and fall
+ * back to a memoised instance created by this factory:
+ *
+ *   const validationAPI = useMemo(() => props.validation ?? createValidationAPI(), [props.validation]);
+ *
+ * Validators registered via registerValidation are run in order when
+ * validate() is called. setError / clearError let components push field-level
+ * errors imperatively (e.g. on blur or after an async check).
+ */
+export const createValidationAPI = (): ValidationAPI => {
+  const validators = new Set<() => Promise<boolean> | boolean>();
+  const errors: Record<string, string> = {};
+
+  return {
+    registerValidation(validator: () => Promise<boolean> | boolean): () => void {
+      validators.add(validator);
+      return () => validators.delete(validator);
+    },
+
+    async validate(): Promise<boolean> {
+      const results = await Promise.all(Array.from(validators).map((v) => Promise.resolve(v())));
+      return results.every(Boolean);
+    },
+
+    isValid(): boolean {
+      return Object.keys(errors).length === 0;
+    },
+
+    getErrors(): Record<string, string> {
+      return errors;
+    },
+
+    setError(field: string, message: string): void {
+      errors[field] = message;
+    },
+
+    clearError(field: string): void {
+      delete errors[field];
+    },
+  };
+};

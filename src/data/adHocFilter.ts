@@ -1,7 +1,14 @@
+import { AdHocVariableFilter } from '@grafana/data';
 import { getTable } from './ast';
+
+// OTel-standard Map columns. Retained as a fallback so behavior does not
+// regress when schema info has not been populated (e.g. in tests that
+// construct AdHocFilter directly without going through the datasource).
+const DEFAULT_MAP_COLUMNS: ReadonlySet<string> = new Set(['ResourceAttributes', 'ScopeAttributes', 'LogAttributes']);
 
 export class AdHocFilter {
   private _targetTable = '';
+  private _mapColumns: ReadonlySet<string> = DEFAULT_MAP_COLUMNS;
 
   setTargetTableFromQuery(query: string) {
     this._targetTable = getTable(query);
@@ -10,7 +17,59 @@ export class AdHocFilter {
     }
   }
 
-  apply(sql: string, adHocFilters: AdHocVariableFilter[]): string {
+  /**
+   * Register the set of column names known to be `Map(...)` (or
+   * `Nullable(Map(...))`) in the current adhoc context. Used by `escapeKey`
+   * to disambiguate `col.subkey` dotted paths — without this, there is no
+   * way to tell a table-prefix apart from a Map-key access.
+   *
+   * The default set (`ResourceAttributes`, `ScopeAttributes`,
+   * `LogAttributes`) is preserved as a fallback; callers should pass the
+   * union of discovered columns plus any OTel-standard names they want to
+   * keep supported.
+   */
+  setMapColumns(mapColumns: Iterable<string>) {
+    const merged = new Set<string>(DEFAULT_MAP_COLUMNS);
+    for (const c of mapColumns) {
+      if (c) {
+        merged.add(c);
+      }
+    }
+    this._mapColumns = merged;
+  }
+
+  buildFilterString(adHocFilters: AdHocVariableFilter[], useJSON = false): string {
+    if (!adHocFilters || adHocFilters.length === 0) {
+      return '';
+    }
+
+    const validFilters = adHocFilters.filter((filter: AdHocVariableFilter) => {
+      const valid = isValid(filter);
+      if (!valid) {
+        console.warn('Invalid adhoc filter will be ignored:', filter);
+      }
+      return valid;
+    });
+
+    const filters = validFilters
+      .map((f, i) => {
+        const key = escapeKey(f.key, useJSON, this._mapColumns);
+        const value = escapeValueBasedOnOperator(f.value, f.operator);
+        const condition = i !== validFilters.length - 1 ? (f.condition ? f.condition : 'AND') : '';
+        const operator = convertOperatorToClickHouseOperator(f.operator);
+        return ` ${key} ${operator} ${value} ${condition}`;
+      })
+      .join('');
+
+    return filters;
+  }
+
+  /** @internal — exposed for tests; returns the active Map-column set. */
+  getMapColumns(): ReadonlySet<string> {
+    return this._mapColumns;
+  }
+
+  apply(sql: string, adHocFilters: AdHocVariableFilter[], useJSON = false): string {
     if (sql === '' || !adHocFilters || adHocFilters.length === 0) {
       return sql;
     }
@@ -28,22 +87,7 @@ export class AdHocFilter {
       return sql;
     }
 
-    const filters = adHocFilters
-      .filter((filter: AdHocVariableFilter) => {
-        const valid = isValid(filter);
-        if (!valid) {
-          console.warn('Invalid adhoc filter will be ignored:', filter);
-        }
-        return valid;
-      })
-      .map((f, i) => {
-        const key = f.key.includes('.') ? f.key.split('.')[1] : f.key;
-        const value = escapeValueBasedOnOperator(f.value, f.operator);
-        const condition = i !== adHocFilters.length - 1 ? (f.condition ? f.condition : 'AND') : '';
-        const operator = convertOperatorToClickHouseOperator(f.operator);
-        return ` ${key} ${operator} ${value} ${condition}`;
-      })
-      .join('');
+    const filters = this.buildFilterString(adHocFilters, useJSON);
 
     if (filters === '') {
       return sql;
@@ -55,37 +99,108 @@ export class AdHocFilter {
 }
 
 function isValid(filter: AdHocVariableFilter): boolean {
-  return filter.key !== undefined && filter.operator !== undefined && filter.value !== undefined;
+  return filter.key !== undefined && filter.key !== '' && filter.operator !== undefined && filter.value !== undefined;
 }
 
-function escapeValueBasedOnOperator(s: string, operator: AdHocVariableFilterOperator): string {
+// Two-layer escape for Map keys embedded as `MapCol[\'<key>\']` inside the
+// outer single-quoted string passed to `additional_table_filters`. A raw
+// `'` in the key has to survive (a) the inner bracket-access string literal
+// and (b) the outer filter string — so each `'` produces `\\\'` and each
+// `\` produces `\\\\` at SQL source level.
+function escapeMapKeyForOuterFilter(key: string): string {
+  return key.replace(/\\/g, '\\\\\\\\').replace(/'/g, "\\\\\\'");
+}
+
+// Self-describing Map access minted by getTagKeys: `MapCol['key']` or
+// `table.MapCol['key']`. The bracket content is a ClickHouse string-literal
+// body (quotes and backslashes pre-escaped with `\`).
+const BRACKET_MAP_ACCESS = /^(?:([^.[\]']+)\.)?([^.[\]']+)\['((?:[^'\\]|\\.)*)'\]$/;
+
+// Inverse of the ClickHouse string-literal escaping applied when the key was
+// minted: `\X` → `X`.
+function unescapeCHStringLiteral(s: string): string {
+  return s.replace(/\\(.)/g, '$1');
+}
+
+function escapeKey(s: string, isJSON = false, mapColumns: ReadonlySet<string> = DEFAULT_MAP_COLUMNS): string {
+  // Convert arrayElement(col, 'key') → col['key']. Handled up front so the
+  // dotted-path logic below doesn't see synthetic function syntax.
+  if (s.startsWith('arrayElement(') && s.endsWith(')')) {
+    const match = s.match(/arrayElement\((.*?),\s*['"](.*?)['"]\)/);
+    if (match) {
+      const [_, array, key] = match;
+      return `${array}[\\'${escapeMapKeyForOuterFilter(key)}\\']`;
+    }
+  }
+
+  // Explicit bracket form (`MapCol['key']` or `table.MapCol['key']`) is
+  // handled without consulting mapColumns, so saved filters render
+  // correctly on a fresh dashboard load, before getTagKeys has populated
+  // the Map-column cache.
+  const bracketed = s.match(BRACKET_MAP_ACCESS);
+  if (bracketed) {
+    const [, , mapCol, literalKey] = bracketed;
+    const mapKey = unescapeCHStringLiteral(literalKey);
+    if (isJSON) {
+      return `${mapCol}.${mapKey}`;
+    }
+    return `${mapCol}[\\'${escapeMapKeyForOuterFilter(mapKey)}\\']`;
+  }
+
+  const parts = s.split('.');
+
+  // Table-prefixed Map access: `table.MapCol.key1.key2` → `MapCol['key1.key2']`.
+  // We only treat `parts[1]` as the Map column when parts[0] is not itself a
+  // known Map column — otherwise `MapCol.a.b` would be misread as having `a`
+  // as the Map column.
+  if (parts.length >= 3 && !mapColumns.has(parts[0]) && mapColumns.has(parts[1])) {
+    const mapCol = parts[1];
+    const mapKey = parts.slice(2).join('.');
+    if (isJSON) {
+      return `${mapCol}.${mapKey}`;
+    }
+    return `${mapCol}[\\'${escapeMapKeyForOuterFilter(mapKey)}\\']`;
+  }
+
+  // Non-prefixed Map access: `MapCol.key1.key2` (hideTableName=true or
+  // OTel-style, where the first part is the Map column). Covers length 2
+  // and length 3+ alike.
+  if (parts.length >= 2 && mapColumns.has(parts[0])) {
+    const mapCol = parts[0];
+    const mapKey = parts.slice(1).join('.');
+    if (isJSON) {
+      return s;
+    }
+    return `${mapCol}[\\'${escapeMapKeyForOuterFilter(mapKey)}\\']`;
+  }
+
+  // Default: bare column, or `table.col` reference where col isn't a Map.
+  // Strip the leading table prefix if present.
+  return s.includes('.') ? s.split('.').slice(1).join('.') : s;
+}
+
+function escapeValueBasedOnOperator(s: string, operator: string): string {
   if (operator === 'IN') {
     // Allow list of values without parentheses
     if (s.length > 2 && s[0] !== '(' && s[s.length - 1] !== ')') {
-      s = `(${s})`
+      s = `(${s})`;
     }
-
     return s.replace(/'/g, "\\'");
   } else {
     return `\\'${s}\\'`;
   }
 }
 
-function convertOperatorToClickHouseOperator(operator: AdHocVariableFilterOperator): string {
+function convertOperatorToClickHouseOperator(operator: string): string {
+  // Grafana's "Matches regex" (=~) and "Does not match regex" (!~) are regex
+  // operators, so map them to ClickHouse's REGEXP. Using ILIKE here produced
+  // semantically wrong filters and prevented index usage for indexed columns
+  // (see grafana/clickhouse-datasource#1443).
   if (operator === '=~') {
-    return 'ILIKE';
+    return 'REGEXP';
   }
   if (operator === '!~') {
-    return 'NOT ILIKE';
+    return 'NOT REGEXP';
   }
   return operator;
 }
-
-type AdHocVariableFilterOperator = '>' | '<' | '=' | '!=' | '=~' | '!~' | 'IN';
-
-export type AdHocVariableFilter = {
-  key: string;
-  operator: AdHocVariableFilterOperator;
-  value: string;
-  condition?: string;
-};

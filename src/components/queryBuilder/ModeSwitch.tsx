@@ -1,5 +1,5 @@
 import React from 'react';
-import { RadioButtonGroup, InlineFormLabel } from '@grafana/ui';
+import { RadioButtonGroup, InlineField, InlineFormLabel } from '@grafana/ui';
 
 export interface ModeSwitchProps {
   labelA: string;
@@ -8,7 +8,7 @@ export interface ModeSwitchProps {
   onChange: (value: boolean) => void;
   label: string;
   tooltip: string;
-};
+}
 
 /**
  * Component for switching between modes. Boxes are labeled unlike regular Switch.
@@ -28,15 +28,14 @@ export const ModeSwitch = (props: ModeSwitchProps) => {
   ];
 
   return (
-    <div className="gf-form">
-      <InlineFormLabel width={8} className="query-keyword" tooltip={tooltip}>
-        {label}
-      </InlineFormLabel>
-      <RadioButtonGroup<boolean>
-        options={options}
-        value={value}
-        onChange={v => onChange(v)}
-      />
-    </div>
+    <InlineField
+      label={
+        <InlineFormLabel width={8} className="query-keyword" tooltip={tooltip}>
+          {label}
+        </InlineFormLabel>
+      }
+    >
+      <RadioButtonGroup<boolean> options={options} value={value} onChange={(v) => onChange(v)} />
+    </InlineField>
   );
-}
+};

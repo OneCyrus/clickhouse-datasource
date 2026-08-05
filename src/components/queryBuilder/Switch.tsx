@@ -1,5 +1,5 @@
 import React from 'react';
-import { InlineFormLabel, Switch as GrafanaSwitch, useTheme } from '@grafana/ui';
+import { InlineField, InlineFormLabel, Switch as GrafanaSwitch, useTheme } from '@grafana/ui';
 import { styles } from 'styles';
 
 interface SwitchProps {
@@ -7,12 +7,13 @@ interface SwitchProps {
   onChange: (value: boolean) => void;
   label: string;
   tooltip: string;
+  disabled?: boolean;
   inline?: boolean;
   wide?: boolean;
 }
 
 export const Switch = (props: SwitchProps) => {
-  const { value, onChange, label, tooltip, inline, wide } = props;
+  const { value, onChange, label, tooltip, disabled, inline, wide } = props;
 
   const theme = useTheme();
   const switchContainerStyle: React.CSSProperties = {
@@ -22,20 +23,24 @@ export const Switch = (props: SwitchProps) => {
     alignItems: 'center',
   };
 
-  const labelStyle = 'query-keyword ' + (inline ? styles.QueryEditor.inlineField : '')
+  const labelStyle = 'query-keyword ' + (inline ? styles.QueryEditor.inlineField : '');
 
   return (
-    <div className="gf-form">
-      <InlineFormLabel width={wide ? 12 : 8} className={labelStyle} tooltip={tooltip}>
-        {label}
-      </InlineFormLabel>
+    <InlineField
+      label={
+        <InlineFormLabel width={wide ? 12 : 8} className={labelStyle} tooltip={tooltip}>
+          {label}
+        </InlineFormLabel>
+      }
+    >
       <div style={switchContainerStyle}>
         <GrafanaSwitch
-          className="gf-form"
+          disabled={disabled}
           value={value}
-          onChange={e => onChange(e.currentTarget.checked)}
+          onChange={(e) => onChange(e.currentTarget.checked)}
+          aria-label={label}
         />
       </div>
-    </div>
+    </InlineField>
   );
 };

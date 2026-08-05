@@ -23,7 +23,7 @@ export interface QueryBuilderOptions {
   database: string;
   table: string;
   queryType: QueryType;
-  
+
   mode?: BuilderMode; // TODO: no longer required?
 
   columns?: SelectedColumn[];
@@ -39,7 +39,7 @@ export interface QueryBuilderOptions {
   meta?: {
     /**
      * When enabled, will hide most/all of the query builder options.
-     * 
+     *
      * Intended to be used for trace ID lookups where we only care to show the visualization panel
      */
     minimized?: boolean;
@@ -55,11 +55,34 @@ export interface QueryBuilderOptions {
      */
     isTraceIdMode?: boolean;
     traceId?: string;
+    /**
+     * true when the trace timestamp optimization table is detected
+     */
+    hasTraceTimestampTable?: boolean;
+    /**
+     * Suffix used to locate the companion trace-timestamp index table
+     * (e.g. `_trace_id_ts`). When omitted, generators fall back to the
+     * built-in OTel default.
+     */
+    traceTimestampTableSuffix?: string;
+
+    /**
+     * True if "Nested" column types should be treated as if they
+     * were created with flatten_nested=1. Applies to trace Events and Links columns.
+     */
+    flattenNested?: boolean;
+    traceEventsColumnPrefix?: string;
+    traceLinksColumnPrefix?: string;
+    /**
+     * True when the tags/serviceTags columns (and nested events/links attributes) use
+     * the ClickHouse JSON type instead of Map(String,String).
+     */
+    tagsAreJSON?: boolean;
 
     // Logs & Traces
     otelEnabled?: boolean;
     otelVersion?: string;
-  }
+  };
 }
 
 export enum AggregateType {
@@ -76,7 +99,7 @@ export type AggregateColumn = {
   aggregateType: AggregateType;
   column: string;
   alias?: string;
-}
+};
 
 export interface Field {
   name: string;
@@ -112,17 +135,38 @@ export interface TableColumn {
   aggregatable?: boolean;
 }
 
+export interface SqlFunction {
+  name: string;
+  isAggregate: boolean;
+  caseInsensitive: boolean;
+  aliasTo: string;
+  origin: string;
+  description: string;
+  syntax: string;
+  arguments: string;
+  returnedValue: string;
+  examples: string;
+  categories: string;
+}
+
 /**
  * Some columns are used to enable certain features.
  * This enum defines the different use cases that a column may be used for in the query generator.
  * For example, "Time" would be used to identify the primary time column for a time series.
  */
 export enum ColumnHint {
+  /**
+   * An optional lower precision timestamp used for filtering logs.
+   */
+  FilterTime = 'filter_time',
   Time = 'time',
+
+  ResourceAttributes = 'resource_attributes',
+  ScopeAttributes = 'scope_attributes',
+  LogAttributes = 'log_attributes',
 
   LogLevel = 'log_level',
   LogMessage = 'log_message',
-  LogLabels = 'log_labels',
 
   TraceId = 'trace_id',
   TraceSpanId = 'trace_span_id',
@@ -133,7 +177,11 @@ export enum ColumnHint {
   TraceTags = 'trace_tags',
   TraceServiceTags = 'trace_service_tags',
   TraceStatusCode = 'trace_status_code',
-  TraceEventsPrefix = 'trace_events_prefix',
+  TraceKind = 'trace_kind',
+  TraceStatusMessage = 'trace_status_message',
+  TraceInstrumentationLibraryName = 'instrumentation_library_name',
+  TraceInstrumentationLibraryVersion = 'instrumentation_library_version',
+  TraceState = 'trace_state',
 }
 
 /**
@@ -199,6 +247,8 @@ export enum FilterOperator {
   GreaterThanOrEqual = '>=',
   Like = 'LIKE',
   NotLike = 'NOT LIKE',
+  ILike = 'ILIKE',
+  NotILike = 'NOT ILIKE',
   In = 'IN',
   NotIn = 'NOT IN',
   WithInGrafanaTimeRange = 'WITH IN DASHBOARD TIME RANGE',
@@ -226,7 +276,7 @@ export interface CommonFilterProps {
   /**
    * If provided, SQL generator will ignore "key" and instead
    * find the intended column by the hint.
-   * 
+   *
    * Note that the column MUST be present in the selected columns array in order
    * for the filter to be applied unless key is also provided.
    */
@@ -256,7 +306,9 @@ export interface StringFilter extends CommonFilterProps {
     | FilterOperator.Equals
     | FilterOperator.NotEquals
     | FilterOperator.Like
-    | FilterOperator.NotLike;
+    | FilterOperator.NotLike
+    | FilterOperator.ILike
+    | FilterOperator.NotILike;
   value: string;
 }
 

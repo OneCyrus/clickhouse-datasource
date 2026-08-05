@@ -6,6 +6,13 @@ export const trackClickhouseDashboardLoaded = (props: ClickhouseDashboardLoadedP
   reportInteraction('grafana_ds_clickhouse_dashboard_loaded', props);
 };
 
+export const trackClickhouseHealthCheckFailed = (props: { error_category: string; protocol: string }) => {
+  reportInteraction('grafana_ds_clickhouse_healthcheck_failed', {
+    error_category: props.error_category,
+    protocol: props.protocol,
+  });
+};
+
 export type ClickhouseCounters = {
   sql_queries: number;
   sql_query_type_table: number;
@@ -56,10 +63,10 @@ export const analyzeQueries = (queries: CHQuery[]): ClickhouseCounters => {
     builder_query_type_traces_search: 0,
     builder_query_type_traces_id: 0,
     builder_minimized_queries: 0,
-    builder_otel_queries: 0
+    builder_otel_queries: 0,
   };
 
-  queries.forEach(q => {
+  queries.forEach((q) => {
     if (q.editorType === EditorType.SQL) {
       c.sql_queries++;
 

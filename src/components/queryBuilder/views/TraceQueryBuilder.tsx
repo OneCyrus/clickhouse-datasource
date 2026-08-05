@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { Filter, QueryBuilderOptions, SelectedColumn, ColumnHint, TimeUnit, OrderBy } from 'types/queryBuilder';
+import { ColumnRolesHelp } from '../ColumnRolesHelp';
 import { ColumnSelect } from '../ColumnSelect';
+import { Components as allSelectors } from 'selectors';
 import { FiltersEditor } from '../FilterEditor';
 import allLabels from 'labels';
 import { ModeSwitch } from '../ModeSwitch';
 import { getColumnByHint } from 'data/sqlGenerator';
-import { Alert, Collapse, VerticalGroup } from '@grafana/ui';
+import { Alert, Collapse, InlineFieldRow, Stack } from '@grafana/ui';
 import { DurationUnitSelect } from 'components/queryBuilder/DurationUnitSelect';
 import { Datasource } from 'data/CHDatasource';
 import { useBuilderOptionChanges } from 'hooks/useBuilderOptionChanges';
@@ -13,11 +15,17 @@ import useColumns from 'hooks/useColumns';
 import { BuilderOptionsReducerAction, setOptions, setOtelEnabled, setOtelVersion } from 'hooks/useBuilderOptionsState';
 import useIsNewQuery from 'hooks/useIsNewQuery';
 import { OtelVersionSelect } from '../OtelVersionSelect';
-import { useDefaultFilters, useOtelColumns, useTraceDefaultsOnMount } from './traceQueryBuilderHooks';
+import {
+  useDefaultFilters,
+  useDefaultTraceColumnsByName,
+  useOtelColumns,
+  useTraceDefaultsOnMount,
+} from './traceQueryBuilderHooks';
 import TraceIdInput from '../TraceIdInput';
 import { OrderByEditor, getOrderByOptions } from '../OrderByEditor';
 import { LimitEditor } from '../LimitEditor';
 import { LabeledInput } from 'components/configEditor/LabeledInput';
+import { Switch } from '../Switch';
 
 interface TraceQueryBuilderProps {
   datasource: Datasource;
@@ -39,7 +47,15 @@ interface TraceQueryBuilderState {
   durationUnit: TimeUnit;
   tagsColumn?: SelectedColumn;
   serviceTagsColumn?: SelectedColumn;
-  eventsColumnPrefix?: SelectedColumn;
+  kindColumn?: SelectedColumn;
+  statusCodeColumn?: SelectedColumn;
+  statusMessageColumn?: SelectedColumn;
+  stateColumn?: SelectedColumn;
+  instrumentationLibraryNameColumn?: SelectedColumn;
+  instrumentationLibraryVersionColumn?: SelectedColumn;
+  flattenNested?: boolean;
+  traceEventsColumnPrefix?: string;
+  traceLinksColumnPrefix?: string;
   traceId: string;
   orderBy: OrderBy[];
   limit: number;
@@ -50,32 +66,50 @@ export const TraceQueryBuilder = (props: TraceQueryBuilderProps) => {
   const { datasource, builderOptions, builderOptionsDispatch } = props;
   const allColumns = useColumns(datasource, builderOptions.database, builderOptions.table);
   const isNewQuery = useIsNewQuery(builderOptions);
-  const [showConfigWarning, setConfigWarningOpen] = useState(datasource.getDefaultTraceColumns().size === 0 && builderOptions.columns?.length === 0);
+  const [showConfigWarning, setConfigWarningOpen] = useState(
+    datasource.getDefaultTraceColumns().size === 0 && builderOptions.columns?.length === 0
+  );
   const [isColumnsOpen, setColumnsOpen] = useState<boolean>(showConfigWarning); // Toggle Columns collapse section
-  const [isFiltersOpen, setFiltersOpen] = useState<boolean>(!(builderOptions.meta?.isTraceIdMode && builderOptions.meta.traceId)); // Toggle Filters collapse section
+  const [isFiltersOpen, setFiltersOpen] = useState<boolean>(
+    !(builderOptions.meta?.isTraceIdMode && builderOptions.meta.traceId)
+  ); // Toggle Filters collapse section
   const labels = allLabels.components.TraceQueryBuilder;
-  const builderState: TraceQueryBuilderState = useMemo(() => ({
-    isTraceIdMode: builderOptions.meta?.isTraceIdMode || false,
-    otelEnabled: builderOptions.meta?.otelEnabled || false,
-    otelVersion: builderOptions.meta?.otelVersion || '',
-    traceIdColumn: getColumnByHint(builderOptions, ColumnHint.TraceId),
-    spanIdColumn: getColumnByHint(builderOptions, ColumnHint.TraceSpanId),
-    parentSpanIdColumn: getColumnByHint(builderOptions, ColumnHint.TraceParentSpanId),
-    serviceNameColumn: getColumnByHint(builderOptions, ColumnHint.TraceServiceName),
-    operationNameColumn: getColumnByHint(builderOptions, ColumnHint.TraceOperationName),
-    startTimeColumn: getColumnByHint(builderOptions, ColumnHint.Time),
-    durationTimeColumn: getColumnByHint(builderOptions, ColumnHint.TraceDurationTime),
-    durationUnit: builderOptions.meta?.traceDurationUnit || TimeUnit.Nanoseconds,
-    tagsColumn: getColumnByHint(builderOptions, ColumnHint.TraceTags),
-    serviceTagsColumn: getColumnByHint(builderOptions, ColumnHint.TraceServiceTags),
-    eventsColumnPrefix: getColumnByHint(builderOptions, ColumnHint.TraceEventsPrefix),
-    traceId: builderOptions.meta?.traceId || '',
-    orderBy: builderOptions.orderBy || [],
-    limit: builderOptions.limit || 0,
-    filters: builderOptions.filters || [],
-  }), [builderOptions]);
+  const builderState = useMemo<TraceQueryBuilderState>(
+    () => ({
+      isTraceIdMode: builderOptions.meta?.isTraceIdMode || false,
+      otelEnabled: builderOptions.meta?.otelEnabled || false,
+      otelVersion: builderOptions.meta?.otelVersion || '',
+      traceIdColumn: getColumnByHint(builderOptions, ColumnHint.TraceId),
+      spanIdColumn: getColumnByHint(builderOptions, ColumnHint.TraceSpanId),
+      parentSpanIdColumn: getColumnByHint(builderOptions, ColumnHint.TraceParentSpanId),
+      serviceNameColumn: getColumnByHint(builderOptions, ColumnHint.TraceServiceName),
+      operationNameColumn: getColumnByHint(builderOptions, ColumnHint.TraceOperationName),
+      startTimeColumn: getColumnByHint(builderOptions, ColumnHint.Time),
+      durationTimeColumn: getColumnByHint(builderOptions, ColumnHint.TraceDurationTime),
+      durationUnit: builderOptions.meta?.traceDurationUnit || TimeUnit.Nanoseconds,
+      tagsColumn: getColumnByHint(builderOptions, ColumnHint.TraceTags),
+      serviceTagsColumn: getColumnByHint(builderOptions, ColumnHint.TraceServiceTags),
+      kindColumn: getColumnByHint(builderOptions, ColumnHint.TraceKind),
+      statusCodeColumn: getColumnByHint(builderOptions, ColumnHint.TraceStatusCode),
+      statusMessageColumn: getColumnByHint(builderOptions, ColumnHint.TraceStatusMessage),
+      stateColumn: getColumnByHint(builderOptions, ColumnHint.TraceState),
+      instrumentationLibraryNameColumn: getColumnByHint(builderOptions, ColumnHint.TraceInstrumentationLibraryName),
+      instrumentationLibraryVersionColumn: getColumnByHint(
+        builderOptions,
+        ColumnHint.TraceInstrumentationLibraryVersion
+      ),
+      flattenNested: Boolean(builderOptions.meta?.flattenNested),
+      traceEventsColumnPrefix: builderOptions.meta?.traceEventsColumnPrefix || '',
+      traceLinksColumnPrefix: builderOptions.meta?.traceLinksColumnPrefix || '',
+      traceId: builderOptions.meta?.traceId || '',
+      orderBy: builderOptions.orderBy || [],
+      limit: builderOptions.limit || 0,
+      filters: builderOptions.filters || [],
+    }),
+    [builderOptions]
+  );
 
-  const onOptionChange = useBuilderOptionChanges<TraceQueryBuilderState>(next => {
+  const onOptionChange = useBuilderOptionChanges<TraceQueryBuilderState>((next) => {
     const nextColumns = [
       next.traceIdColumn,
       next.spanIdColumn,
@@ -86,34 +120,65 @@ export const TraceQueryBuilder = (props: TraceQueryBuilderProps) => {
       next.durationTimeColumn,
       next.tagsColumn,
       next.serviceTagsColumn,
-      next.eventsColumnPrefix
-    ].filter(c => c !== undefined) as SelectedColumn[];
+      next.kindColumn,
+      next.statusCodeColumn,
+      next.statusMessageColumn,
+      next.stateColumn,
+      next.instrumentationLibraryNameColumn,
+      next.instrumentationLibraryVersionColumn,
+    ].filter((c) => c !== undefined) as SelectedColumn[];
 
-    builderOptionsDispatch(setOptions({
-      columns: nextColumns,
-      orderBy: next.orderBy,
-      limit: next.limit,
-      filters: next.filters,
-      meta: {
-        isTraceIdMode: next.isTraceIdMode,
-        traceDurationUnit: next.durationUnit,
-        traceId: next.traceId,
-      }
-    }));
+    builderOptionsDispatch(
+      setOptions({
+        columns: nextColumns,
+        orderBy: next.orderBy,
+        limit: next.limit,
+        filters: next.filters,
+        meta: {
+          isTraceIdMode: next.isTraceIdMode,
+          traceDurationUnit: next.durationUnit,
+          traceId: next.traceId,
+          flattenNested: next.flattenNested,
+          traceEventsColumnPrefix: next.traceEventsColumnPrefix,
+          traceLinksColumnPrefix: next.traceLinksColumnPrefix,
+        },
+      })
+    );
   }, builderState);
 
   useTraceDefaultsOnMount(datasource, isNewQuery, builderOptions, builderOptionsDispatch);
-  useOtelColumns(builderState.otelEnabled, builderState.otelVersion, builderOptionsDispatch);
+  useDefaultTraceColumnsByName(
+    allColumns,
+    builderOptions.table,
+    isNewQuery,
+    {
+      traceId: builderState.traceIdColumn,
+      spanId: builderState.spanIdColumn,
+      parentSpanId: builderState.parentSpanIdColumn,
+      serviceName: builderState.serviceNameColumn,
+      operationName: builderState.operationNameColumn,
+      startTime: builderState.startTimeColumn,
+      durationTime: builderState.durationTimeColumn,
+    },
+    builderState.otelEnabled,
+    builderOptionsDispatch
+  );
+  useOtelColumns(builderState.otelEnabled, builderState.otelVersion, allColumns, builderOptionsDispatch);
   useDefaultFilters(builderOptions.table, builderState.isTraceIdMode, isNewQuery, builderOptionsDispatch);
 
   const configWarning = showConfigWarning && (
     <Alert title="" severity="warning" buttonContent="Close" onRemove={() => setConfigWarningOpen(false)}>
-      <VerticalGroup>
+      <Stack>
         <div>
           {'To speed up your query building, enter your default trace configuration in your '}
-          <a style={{ textDecoration: 'underline' }} href={`/connections/datasources/edit/${encodeURIComponent(datasource.uid)}#traces-config`}>ClickHouse Data Source settings</a>
+          <a
+            style={{ textDecoration: 'underline' }}
+            href={`/connections/datasources/edit/${encodeURIComponent(datasource.uid)}#traces-config`}
+          >
+            ClickHouse Data Source settings
+          </a>
         </div>
-      </VerticalGroup>
+      </Stack>
     </Alert>
   );
 
@@ -128,20 +193,23 @@ export const TraceQueryBuilder = (props: TraceQueryBuilderProps) => {
         tooltip={labels.traceModeTooltip}
       />
 
-      <Collapse label={labels.columnsSection}
-        collapsible
-        isOpen={isColumnsOpen}
-        onToggle={setColumnsOpen}
-      >
+      <Collapse label={labels.columnsSection} isOpen={isColumnsOpen} onToggle={setColumnsOpen}>
         {configWarning}
+        <ColumnRolesHelp
+          text={labels.columnsHelp.text}
+          linkText={labels.columnsHelp.linkText}
+          href={labels.columnsHelp.href}
+          testIdWrapper={allSelectors.QueryBuilder.TraceQueryBuilder.columnRolesHelp}
+          testIdLink={allSelectors.QueryBuilder.TraceQueryBuilder.columnRolesHelpLink}
+        />
         <OtelVersionSelect
           enabled={builderState.otelEnabled}
-          onEnabledChange={e => builderOptionsDispatch(setOtelEnabled(e))}
+          onEnabledChange={(e) => builderOptionsDispatch(setOtelEnabled(e))}
           selectedVersion={builderState.otelVersion}
-          onVersionChange={v => builderOptionsDispatch(setOtelVersion(v))}
+          onVersionChange={(v) => builderOptionsDispatch(setOtelVersion(v))}
           wide
         />
-        <div className="gf-form">
+        <InlineFieldRow>
           <ColumnSelect
             disabled={builderState.otelEnabled}
             allColumns={allColumns}
@@ -165,8 +233,8 @@ export const TraceQueryBuilder = (props: TraceQueryBuilderProps) => {
             wide
             inline
           />
-        </div>
-        <div className="gf-form">
+        </InlineFieldRow>
+        <InlineFieldRow>
           <ColumnSelect
             disabled={builderState.otelEnabled}
             allColumns={allColumns}
@@ -190,8 +258,8 @@ export const TraceQueryBuilder = (props: TraceQueryBuilderProps) => {
             wide
             inline
           />
-        </div>
-        <div className="gf-form">
+        </InlineFieldRow>
+        <InlineFieldRow>
           <ColumnSelect
             disabled={builderState.otelEnabled}
             allColumns={allColumns}
@@ -215,8 +283,8 @@ export const TraceQueryBuilder = (props: TraceQueryBuilderProps) => {
             wide
             inline
           />
-        </div>
-        <div className="gf-form">
+        </InlineFieldRow>
+        <InlineFieldRow>
           <ColumnSelect
             disabled={builderState.otelEnabled}
             allColumns={allColumns}
@@ -234,8 +302,8 @@ export const TraceQueryBuilder = (props: TraceQueryBuilderProps) => {
             onChange={onOptionChange('durationUnit')}
             inline
           />
-        </div>
-        <div className="gf-form">
+        </InlineFieldRow>
+        <InlineFieldRow>
           <ColumnSelect
             disabled={builderState.otelEnabled}
             allColumns={allColumns}
@@ -259,22 +327,112 @@ export const TraceQueryBuilder = (props: TraceQueryBuilderProps) => {
             wide
             inline
           />
-        </div>
-        <div className="gf-form">
+        </InlineFieldRow>
+        <InlineFieldRow>
+          <ColumnSelect
+            disabled={builderState.otelEnabled}
+            allColumns={allColumns}
+            selectedColumn={builderState.kindColumn}
+            invalid={!builderState.kindColumn}
+            onColumnChange={onOptionChange('kindColumn')}
+            columnHint={ColumnHint.TraceKind}
+            label={labels.columns.kind.label}
+            tooltip={labels.columns.kind.tooltip}
+            wide
+          />
+          <ColumnSelect
+            disabled={builderState.otelEnabled}
+            allColumns={allColumns}
+            selectedColumn={builderState.statusCodeColumn}
+            invalid={!builderState.statusCodeColumn}
+            onColumnChange={onOptionChange('statusCodeColumn')}
+            columnHint={ColumnHint.TraceStatusCode}
+            label={labels.columns.statusCode.label}
+            tooltip={labels.columns.statusCode.tooltip}
+            wide
+            inline
+          />
+        </InlineFieldRow>
+        <InlineFieldRow>
+          <ColumnSelect
+            disabled={builderState.otelEnabled}
+            allColumns={allColumns}
+            selectedColumn={builderState.statusMessageColumn}
+            invalid={!builderState.statusMessageColumn}
+            onColumnChange={onOptionChange('statusMessageColumn')}
+            columnHint={ColumnHint.TraceStatusMessage}
+            label={labels.columns.statusMessage.label}
+            tooltip={labels.columns.statusMessage.tooltip}
+            wide
+          />
+          <ColumnSelect
+            disabled={builderState.otelEnabled}
+            allColumns={allColumns}
+            selectedColumn={builderState.stateColumn}
+            invalid={!builderState.stateColumn}
+            onColumnChange={onOptionChange('stateColumn')}
+            columnHint={ColumnHint.TraceState}
+            label={labels.columns.state.label}
+            tooltip={labels.columns.state.tooltip}
+            wide
+            inline
+          />
+        </InlineFieldRow>
+        <InlineFieldRow>
+          <ColumnSelect
+            disabled={builderState.otelEnabled}
+            allColumns={allColumns}
+            selectedColumn={builderState.instrumentationLibraryNameColumn}
+            invalid={!builderState.instrumentationLibraryNameColumn}
+            onColumnChange={onOptionChange('instrumentationLibraryNameColumn')}
+            columnHint={ColumnHint.TraceInstrumentationLibraryName}
+            label={labels.columns.instrumentationLibraryName.label}
+            tooltip={labels.columns.instrumentationLibraryName.tooltip}
+            wide
+          />
+          <ColumnSelect
+            disabled={builderState.otelEnabled}
+            allColumns={allColumns}
+            selectedColumn={builderState.instrumentationLibraryVersionColumn}
+            invalid={!builderState.instrumentationLibraryVersionColumn}
+            onColumnChange={onOptionChange('instrumentationLibraryVersionColumn')}
+            columnHint={ColumnHint.TraceInstrumentationLibraryVersion}
+            label={labels.columns.instrumentationLibraryVersion.label}
+            tooltip={labels.columns.instrumentationLibraryVersion.tooltip}
+            wide
+            inline
+          />
+        </InlineFieldRow>
+        <InlineFieldRow>
+          <Switch
+            disabled={builderState.otelEnabled}
+            label={labels.columns.flattenNested.label}
+            tooltip={labels.columns.flattenNested.tooltip}
+            value={Boolean(builderState.flattenNested)}
+            onChange={onOptionChange('flattenNested')}
+            wide
+          />
+        </InlineFieldRow>
+        <InlineFieldRow>
           <LabeledInput
             disabled={builderState.otelEnabled}
             label={labels.columns.eventsPrefix.label}
             tooltip={labels.columns.eventsPrefix.tooltip}
-            value={builderState.eventsColumnPrefix?.name || ''}
-            onChange={onOptionChange('eventsColumnPrefix')}
+            value={builderState.traceEventsColumnPrefix || ''}
+            onChange={onOptionChange('traceEventsColumnPrefix')}
           />
-        </div>
+        </InlineFieldRow>
+        <InlineFieldRow>
+          <LabeledInput
+            disabled={builderState.otelEnabled}
+            label={labels.columns.linksPrefix.label}
+            tooltip={labels.columns.linksPrefix.tooltip}
+            value={builderState.traceLinksColumnPrefix || ''}
+            onChange={onOptionChange('traceLinksColumnPrefix')}
+          />
+        </InlineFieldRow>
       </Collapse>
-      <Collapse label={labels.filtersSection}
-        collapsible
-        isOpen={isFiltersOpen}
-        onToggle={setFiltersOpen}
-      >
+      <Collapse label={labels.filtersSection} isOpen={isFiltersOpen} onToggle={setFiltersOpen}>
         <OrderByEditor
           orderByOptions={getOrderByOptions(builderOptions, allColumns)}
           orderBy={builderState.orderBy}
@@ -290,7 +448,9 @@ export const TraceQueryBuilder = (props: TraceQueryBuilderProps) => {
           table={builderOptions.table}
         />
       </Collapse>
-      {builderState.isTraceIdMode && <TraceIdInput traceId={builderState.traceId} onChange={onOptionChange('traceId')} />}
+      {builderState.isTraceIdMode && (
+        <TraceIdInput traceId={builderState.traceId} onChange={onOptionChange('traceId')} />
+      )}
     </div>
   );
-}
+};

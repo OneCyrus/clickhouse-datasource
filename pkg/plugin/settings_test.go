@@ -12,11 +12,21 @@ import (
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/proxy"
+	sdkconfig "github.com/grafana/grafana-plugin-sdk-go/config"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestLoadSettings(t *testing.T) {
 	t.Run("should parse settings correctly", func(t *testing.T) {
+
+		ctx := context.Background()
+		ctx = sdkconfig.WithGrafanaConfig(ctx, sdkconfig.NewGrafanaCfg(map[string]string{
+			"GF_SQL_ROW_LIMIT":                         "1000000",
+			"GF_SQL_MAX_OPEN_CONNS_DEFAULT":            "10",
+			"GF_SQL_MAX_IDLE_CONNS_DEFAULT":            "10",
+			"GF_SQL_MAX_CONN_LIFETIME_SECONDS_DEFAULT": "60",
+		}))
+
 		type args struct {
 			config backend.DataSourceInstanceSettings
 		}
@@ -25,6 +35,7 @@ func TestLoadSettings(t *testing.T) {
 			args         args
 			wantSettings Settings
 			wantErr      error
+			testCtx      context.Context
 		}{
 			{
 				name: "should parse and set all json fields correctly",
@@ -38,7 +49,8 @@ func TestLoadSettings(t *testing.T) {
 							"defaultDatabase":"example", "tlsSkipVerify": true, "tlsAuth" : true,
 							"tlsAuthWithCACert": true, "dialTimeout": "10", "enableSecureSocksProxy": true,
 							"httpHeaders": [{ "name": " test-plain-1 ", "value": "value-1", "secure": false }],
-							"forwardGrafanaHeaders": true
+							"forwardGrafanaHeaders": true,
+							"enableRowLimit": true
 						}`),
 						DecryptedSecureJSONData: map[string]string{
 							"password":  "bar",
@@ -63,7 +75,10 @@ func TestLoadSettings(t *testing.T) {
 					TlsCACert:          "caCert",
 					TlsClientCert:      "clientCert",
 					TlsClientKey:       "clientKey",
+					ConnMaxLifetime:    "5",
 					DialTimeout:        "10",
+					MaxIdleConns:       "25",
+					MaxOpenConns:       "50",
 					QueryTimeout:       "60",
 					HttpHeaders: map[string]string{
 						"test-plain-1":  "value-1",
@@ -82,14 +97,19 @@ func TestLoadSettings(t *testing.T) {
 							KeepAlive: proxy.DefaultTimeoutOptions.KeepAlive,
 						},
 					},
+					EnableRowLimit:        true,
+					RowLimit:              1000000,
+					EnableSchemaCache:     true,
+					SchemaCacheTTLSeconds: 60,
 				},
 				wantErr: nil,
+				testCtx: ctx,
 			},
 			{
 				name: "should convert string values to the correct type",
 				args: args{
 					config: backend.DataSourceInstanceSettings{
-						JSONData:                []byte(`{"host": "test", "port": "443", "path": "custom-path", "tlsSkipVerify": "true", "tlsAuth" : "true", "tlsAuthWithCACert": "true"}`),
+						JSONData:                []byte(`{"host": "test", "port": "443", "path": "custom-path", "tlsSkipVerify": "true", "tlsAuth" : "true", "tlsAuthWithCACert": "true", "enableRowLimit": "true"}`),
 						DecryptedSecureJSONData: map[string]string{},
 					},
 				},
@@ -100,32 +120,228 @@ func TestLoadSettings(t *testing.T) {
 					InsecureSkipVerify: true,
 					TlsClientAuth:      true,
 					TlsAuthWithCACert:  true,
+					ConnMaxLifetime:    "5",
 					DialTimeout:        "10",
+					MaxIdleConns:       "25",
+					MaxOpenConns:       "50",
 					QueryTimeout:       "60",
-					ProxyOptions:       nil,
+					ProxyOptions:          nil,
+					EnableRowLimit:        true,
+					RowLimit:              1000000,
+					EnableSchemaCache:     true,
+					SchemaCacheTTLSeconds: 60,
 				},
 				wantErr: nil,
+				testCtx: ctx,
 			},
 			{
 				name: "should parse v3 config fields into new fields",
 				args: args{
 					config: backend.DataSourceInstanceSettings{
-						JSONData:                []byte(`{"server": "test", "port": 443, "timeout": "10"}`),
+						JSONData:                []byte(`{"server": "test", "port": 443, "timeout": "10", "enableRowLimit": true}`),
 						DecryptedSecureJSONData: map[string]string{},
 					},
 				},
 				wantSettings: Settings{
-					Host:         "test",
-					Port:         443,
-					DialTimeout:  "10",
-					QueryTimeout: "60",
+					Host:            "test",
+					Port:            443,
+					ConnMaxLifetime: "5",
+					DialTimeout:     "10",
+					MaxIdleConns:    "25",
+					MaxOpenConns:    "50",
+					QueryTimeout:          "60",
+					RowLimit:              1000000,
+					EnableRowLimit:        true,
+					EnableSchemaCache:     true,
+					SchemaCacheTTLSeconds: 60,
 				},
 				wantErr: nil,
+				testCtx: ctx,
+			},
+			{
+				name: "should disable row limit",
+				args: args{
+					config: backend.DataSourceInstanceSettings{
+						UID: "ds-uid",
+						JSONData: []byte(`{
+							"host": "foo", "port": 443,
+							"path": "custom-path", "protocol": "http",
+							"username": "baz",
+							"defaultDatabase":"example", "tlsSkipVerify": true, "tlsAuth" : true,
+							"tlsAuthWithCACert": true, "dialTimeout": "10", "enableSecureSocksProxy": true,
+							"httpHeaders": [{ "name": " test-plain-1 ", "value": "value-1", "secure": false }],
+							"forwardGrafanaHeaders": true,
+							"enableRowLimit": false
+						}`),
+						DecryptedSecureJSONData: map[string]string{
+							"password":  "bar",
+							"tlsCACert": "caCert", "tlsClientCert": "clientCert", "tlsClientKey": "clientKey",
+							"secureSocksProxyPassword":          "test",
+							"secureHttpHeaders. test-secure-2 ": "value-2",
+							"secureHttpHeaders.test-secure-3":   "value-3",
+						},
+					},
+				},
+				wantSettings: Settings{
+					Host:               "foo",
+					Port:               443,
+					Path:               "custom-path",
+					Protocol:           clickhouse.HTTP.String(),
+					Username:           "baz",
+					DefaultDatabase:    "example",
+					InsecureSkipVerify: true,
+					TlsClientAuth:      true,
+					TlsAuthWithCACert:  true,
+					Password:           "bar",
+					TlsCACert:          "caCert",
+					TlsClientCert:      "clientCert",
+					TlsClientKey:       "clientKey",
+					ConnMaxLifetime:    "5",
+					DialTimeout:        "10",
+					MaxIdleConns:       "25",
+					MaxOpenConns:       "50",
+					QueryTimeout:       "60",
+					HttpHeaders: map[string]string{
+						"test-plain-1":  "value-1",
+						"test-secure-2": "value-2",
+						"test-secure-3": "value-3",
+					},
+					ForwardGrafanaHeaders: true,
+					ProxyOptions: &proxy.Options{
+						Enabled: true,
+						Auth: &proxy.AuthOptions{
+							Username: "ds-uid",
+							Password: "test",
+						},
+						Timeouts: &proxy.TimeoutOptions{
+							Timeout:   10 * time.Second,
+							KeepAlive: proxy.DefaultTimeoutOptions.KeepAlive,
+						},
+					},
+					EnableRowLimit:        false,
+					EnableSchemaCache:     true,
+					SchemaCacheTTLSeconds: 60,
+				},
+				wantErr: nil,
+				testCtx: ctx,
+			},
+			{
+				name: "should accept numeric dialTimeout and queryTimeout values",
+				args: args{
+					config: backend.DataSourceInstanceSettings{
+						JSONData:                []byte(`{"host": "test", "port": 443, "dialTimeout": 15, "queryTimeout": 120}`),
+						DecryptedSecureJSONData: map[string]string{},
+					},
+				},
+				wantSettings: Settings{
+					Host:            "test",
+					Port:            443,
+					ConnMaxLifetime: "5",
+					DialTimeout:     "15",
+					MaxIdleConns:    "25",
+					MaxOpenConns:    "50",
+					QueryTimeout:          "120",
+					EnableRowLimit:        false,
+					EnableSchemaCache:     true,
+					SchemaCacheTTLSeconds: 60,
+				},
+				wantErr: nil,
+				testCtx: ctx,
+			},
+			{
+				name: "should accept numeric timeout value (v3 deprecated field)",
+				args: args{
+					config: backend.DataSourceInstanceSettings{
+						JSONData:                []byte(`{"server": "test", "port": 443, "timeout": 25}`),
+						DecryptedSecureJSONData: map[string]string{},
+					},
+				},
+				wantSettings: Settings{
+					Host:            "test",
+					Port:            443,
+					ConnMaxLifetime: "5",
+					DialTimeout:     "25",
+					MaxIdleConns:    "25",
+					MaxOpenConns:    "50",
+					QueryTimeout:          "60",
+					EnableRowLimit:        false,
+					EnableSchemaCache:     true,
+					SchemaCacheTTLSeconds: 60,
+				},
+				wantErr: nil,
+				testCtx: ctx,
+			},
+			{
+				name: "should accept numeric timeout values with floating point precision",
+				args: args{
+					config: backend.DataSourceInstanceSettings{
+						JSONData:                []byte(`{"host": "test", "port": 443, "dialTimeout": 10.5, "queryTimeout": 60.7}`),
+						DecryptedSecureJSONData: map[string]string{},
+					},
+				},
+				wantSettings: Settings{
+					Host:            "test",
+					Port:            443,
+					ConnMaxLifetime: "5",
+					DialTimeout:     "10",
+					MaxIdleConns:    "25",
+					MaxOpenConns:    "50",
+					QueryTimeout:          "60",
+					EnableRowLimit:        false,
+					EnableSchemaCache:     true,
+					SchemaCacheTTLSeconds: 60,
+				},
+				wantErr: nil,
+				testCtx: ctx,
+			},
+			{
+				name: "should trim whitespace from host",
+				args: args{
+					config: backend.DataSourceInstanceSettings{
+						JSONData:                []byte(`{"host": "  ch.example.com  ", "port": 443}`),
+						DecryptedSecureJSONData: map[string]string{},
+					},
+				},
+				wantSettings: Settings{
+					Host:                  "ch.example.com",
+					Port:                  443,
+					ConnMaxLifetime:       "5",
+					DialTimeout:           "10",
+					MaxIdleConns:          "25",
+					MaxOpenConns:          "50",
+					QueryTimeout:          "60",
+					EnableSchemaCache:     true,
+					SchemaCacheTTLSeconds: 60,
+				},
+				wantErr: nil,
+				testCtx: ctx,
+			},
+			{
+				name: "should trim whitespace from v3 server field",
+				args: args{
+					config: backend.DataSourceInstanceSettings{
+						JSONData:                []byte(`{"server": "  ch.example.com  ", "port": 443}`),
+						DecryptedSecureJSONData: map[string]string{},
+					},
+				},
+				wantSettings: Settings{
+					Host:                  "ch.example.com",
+					Port:                  443,
+					ConnMaxLifetime:       "5",
+					DialTimeout:           "10",
+					MaxIdleConns:          "25",
+					MaxOpenConns:          "50",
+					QueryTimeout:          "60",
+					EnableSchemaCache:     true,
+					SchemaCacheTTLSeconds: 60,
+				},
+				wantErr: nil,
+				testCtx: ctx,
 			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				gotSettings, err := LoadSettings(context.Background(), tt.args.config)
+				gotSettings, err := LoadSettings(tt.testCtx, tt.args.config)
 				assert.Equal(t, tt.wantErr, err)
 				if !reflect.DeepEqual(gotSettings, tt.wantSettings) {
 					t.Errorf("LoadSettings() = %v, want %v", gotSettings, tt.wantSettings)
@@ -134,6 +350,14 @@ func TestLoadSettings(t *testing.T) {
 		}
 	})
 	t.Run("should capture invalid settings", func(t *testing.T) {
+		ctx := context.Background()
+		ctx = sdkconfig.WithGrafanaConfig(ctx, sdkconfig.NewGrafanaCfg(map[string]string{
+			"GF_SQL_ROW_LIMIT":                         "1000000",
+			"GF_SQL_MAX_OPEN_CONNS_DEFAULT":            "10",
+			"GF_SQL_MAX_IDLE_CONNS_DEFAULT":            "10",
+			"GF_SQL_MAX_CONN_LIFETIME_SECONDS_DEFAULT": "60",
+		}))
+
 		tests := []struct {
 			jsonData    string
 			password    string
@@ -141,18 +365,44 @@ func TestLoadSettings(t *testing.T) {
 			description string
 		}{
 			{jsonData: `{ "host": "", "port": 443 }`, password: "", wantErr: ErrorMessageInvalidHost, description: "should capture empty server name"},
+			{jsonData: `{ "host": "   ", "port": 443 }`, password: "", wantErr: ErrorMessageInvalidHost, description: "should capture whitespace-only server name"},
 			{jsonData: `{ "host": "foo" }`, password: "", wantErr: ErrorMessageInvalidPort, description: "should capture nil port"},
 			{jsonData: `  "host": "foo", "port": 443, "username" : "foo" }`, password: "", wantErr: ErrorMessageInvalidJSON, description: "should capture invalid json"},
 		}
 		for i, tc := range tests {
 			t.Run(fmt.Sprintf("[%v/%v] %s", i+1, len(tests), tc.description), func(t *testing.T) {
-				_, err := LoadSettings(context.Background(), backend.DataSourceInstanceSettings{
+				_, err := LoadSettings(ctx, backend.DataSourceInstanceSettings{
 					JSONData:                []byte(tc.jsonData),
 					DecryptedSecureJSONData: map[string]string{"password": tc.password},
 				})
 				if !errors.Is(err, tc.wantErr) {
 					t.Errorf("%s not captured. %s", tc.wantErr, err.Error())
 				}
+			})
+		}
+	})
+
+	t.Run("should parse rowCapacityHint", func(t *testing.T) {
+		ctx := context.Background()
+		tests := []struct {
+			description string
+			jsonData    string
+			want        int64
+		}{
+			{description: "absent defaults to 0", jsonData: `{"host": "foo", "port": 443}`, want: 0},
+			{description: "numeric value", jsonData: `{"host": "foo", "port": 443, "rowCapacityHint": 50000}`, want: 50000},
+			{description: "string value", jsonData: `{"host": "foo", "port": 443, "rowCapacityHint": "50000"}`, want: 50000},
+			{description: "negative clamps to 0", jsonData: `{"host": "foo", "port": 443, "rowCapacityHint": -1}`, want: 0},
+			{description: "invalid string defaults to 0", jsonData: `{"host": "foo", "port": 443, "rowCapacityHint": "abc"}`, want: 0},
+		}
+		for _, tc := range tests {
+			t.Run(tc.description, func(t *testing.T) {
+				got, err := LoadSettings(ctx, backend.DataSourceInstanceSettings{
+					JSONData:                []byte(tc.jsonData),
+					DecryptedSecureJSONData: map[string]string{},
+				})
+				assert.NoError(t, err)
+				assert.Equal(t, tc.want, got.RowCapacityHint)
 			})
 		}
 	})

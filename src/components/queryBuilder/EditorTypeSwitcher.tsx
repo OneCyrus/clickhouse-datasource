@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { SelectableValue } from '@grafana/data';
-import { RadioButtonGroup, ConfirmModal, InlineFormLabel } from '@grafana/ui';
+import { RadioButtonGroup, ConfirmModal, InlineField, InlineFormLabel } from '@grafana/ui';
 import { getQueryOptionsFromSql } from '../queryBuilder/utils';
 import { generateSql } from 'data/sqlGenerator';
 import labels from 'labels';
@@ -48,12 +48,17 @@ export const EditorTypeSwitcher = (props: CHEditorTypeSwitcherProps) => {
           builderOptions = query.builderOptions;
           break;
         case EditorType.SQL:
-          builderOptions = getQueryOptionsFromSql(query.rawSql, query.queryType, datasource) as QueryBuilderOptions;
+          try {
+            builderOptions = getQueryOptionsFromSql(query.rawSql, query.queryType, datasource) as QueryBuilderOptions;
+          } catch (err) {
+            builderOptions = defaultCHBuilderQuery.builderOptions;
+          }
           break;
         default:
           builderOptions = defaultCHBuilderQuery.builderOptions;
           break;
       }
+
       if (editorType === EditorType.SQL) {
         onChange({
           ...query,
@@ -69,7 +74,7 @@ export const EditorTypeSwitcher = (props: CHEditorTypeSwitcherProps) => {
           editorType: EditorType.Builder,
           queryType: builderOptions.queryType,
           rawSql: generateSql(builderOptions),
-          builderOptions
+          builderOptions,
         });
       }
     }
@@ -81,17 +86,21 @@ export const EditorTypeSwitcher = (props: CHEditorTypeSwitcherProps) => {
   };
   return (
     <span>
-      <InlineFormLabel width={8} className="query-keyword" tooltip={tooltip}>
-        {label}
-      </InlineFormLabel>
-      <RadioButtonGroup options={options} value={editorType} onChange={e => onEditorTypeChange(e)} />
+      <InlineField
+        label={
+          <InlineFormLabel width={8} className="query-keyword" tooltip={tooltip}>
+            {label}
+          </InlineFormLabel>
+        }
+      >
+        <RadioButtonGroup options={options} value={editorType} onChange={(e) => onEditorTypeChange(e)} />
+      </InlineField>
       <ConfirmModal
         isOpen={confirmModalState}
         title={switcher.title}
         body={switcher.body}
         confirmText={switcher.confirmText}
         dismissText={switcher.dismissText}
-        icon="exclamation-triangle"
         onConfirm={onConfirmEditorTypeChange}
         onDismiss={() => setConfirmModalState(false)}
       />
@@ -99,7 +108,6 @@ export const EditorTypeSwitcher = (props: CHEditorTypeSwitcherProps) => {
         title={cannotConvert.title}
         body={`${errorMessage}\n${cannotConvert.message}`}
         isOpen={cannotConvertModalState}
-        icon="exclamation-triangle"
         onConfirm={onConfirmEditorTypeChange}
         confirmText={switcher.confirmText}
         onDismiss={() => setCannotConvertModalState(false)}

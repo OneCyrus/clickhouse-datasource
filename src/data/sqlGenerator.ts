@@ -1,4 +1,18 @@
-import { BooleanFilter, BuilderMode, ColumnHint, DateFilterWithValue, FilterOperator, MultiFilter, NumberFilter, QueryBuilderOptions, QueryType, SelectedColumn, StringFilter, TimeUnit } from 'types/queryBuilder';
+import {
+  BooleanFilter,
+  BuilderMode,
+  ColumnHint,
+  DateFilterWithValue,
+  FilterOperator,
+  MultiFilter,
+  NumberFilter,
+  OrderByDirection,
+  QueryBuilderOptions,
+  QueryType,
+  SelectedColumn,
+  StringFilter,
+  TimeUnit,
+} from 'types/queryBuilder';
 import otel from 'otel';
 
 /**
@@ -21,7 +35,7 @@ export const generateSql = (options: QueryBuilderOptions): string => {
   }
 
   return '';
-}
+};
 
 /**
  * Generates trace search query.
@@ -84,7 +98,7 @@ const generateTraceSearchQuery = (options: QueryBuilderOptions): string => {
   }
 
   return concatQueryParts(queryParts);
-}
+};
 
 /**
  * Generates trace query with columns that fit Grafana's Trace panel
@@ -134,39 +148,147 @@ const generateTraceIdQuery = (options: QueryBuilderOptions): string => {
     selectParts.push(getTraceDurationSelectSql(escapeIdentifier(traceDurationTime.name), timeUnit));
   }
 
-  // TODO: for tags and serviceTags, consider the column type. They might not require mapping, they could already be JSON.
   const traceTags = getColumnByHint(options, ColumnHint.TraceTags);
+  const traceServiceTags = getColumnByHint(options, ColumnHint.TraceServiceTags);
+
+  // Use only the column type to determine JSON mode. Both buildOtelColumns (in
+  // traceQueryBuilderHooks.ts) and stampJsonColumnTypes (in utils.ts) stamp the
+  // correct type:'JSON' on these columns before generateSql is called, so the
+  // column type is authoritative. meta.tagsAreJSON is not consulted here to avoid
+  // stale saved values from a prior JSON-schema table influencing SQL generation
+  // when the datasource is later pointed at a Map-typed table.
+  const traceTagsIsJSON = traceTags?.type?.toLowerCase().startsWith('json') === true;
+  const traceServiceTagsIsJSON = traceServiceTags?.type?.toLowerCase().startsWith('json') === true;
+  // Combined flag for events/links — the ClickHouse 26+ OTel schema migrates all attribute columns
+  // together, so either top-level column being JSON implies all attribute columns are JSON.
+  const tagsAreJSON = traceTagsIsJSON || traceServiceTagsIsJSON;
+
+  // JSON-type tags/serviceTags: return the column as-is; client-side flattenJsonTags
+  // handles the {key,value} conversion (cheaper than SQL reconstruction, more compact wire).
   if (traceTags !== undefined) {
-    selectParts.push(`arrayMap(key -> map('key', key, 'value',${escapeIdentifier(traceTags.name)}[key]), mapKeys(${escapeIdentifier(traceTags.name)})) as tags`);
+    const col = escapeIdentifier(traceTags.name);
+    if (traceTagsIsJSON) {
+      selectParts.push(`${col} as tags`);
+    } else {
+      selectParts.push(`arrayMap(key -> map('key', key, 'value',${col}[key]), mapKeys(${col})) as tags`);
+    }
   }
 
-  const traceServiceTags = getColumnByHint(options, ColumnHint.TraceServiceTags);
   if (traceServiceTags !== undefined) {
-    selectParts.push(`arrayMap(key -> map('key', key, 'value',${escapeIdentifier(traceServiceTags.name)}[key]), mapKeys(${escapeIdentifier(traceServiceTags.name)})) as serviceTags`);
+    const col = escapeIdentifier(traceServiceTags.name);
+    if (traceServiceTagsIsJSON) {
+      selectParts.push(`${col} as serviceTags`);
+    } else {
+      selectParts.push(`arrayMap(key -> map('key', key, 'value',${col}[key]), mapKeys(${col})) as serviceTags`);
+    }
   }
 
   const traceStatusCode = getColumnByHint(options, ColumnHint.TraceStatusCode);
   if (traceStatusCode !== undefined) {
-    selectParts.push(`if(${escapeIdentifier(traceStatusCode.name)} IN ('Error', 'STATUS_CODE_ERROR'), 2, 0) as statusCode`);
+    selectParts.push(
+      `if(${escapeIdentifier(traceStatusCode.name)} IN ('Error', 'STATUS_CODE_ERROR'), 2, 0) as statusCode`
+    );
   }
-  const traceEventsPrefix = getColumnByHint(options, ColumnHint.TraceEventsPrefix);
-  if (traceEventsPrefix !== undefined) {
-    selectParts.push(`arrayMap((name, timestamp, attributes) -> tuple(name, toString(toUnixTimestamp64Milli(timestamp)), arrayMap( key -> map('key', key, 'value', attributes[key]), mapKeys(attributes)))::Tuple(name String, timestamp String, fields Array(Map(String, String))),${escapeIdentifier(traceEventsPrefix.name)}.Name, ${escapeIdentifier(traceEventsPrefix.name)}.Timestamp, ${escapeIdentifier(traceEventsPrefix.name)}.Attributes) AS logs`);
+
+  const flattenNested = Boolean(options.meta?.flattenNested);
+  // Events/links attributes must be Array(Map(String,String)) in the typed tuple cast so
+  // the conversion must happen in SQL. JSONExtractKeysAndValuesRaw returns all key-value
+  // pairs from a JSON string as Array(Tuple(String,String)); values are raw JSON literals
+  // (strings are quoted, numbers/booleans are not). replaceRegexpOne strips the surrounding
+  // quotes from string values so every value lands as a plain string.
+  const jsonAttrsToFields = (expr: string): string =>
+    `[map('key', '${JSON_SENTINEL_KEY}', 'value', toJSONString(${expr}))]`;
+  const attrsToFields = (expr: string) =>
+    tagsAreJSON ? jsonAttrsToFields(expr) : `arrayMap(key -> map('key', key, 'value', ${expr}[key]), mapKeys(${expr}))`;
+
+  const traceEventsPrefix = options.meta?.traceEventsColumnPrefix || '';
+  if (traceEventsPrefix !== '') {
+    if (flattenNested) {
+      selectParts.push(
+        [
+          `arrayMap(event -> tuple(multiply(toFloat64(event.Timestamp), 1000),`,
+          `arrayConcat(${attrsToFields('event.Attributes')}, [map('key', 'message', 'value', event.Name)]))::Tuple(timestamp Float64, fields Array(Map(String, String))),`,
+          `${escapeIdentifier(traceEventsPrefix)}) as logs`,
+        ].join(' ')
+      );
+    } else {
+      selectParts.push(
+        [
+          `arrayMap((name, timestamp, attributes) -> tuple(name, toString(toUnixTimestamp64Milli(timestamp)),`,
+          `${attrsToFields('attributes')})::Tuple(name String, timestamp String, fields Array(Map(String, String))),`,
+          `${escapeIdentifier(traceEventsPrefix)}.Name, ${escapeIdentifier(traceEventsPrefix)}.Timestamp,`,
+          `${escapeIdentifier(traceEventsPrefix)}.Attributes) AS logs`,
+        ].join(' ')
+      );
+    }
+  }
+
+  const traceLinksPrefix = options.meta?.traceLinksColumnPrefix || '';
+  if (traceLinksPrefix !== '') {
+    if (flattenNested) {
+      selectParts.push(
+        [
+          `arrayMap(link -> tuple(link.TraceId, link.SpanId, ${attrsToFields('link.Attributes')})::Tuple(traceID String, spanID String, tags Array(Map(String, String))),`,
+          `${escapeIdentifier(traceLinksPrefix)}) AS references`,
+        ].join(' ')
+      );
+    } else {
+      selectParts.push(
+        [
+          `arrayMap((traceID, spanID, attributes) -> tuple(traceID, spanID, ${attrsToFields('attributes')})::Tuple(traceID String, spanID String, tags Array(Map(String, String))),`,
+          `${escapeIdentifier(traceLinksPrefix)}.TraceId, ${escapeIdentifier(traceLinksPrefix)}.SpanId,`,
+          `${escapeIdentifier(traceLinksPrefix)}.Attributes) AS references`,
+        ].join(' ')
+      );
+    }
+  }
+
+  const traceKind = getColumnByHint(options, ColumnHint.TraceKind);
+  if (traceKind !== undefined) {
+    selectParts.push(`${escapeIdentifier(traceKind.name)} as kind`);
+  }
+
+  const traceStatusMessage = getColumnByHint(options, ColumnHint.TraceStatusMessage);
+  if (traceStatusMessage !== undefined) {
+    selectParts.push(`${escapeIdentifier(traceStatusMessage.name)} as statusMessage`);
+  }
+
+  const traceInstrumentationLibraryName = getColumnByHint(options, ColumnHint.TraceInstrumentationLibraryName);
+  if (traceInstrumentationLibraryName !== undefined) {
+    selectParts.push(`${escapeIdentifier(traceInstrumentationLibraryName.name)} as instrumentationLibraryName`);
+  }
+
+  const traceInstrumentationLibraryVersion = getColumnByHint(options, ColumnHint.TraceInstrumentationLibraryVersion);
+  if (traceInstrumentationLibraryVersion !== undefined) {
+    selectParts.push(`${escapeIdentifier(traceInstrumentationLibraryVersion.name)} as instrumentationLibraryVersion`);
+  }
+
+  const traceState = getColumnByHint(options, ColumnHint.TraceState);
+  if (traceState !== undefined) {
+    selectParts.push(`${escapeIdentifier(traceState.name)} as traceState`);
   }
 
   const selectPartsSql = selectParts.join(', ');
 
-  // Optimize trace ID filtering for OTel enabled trace lookups
+  // Optimize trace ID filtering when a companion timestamp index table is available.
+  // The optimization is gated purely on that capability — OTel is not required, so
+  // any schema following the `<table>_trace_id_ts` convention (or a user-configured
+  // suffix) benefits from the narrowed time range.
+  const hasTraceTimestampTable = options.meta?.hasTraceTimestampTable;
   const hasTraceIdFilter = options.meta?.isTraceIdMode && options.meta?.traceId;
-  const otelVersion = otel.getVersion(options.meta?.otelVersion);
-  const applyTraceIdOptimization = hasTraceIdFilter && traceStartTime !== undefined && options.meta?.otelEnabled && otelVersion;
+  const applyTraceIdOptimization = hasTraceTimestampTable && hasTraceIdFilter && traceStartTime !== undefined;
   if (applyTraceIdOptimization) {
-    const traceId = options.meta!.traceId;
-    const timestampTable = getTableIdentifier(database, table + otel.traceTimestampTableSuffix);
+    const traceIdValue = options.meta!.traceId;
+    const suffix = options.meta?.traceTimestampTableSuffix || otel.traceTimestampTableSuffix;
+    const timestampTable = getTableIdentifier(database, table + suffix);
+    // The WITH aliases are prefixed so they cannot collide with physical columns
+    // on the main traces table. A bare `trace_id` alias shadows a physical
+    // `trace_id` column, turning `WHERE traceID = trace_id` into a tautology
+    // that returns every span in the time window.
     queryParts.push('WITH');
-    queryParts.push(`'${traceId}' as trace_id,`);
-    queryParts.push(`(SELECT min(Start) FROM ${timestampTable} WHERE TraceId = trace_id) as trace_start,`);
-    queryParts.push(`(SELECT max(End) + 1 FROM ${timestampTable} WHERE TraceId = trace_id) as trace_end`);
+    queryParts.push(`'${traceIdValue}' as __gf_trace_id,`);
+    queryParts.push(`(SELECT min(Start) FROM ${timestampTable} WHERE TraceId = __gf_trace_id) as __gf_trace_start,`);
+    queryParts.push(`(SELECT max(End) + 1 FROM ${timestampTable} WHERE TraceId = __gf_trace_id) as __gf_trace_end`);
   }
 
   queryParts.push('SELECT');
@@ -181,11 +303,11 @@ const generateTraceIdQuery = (options: QueryBuilderOptions): string => {
   }
 
   if (applyTraceIdOptimization) {
-    queryParts.push('traceID = trace_id');
+    queryParts.push('traceID = __gf_trace_id');
     queryParts.push('AND');
-    queryParts.push(`${escapeIdentifier(traceStartTime.name)} >= trace_start`);
+    queryParts.push(`${escapeIdentifier(traceStartTime.name)} >= __gf_trace_start`);
     queryParts.push('AND');
-    queryParts.push(`${escapeIdentifier(traceStartTime.name)} <= trace_end`);
+    queryParts.push(`${escapeIdentifier(traceStartTime.name)} <= __gf_trace_end`);
   } else if (hasTraceIdFilter) {
     const traceId = options.meta!.traceId;
     queryParts.push(`traceID = '${traceId}'`);
@@ -205,13 +327,13 @@ const generateTraceIdQuery = (options: QueryBuilderOptions): string => {
     queryParts.push(orderBy);
   }
 
-  const limit = getLimit(options.limit);
-  if (limit !== '') {
-    queryParts.push(limit);
-  }
+  // Intentionally no LIMIT: this query is only reached in single-trace mode
+  // (`generateSql` routes here when `isTraceIdMode && traceId` are both set),
+  // and the WHERE clause already narrows to one trace ID. Applying the list's
+  // LIMIT here cuts off spans in the trace waterfall — see #1541.
 
   return concatQueryParts(queryParts);
-}
+};
 
 /**
  * Generates logs query with columns that fit Grafana's Logs panel
@@ -222,17 +344,17 @@ const generateTraceIdQuery = (options: QueryBuilderOptions): string => {
  */
 const generateLogsQuery = (_options: QueryBuilderOptions): string => {
   // Copy columns so column aliases can be safely mutated
-  const options = { ..._options, columns: _options.columns?.map(c => ({ ...c })) };
+  const options = { ..._options, columns: _options.columns?.map((c) => ({ ...c })) };
   const { database, table } = options;
 
   const queryParts: string[] = [];
 
   // TODO: these columns could be a map or some other convenience function
   const selectParts: string[] = [];
-  const logTime = getColumnByHint(options, ColumnHint.Time);
+  const logTime = getColumnByHint(options, ColumnHint.Time) || getColumnByHint(options, ColumnHint.FilterTime);
   if (logTime !== undefined) {
     // Must be first column in list.
-    logTime.alias = logColumnHintsToAlias.get(ColumnHint.Time);
+    logTime.alias = logColumnHintsToAlias.get(logTime.hint!);
     selectParts.push(getColumnIdentifier(logTime));
   }
 
@@ -250,21 +372,33 @@ const generateLogsQuery = (_options: QueryBuilderOptions): string => {
     selectParts.push(getColumnIdentifier(logLevel));
   }
 
-  const logLabels = getColumnByHint(options, ColumnHint.LogLabels);
-  if (logLabels !== undefined) {
-    logLabels.alias = logColumnHintsToAlias.get(ColumnHint.LogLabels);
-    selectParts.push(getColumnIdentifier(logLabels));
-  }
-
   const traceId = getColumnByHint(options, ColumnHint.TraceId);
   if (traceId !== undefined) {
     traceId.alias = logColumnHintsToAlias.get(ColumnHint.TraceId);
     selectParts.push(getColumnIdentifier(traceId));
   }
 
-  options.columns?.
-    filter(c => c.hint === undefined). // remove specialized columns
-    forEach(c => selectParts.push(getColumnIdentifier(c)));
+  const resourceAttributes = getColumnByHint(options, ColumnHint.ResourceAttributes);
+  if (resourceAttributes !== undefined) {
+    resourceAttributes.alias = logColumnHintsToAlias.get(ColumnHint.ResourceAttributes);
+    selectParts.push(getColumnIdentifier(resourceAttributes));
+  }
+
+  const scopeAttributes = getColumnByHint(options, ColumnHint.ScopeAttributes);
+  if (scopeAttributes !== undefined) {
+    scopeAttributes.alias = logColumnHintsToAlias.get(ColumnHint.ScopeAttributes);
+    selectParts.push(getColumnIdentifier(scopeAttributes));
+  }
+
+  const logAttributes = getColumnByHint(options, ColumnHint.LogAttributes);
+  if (logAttributes !== undefined) {
+    logAttributes.alias = logColumnHintsToAlias.get(ColumnHint.LogAttributes);
+    selectParts.push(getColumnIdentifier(logAttributes));
+  }
+
+  options.columns
+    ?.filter((c) => c.hint === undefined) // remove specialized columns
+    .forEach((c) => selectParts.push(getColumnIdentifier(c)));
 
   const selectPartsSql = selectParts.join(', ');
 
@@ -272,7 +406,6 @@ const generateLogsQuery = (_options: QueryBuilderOptions): string => {
   queryParts.push(selectPartsSql);
   queryParts.push('FROM');
   queryParts.push(getTableIdentifier(database, table));
-
 
   const filterParts = getFilters(options);
   const hasLogMessageFilter = logMessage && options.meta?.logMessageLike;
@@ -293,7 +426,8 @@ const generateLogsQuery = (_options: QueryBuilderOptions): string => {
     queryParts.push(`(${logMessage.alias || logMessage.name} LIKE '%${options.meta!.logMessageLike}%')`);
   }
 
-  const orderBy = getOrderBy(options);
+  const hintsToGroup = new Set([ColumnHint.FilterTime, ColumnHint.Time]);
+  const orderBy = getOrderBy(options, hintsToGroup);
   if (orderBy) {
     queryParts.push('ORDER BY');
     queryParts.push(orderBy);
@@ -305,52 +439,54 @@ const generateLogsQuery = (_options: QueryBuilderOptions): string => {
   }
 
   return concatQueryParts(queryParts);
-}
+};
 
 /**
  * Generates a simple time series query. Includes user selected columns.
  */
 const generateSimpleTimeSeriesQuery = (_options: QueryBuilderOptions): string => {
   // Copy columns so column aliases can be safely mutated
-  const options = { ..._options, columns: _options.columns?.map(c => ({ ...c })) };
+  const options = { ..._options, columns: _options.columns?.map((c) => ({ ...c })) };
   const { database, table } = options;
 
   const queryParts: string[] = [];
 
   const selectParts: string[] = [];
   const selectNames = new Set<string>();
-  const timeColumn = getColumnByHint(options, ColumnHint.Time);
+  const timeColumn = getColumnByHint(options, ColumnHint.Time) || getColumnByHint(options, ColumnHint.FilterTime);
   if (timeColumn !== undefined) {
     timeColumn.alias = 'time';
     selectParts.push(getColumnIdentifier(timeColumn));
     selectNames.add(timeColumn.alias);
   }
 
-  const columnsExcludingTimeColumn = options.columns?.filter(c => c.hint !== ColumnHint.Time);
-  columnsExcludingTimeColumn?.forEach(c => {
+  const columnsExcludingTimeColumn = options.columns?.filter(
+    (c) => c.hint !== ColumnHint.Time && c.hint !== ColumnHint.FilterTime
+  );
+  columnsExcludingTimeColumn?.forEach((c) => {
     selectParts.push(getColumnIdentifier(c));
     selectNames.add(c.alias || c.name);
   });
 
   const aggregateSelectParts: string[] = [];
-  options.aggregates?.forEach(agg => {
+  options.aggregates?.forEach((agg) => {
     const alias = agg.alias ? ` as ${agg.alias.replace(/ /g, '_')}` : '';
     const name = `${agg.aggregateType}(${agg.column})`;
     aggregateSelectParts.push(`${name}${alias}`);
     selectNames.add(alias ? alias.substring(4) : name);
   });
 
-  options.groupBy?.forEach(g => {
+  options.groupBy?.forEach((g) => {
     if (selectNames.has(g)) {
       // don't add if already selected
       return;
     }
 
-    selectParts.push(g)
+    selectParts.push(g);
   });
 
   // (v3) aggregate selections go AFTER group by
-  aggregateSelectParts.forEach(a => selectParts.push(a));
+  aggregateSelectParts.forEach((a) => selectParts.push(a));
 
   const selectPartsSql = selectParts.join(', ');
 
@@ -365,8 +501,8 @@ const generateSimpleTimeSeriesQuery = (_options: QueryBuilderOptions): string =>
     queryParts.push(filterParts);
   }
 
-  const hasAggregates = (options.aggregates?.length || 0 > 0);
-  const hasGroupBy = (options.groupBy?.length || 0 > 0);
+  const hasAggregates = options.aggregates?.length || 0 > 0;
+  const hasGroupBy = options.groupBy?.length || 0 > 0;
   if (hasAggregates || hasGroupBy) {
     queryParts.push('GROUP BY');
   }
@@ -390,29 +526,29 @@ const generateSimpleTimeSeriesQuery = (_options: QueryBuilderOptions): string =>
   }
 
   return concatQueryParts(queryParts);
-}
+};
 
 /**
  * Generates an aggregate time series query.
  */
 const generateAggregateTimeSeriesQuery = (_options: QueryBuilderOptions): string => {
   // Copy columns so column aliases can be safely mutated
-  const options = { ..._options, columns: _options.columns?.map(c => ({ ...c })) };
+  const options = { ..._options, columns: _options.columns?.map((c) => ({ ...c })) };
   const { database, table } = options;
 
   const queryParts: string[] = [];
   const selectParts: string[] = [];
 
-  const timeColumn = getColumnByHint(options, ColumnHint.Time);
+  const timeColumn = getColumnByHint(options, ColumnHint.Time) || getColumnByHint(options, ColumnHint.FilterTime);
   if (timeColumn !== undefined) {
     timeColumn.name = `$__timeInterval(${timeColumn.name})`;
     timeColumn.alias = 'time';
     selectParts.push(getColumnIdentifier(timeColumn));
   }
 
-  options.groupBy?.forEach(g => selectParts.push(g));
+  options.groupBy?.forEach((g) => selectParts.push(g));
 
-  options.aggregates?.forEach(agg => {
+  options.aggregates?.forEach((agg) => {
     const alias = agg.alias ? ` as ${agg.alias.replace(/ /g, '_')}` : '';
     const name = `${agg.aggregateType}(${agg.column})`;
     selectParts.push(`${name}${alias}`);
@@ -451,7 +587,7 @@ const generateAggregateTimeSeriesQuery = (_options: QueryBuilderOptions): string
   }
 
   return concatQueryParts(queryParts);
-}
+};
 
 /**
  * Generates a table query.
@@ -464,20 +600,20 @@ const generateTableQuery = (options: QueryBuilderOptions): string => {
   const selectParts: string[] = [];
   const selectNames = new Set<string>();
 
-  options.columns?.forEach(c => {
+  options.columns?.forEach((c) => {
     selectParts.push(getColumnIdentifier(c));
     selectNames.add(c.alias || c.name);
   });
 
   if (isAggregateMode) {
-    options.aggregates?.forEach(agg => {
+    options.aggregates?.forEach((agg) => {
       const alias = agg.alias ? ` as ${agg.alias.replace(/ /g, '_')}` : '';
       const name = `${agg.aggregateType}(${agg.column})`;
       selectParts.push(`${name}${alias}`);
       selectNames.add(alias ? alias.substring(4) : name);
     });
 
-    options.groupBy?.forEach(g => {
+    options.groupBy?.forEach((g) => {
       if (selectNames.has(g)) {
         // don't add if already selected
         return;
@@ -518,12 +654,17 @@ const generateTableQuery = (options: QueryBuilderOptions): string => {
   }
 
   return concatQueryParts(queryParts);
-}
+};
 
 export const isAggregateQuery = (builder: QueryBuilderOptions): boolean => (builder.aggregates?.length || 0) > 0;
-export const getColumnByHint = (options: QueryBuilderOptions, hint: ColumnHint): SelectedColumn | undefined => options.columns?.find(c => c.hint === hint);
-export const getColumnIndexByHint = (options: QueryBuilderOptions, hint: ColumnHint): number => (options.columns || []).findIndex(c => c.hint === hint);
-export const getColumnsByHints = (options: QueryBuilderOptions, hints: readonly ColumnHint[]): readonly SelectedColumn[] => {
+export const getColumnByHint = (options: QueryBuilderOptions, hint: ColumnHint): SelectedColumn | undefined =>
+  options.columns?.find((c) => c.hint === hint);
+export const getColumnIndexByHint = (options: QueryBuilderOptions, hint: ColumnHint): number =>
+  (options.columns || []).findIndex((c) => c.hint === hint);
+export const getColumnsByHints = (
+  options: QueryBuilderOptions,
+  hints: readonly ColumnHint[]
+): readonly SelectedColumn[] => {
   const columns = [];
 
   for (let hint of hints) {
@@ -534,41 +675,57 @@ export const getColumnsByHints = (options: QueryBuilderOptions, hints: readonly 
   }
 
   return columns;
-}
+};
 
 const getColumnIdentifier = (col: SelectedColumn): string => {
   let colName = col.name;
 
   // allow for functions like count()
-  if (colName.includes('(') || colName.includes(')') || colName.includes('"') || colName.includes('"') || colName.includes(' as ')) {
-    colName = col.name
-  } else if (colName.includes(' ')) {
+  if (
+    colName.includes('(') ||
+    colName.includes(')') ||
+    colName.includes('"') ||
+    colName.includes('"') ||
+    colName.includes(' as ')
+  ) {
+    colName = col.name;
+  } else if (colName.includes(' ') || colName.includes(':')) {
     colName = escapeIdentifier(col.name);
   }
 
-  if (col.alias && (col.alias !== col.name && escapeIdentifier(col.alias) !== colName)) {
-    return `${colName} as "${col.alias}"`
+  if (col.alias && col.alias !== col.name && escapeIdentifier(col.alias) !== colName) {
+    return `${colName} as "${col.alias}"`;
   }
 
   return colName;
-}
+};
 
-const getTableIdentifier = (database: string, table: string): string => {
-  const sep = (!database || !table) ? '' : '.';
+export const getTableIdentifier = (database: string, table: string): string => {
+  const sep = !database || !table ? '' : '.';
   return `${escapeIdentifier(database)}${sep}${escapeIdentifier(table)}`;
-}
+};
 
-const escapeIdentifier = (id: string): string => {
-  return id ? `"${id}"` : '';
-}
+export const escapeIdentifier = (id: string): string => {
+  return id ? `"${id.replace(/"/g, '""')}"` : '';
+};
+
+/**
+ * Sentinel Map key used to carry a raw JSON blob through the typed
+ * Array(Map(String,String)) tuple cast in events/links SQL. Chosen to be
+ * distinct from any valid OTel attribute key (OTel keys follow the pattern
+ * [a-z_][0-9a-z_\-.*]* and never start with double-underscores).
+ * Client-side expandJsonSentinel in utils.ts recognizes this key and
+ * replaces the entry with the flattened key-value pairs from the JSON blob.
+ */
+export const JSON_SENTINEL_KEY = '__ch_json__';
 
 const escapeValue = (value: string): string => {
-  if (value.includes('$') || value.includes('(') || value.includes(')') || value.includes('\'') || value.includes('"')) {
+  if (value.includes('$') || value.includes('(') || value.includes(')') || value.includes("'") || value.includes('"')) {
     return value;
   }
 
   return `'${value}'`;
-}
+};
 
 /**
  * Returns the SELECT column for trace duration.
@@ -588,7 +745,7 @@ const getTraceDurationSelectSql = (columnIdentifier: string, timeUnit?: TimeUnit
     default:
       return `${columnIdentifier} as ${alias}`;
   }
-}
+};
 
 /** Returns the input time field converted to a Unix timestamp in nanoseconds and then adjusted to milliseconds. */
 const convertTimeFieldToMilliseconds = (columnIdentifier: string) =>
@@ -608,22 +765,31 @@ const concatQueryParts = (parts: readonly string[]): string => {
     query += p;
 
     if (i !== parts.length - 1) {
-      query += ' '
+      query += ' ';
     }
   }
 
   return query;
-}
+};
 
 /**
  * Returns the order by list, excluding the "ORDER BY" keyword.
+ * If `hintsToGroup` is specified, orderBy columns with hints found in the Set will be grouped together.
+ * e.g. when `hintsToGroup` equals Set([ColumnHint.FilterTime, ColumnHint.Time]),
+ * result will be: "(TimestampTime, Timestamp) DESC, SeverityText ASC",
+ * instead of: "TimestampTime DESC, Timestamp DESC, SeverityText ASC"
  */
-const getOrderBy = (options: QueryBuilderOptions): string => {
+const getOrderBy = (options: QueryBuilderOptions, hintsToGroup?: Set<ColumnHint>): string => {
   const orderByParts: string[] = [];
+
+  const hintGroup: { columns: string[]; dir?: OrderByDirection; insertIndex?: number } = { columns: [] };
+
   if ((options.orderBy?.length || 0) > 0) {
-    options.orderBy?.forEach(o => {
+    options.orderBy?.forEach((o) => {
       let colName = o.name;
+
       const hintedColumn = o.hint && getColumnByHint(options, o.hint);
+
       if (hintedColumn) {
         colName = hintedColumn.alias || hintedColumn.name;
       }
@@ -632,8 +798,35 @@ const getOrderBy = (options: QueryBuilderOptions): string => {
         return;
       }
 
-      orderByParts.push(`${colName} ${o.dir}`);
+      const inHintGroup = o.hint && hintsToGroup?.has(o.hint);
+
+      if (inHintGroup) {
+        if (hintGroup.insertIndex === undefined) {
+          // remember index of first column to be grouped, use that index for the whole group
+          hintGroup.insertIndex = orderByParts.length;
+        }
+
+        hintGroup.columns.push(colName);
+
+        if (!hintGroup.dir) {
+          // use the direction of first grouped item for the whole group
+          hintGroup.dir = o.dir;
+        }
+      } else {
+        orderByParts.push(`${colName} ${o.dir}`);
+      }
     });
+  }
+
+  if (hintGroup.columns.length > 0 && hintGroup.dir && hintGroup.insertIndex !== undefined) {
+    let hintGroupColumnsJoined = hintGroup.columns.join(', ');
+
+    if (hintGroup.columns.length > 1) {
+      // only wrap in () if there's more than one column in the group
+      hintGroupColumnsJoined = `(${hintGroupColumnsJoined})`;
+    }
+
+    orderByParts.splice(hintGroup.insertIndex, 0, `${hintGroupColumnsJoined} ${hintGroup.dir}`);
   }
 
   return orderByParts.join(', ');
@@ -666,8 +859,16 @@ const getFilters = (options: QueryBuilderOptions): string => {
     const filterParts: string[] = [];
 
     let column = filter.key;
-    let type = filter.type;
-    const hintedColumn = filter.hint && getColumnByHint(options, filter.hint);
+    let type = filter.type || '';
+    let hintedColumn = filter.hint && getColumnByHint(options, filter.hint);
+
+    // Fall back to Time/FilterTime if column not found
+    if (filter.hint === ColumnHint.Time && !hintedColumn) {
+      hintedColumn = getColumnByHint(options, ColumnHint.FilterTime);
+    } else if (filter.hint === ColumnHint.FilterTime && !hintedColumn) {
+      hintedColumn = getColumnByHint(options, ColumnHint.Time);
+    }
+
     if (hintedColumn) {
       column = hintedColumn.alias || hintedColumn.name;
       type = hintedColumn.type || type;
@@ -677,8 +878,23 @@ const getFilters = (options: QueryBuilderOptions): string => {
       continue;
     }
 
-    if (filter.mapKey) {
+    if (filter.mapKey && type.startsWith('Map')) {
       column += `['${filter.mapKey}']`;
+      // Extract the value type from Map(KeyType, ValueType)
+      const valueType = type.match(/Map\(\s*.+\s*,\s*(.+)\s*\)/)?.[1]?.trim() || 'String';
+      type = valueType;
+    } else if (filter.mapKey && type.startsWith('JSON')) {
+      const escapedJSONPaths = filter.mapKey
+        .split('.')
+        .map((p) => `\`${p}\``)
+        .join('.');
+      // JSON path extraction returns Dynamic, which ClickHouse's `IN` / `NOT IN` reject
+      // with ILLEGAL_TYPE_OF_ARGUMENT. Cast to Nullable(String) so every filter operator
+      // works — `IS NULL` still detects missing keys (a plain ::String cast would swallow
+      // that signal), and `=` / `!=` / `LIKE` are unaffected.
+      column = `${column}.${escapedJSONPaths}::Nullable(String)`;
+      // Update type so filter value generation routes through the string-aware branches.
+      type = 'String';
     }
 
     filterParts.push(column);
@@ -690,11 +906,14 @@ const getFilters = (options: QueryBuilderOptions): string => {
     } else if (filter.operator === FilterOperator.NotLike) {
       operator = 'LIKE';
       negate = true;
+    } else if (filter.operator === FilterOperator.NotILike) {
+      operator = 'ILIKE';
+      negate = true;
     } else if (filter.operator === FilterOperator.OutsideGrafanaTimeRange) {
       operator = '';
       negate = true;
     } else if (filter.operator === FilterOperator.WithInGrafanaTimeRange) {
-        operator = '';
+      operator = '';
     }
 
     if (operator) {
@@ -714,18 +933,18 @@ const getFilters = (options: QueryBuilderOptions): string => {
     } else if (isDateFilter(type)) {
       if (isDateFilterWithoutValue(type, filter.operator)) {
         if (isDateType(type)) {
-          filterParts.push('>=', '\$__fromTime', 'AND', column, '<=', '\$__toTime');
+          filterParts.push('>=', '$__fromTime', 'AND', column, '<=', '$__toTime');
         }
       } else {
         switch ((filter as DateFilterWithValue).value) {
           case 'GRAFANA_START_TIME':
             if (isDateType(type)) {
-              filterParts.push('\$__fromTime');
+              filterParts.push('$__fromTime');
             }
             break;
           case 'GRAFANA_END_TIME':
             if (isDateType(type)) {
-              filterParts.push('\$__toTime');
+              filterParts.push('$__toTime');
             }
             break;
           default:
@@ -733,13 +952,18 @@ const getFilters = (options: QueryBuilderOptions): string => {
         }
       }
     } else if (isStringFilter(type, filter.operator)) {
-      if (filter.operator === FilterOperator.Like || filter.operator === FilterOperator.NotLike) {
+      if (
+        filter.operator === FilterOperator.Like ||
+        filter.operator === FilterOperator.NotLike ||
+        filter.operator === FilterOperator.ILike ||
+        filter.operator === FilterOperator.NotILike
+      ) {
         filterParts.push(`'%${filter.value || ''}%'`);
       } else {
         filterParts.push(escapeValue((filter as StringFilter).value || ''));
       }
     } else if (isMultiFilter(type, filter.operator)) {
-      filterParts.push(`(${(filter as MultiFilter).value?.map(v => escapeValue(v.trim())).join(', ')})`);
+      filterParts.push(`(${(filter as MultiFilter).value?.map((v) => escapeValue(v.trim())).join(', ')})`);
     } else {
       filterParts.push(escapeValue((filter as StringFilter).value || ''));
     }
@@ -763,30 +987,38 @@ const getFilters = (options: QueryBuilderOptions): string => {
 };
 
 const stripTypeModifiers = (type: string): string => {
-    return type.toLowerCase().
-      replace(/\(/g, '').
-      replace(/\)/g, '').
-      replace(/nullable/g, '').
-      replace(/lowcardinality/g, '');
-
-}
-const isBooleanType = (type: string): boolean => (type?.toLowerCase().startsWith('boolean'));
+  return type
+    .toLowerCase()
+    .replace(/\(/g, '')
+    .replace(/\)/g, '')
+    .replace(/nullable/g, '')
+    .replace(/lowcardinality/g, '');
+};
+const isBooleanType = (type: string): boolean => type?.toLowerCase().startsWith('boolean');
 const numberTypes = ['int', 'float', 'decimal'];
-const isNumberType = (type: string): boolean => numberTypes.some(t => type?.toLowerCase().includes(t));
-const isDateType = (type: string): boolean => type?.toLowerCase().startsWith('date') || type?.toLowerCase().startsWith('nullable(date');
+const isNumberType = (type: string): boolean => numberTypes.some((t) => type?.toLowerCase().includes(t));
+const isDateType = (type: string): boolean =>
+  type?.toLowerCase().startsWith('date') || type?.toLowerCase().startsWith('nullable(date');
 // const isDateTimeType = (type: string): boolean => type?.toLowerCase().startsWith('datetime') || type?.toLowerCase().startsWith('nullable(datetime');
 const isStringType = (type: string): boolean => {
   type = stripTypeModifiers(type.toLowerCase());
-  return (type === 'string' || type.startsWith('fixedstring'))
-  && !(isBooleanType(type) || isNumberType(type) || isDateType(type));
-}
-const isNullFilter = (operator: FilterOperator): boolean => operator === FilterOperator.IsNull || operator === FilterOperator.IsNotNull;
+  return (
+    (type === 'string' || type.startsWith('fixedstring')) &&
+    !(isBooleanType(type) || isNumberType(type) || isDateType(type))
+  );
+};
+const isNullFilter = (operator: FilterOperator): boolean =>
+  operator === FilterOperator.IsNull || operator === FilterOperator.IsNotNull;
 const isBooleanFilter = (type: string): boolean => isBooleanType(type);
 const isNumberFilter = (type: string): boolean => isNumberType(type);
-const isDateFilterWithoutValue = (type: string, operator: FilterOperator): boolean => isDateType(type) && (operator === FilterOperator.WithInGrafanaTimeRange || operator === FilterOperator.OutsideGrafanaTimeRange);
+const isDateFilterWithoutValue = (type: string, operator: FilterOperator): boolean =>
+  isDateType(type) &&
+  (operator === FilterOperator.WithInGrafanaTimeRange || operator === FilterOperator.OutsideGrafanaTimeRange);
 const isDateFilter = (type: string): boolean => isDateType(type);
-const isStringFilter = (type: string, operator: FilterOperator): boolean => isStringType(type) && !(operator === FilterOperator.In || operator === FilterOperator.NotIn);
-const isMultiFilter = (type: string, operator: FilterOperator): boolean => isStringType(type) && (operator === FilterOperator.In || operator === FilterOperator.NotIn);
+const isStringFilter = (type: string, operator: FilterOperator): boolean =>
+  isStringType(type) && !(operator === FilterOperator.In || operator === FilterOperator.NotIn);
+const isMultiFilter = (type: string, operator: FilterOperator): boolean =>
+  isStringType(type) && (operator === FilterOperator.In || operator === FilterOperator.NotIn);
 
 /**
  * When filtering in the logs panel in explore view, we need a way to
@@ -794,15 +1026,16 @@ const isMultiFilter = (type: string, operator: FilterOperator): boolean => isStr
  * so that filters can be added properly.
  */
 const logAliasToColumnHintsEntries: ReadonlyArray<[string, ColumnHint]> = [
-  ['timestamp', ColumnHint.Time],
+  ['timestamp', ColumnHint.FilterTime],
+  ['timestamp', ColumnHint.Time], // duplicate key, last value is kept
   ['body', ColumnHint.LogMessage],
   ['level', ColumnHint.LogLevel],
-  ['labels', ColumnHint.LogLabels],
   ['traceID', ColumnHint.TraceId],
 ];
 export const logAliasToColumnHints: Map<string, ColumnHint> = new Map(logAliasToColumnHintsEntries);
-export const logColumnHintsToAlias: Map<ColumnHint, string> = new Map(logAliasToColumnHintsEntries.map(e => [e[1], e[0]]));
-
+export const logColumnHintsToAlias: Map<ColumnHint, string> = new Map(
+  logAliasToColumnHintsEntries.map((e) => [e[1], e[0]])
+);
 
 export const _testExports = {
   getColumnIdentifier,

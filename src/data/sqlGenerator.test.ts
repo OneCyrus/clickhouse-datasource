@@ -1,5 +1,23 @@
-import { AggregateType, BuilderMode, ColumnHint, FilterOperator, OrderByDirection, QueryBuilderOptions, QueryType, SelectedColumn, TimeUnit } from 'types/queryBuilder';
-import { _testExports, generateSql, getColumnByHint, getColumnIndexByHint, getColumnsByHints, isAggregateQuery } from './sqlGenerator';
+import {
+  AggregateType,
+  BuilderMode,
+  ColumnHint,
+  FilterOperator,
+  OrderByDirection,
+  QueryBuilderOptions,
+  QueryType,
+  SelectedColumn,
+  TimeUnit,
+} from 'types/queryBuilder';
+import {
+  _testExports,
+  generateSql,
+  getColumnByHint,
+  getColumnIndexByHint,
+  getColumnsByHints,
+  isAggregateQuery,
+  JSON_SENTINEL_KEY,
+} from './sqlGenerator';
 
 describe('SQL Generator', () => {
   it('generates simple table query', () => {
@@ -8,9 +26,9 @@ describe('SQL Generator', () => {
       table: 'sample',
       queryType: QueryType.Table,
       columns: [
-          { name: 'a', type: 'UInt64' },
-          { name: 'b', type: 'String' },
-          { name: 'c', type: 'String' },
+        { name: 'a', type: 'UInt64' },
+        { name: 'b', type: 'String' },
+        { name: 'c', type: 'String' },
       ],
       limit: 1000,
       filters: [
@@ -19,19 +37,58 @@ describe('SQL Generator', () => {
           key: 'b',
           type: 'String',
           condition: 'AND',
-          operator: FilterOperator.IsNotNull
-        }
+          operator: FilterOperator.IsNotNull,
+        },
       ],
-      orderBy: []
+      orderBy: [],
     };
 
-    const expectedSqlParts = [
-      'SELECT a, b, c FROM "default"."sample"',
-      'WHERE ( b IS NOT NULL ) LIMIT 1000'
-    ];
+    const expectedSqlParts = ['SELECT a, b, c FROM "default"."sample"', 'WHERE ( b IS NOT NULL ) LIMIT 1000'];
 
     const sql = generateSql(opts);
     expect(sql).toEqual(expectedSqlParts.join(' '));
+  });
+
+  it('uses bracket access for a Map map-key filter and dot access for a JSON map-key filter', () => {
+    const mapOpts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'otel_logs',
+      queryType: QueryType.Table,
+      columns: [{ name: 'Body', type: 'String' }],
+      limit: 1000,
+      filters: [
+        {
+          filterType: 'custom',
+          key: 'LogAttributes',
+          mapKey: 'method',
+          type: 'Map(String, String)',
+          condition: 'AND',
+          operator: FilterOperator.Equals,
+          value: 'F',
+        },
+      ],
+      orderBy: [],
+    };
+    const mapSql = generateSql(mapOpts);
+    expect(mapSql).toContain("LogAttributes['method'] = 'F'");
+    expect(mapSql).not.toContain('LogAttributes.`method`');
+
+    const jsonOpts: QueryBuilderOptions = {
+      ...mapOpts,
+      filters: [
+        {
+          filterType: 'custom',
+          key: 'LogAttributes',
+          mapKey: 'method',
+          type: 'JSON',
+          condition: 'AND',
+          operator: FilterOperator.Equals,
+          value: 'F',
+        },
+      ],
+    };
+    const jsonSql = generateSql(jsonOpts);
+    expect(jsonSql).toContain('LogAttributes.`method`');
   });
 
   it('generates aggregate table query', () => {
@@ -41,13 +98,11 @@ describe('SQL Generator', () => {
       queryType: QueryType.Table,
       mode: BuilderMode.Aggregate,
       columns: [
-          { name: 'a', type: 'DateTime' },
-          { name: 'b', type: 'String' },
-          { name: 'c', type: 'String' },
+        { name: 'a', type: 'DateTime' },
+        { name: 'b', type: 'String' },
+        { name: 'c', type: 'String' },
       ],
-      aggregates: [
-        { aggregateType: AggregateType.Count, column: '*', alias: 'd' }
-      ],
+      aggregates: [{ aggregateType: AggregateType.Count, column: '*', alias: 'd' }],
       limit: 1000,
       filters: [
         {
@@ -55,16 +110,16 @@ describe('SQL Generator', () => {
           key: 'b',
           type: 'String',
           condition: 'AND',
-          operator: FilterOperator.IsNotNull
-        }
+          operator: FilterOperator.IsNotNull,
+        },
       ],
       groupBy: ['a'],
-      orderBy: []
+      orderBy: [],
     };
 
     const expectedSqlParts = [
       'SELECT a, b, c, count(*) as d FROM "default"."sample"',
-      'WHERE ( b IS NOT NULL ) GROUP BY a LIMIT 1000'
+      'WHERE ( b IS NOT NULL ) GROUP BY a LIMIT 1000',
     ];
 
     const sql = generateSql(opts);
@@ -77,9 +132,9 @@ describe('SQL Generator', () => {
       table: 'logs',
       queryType: QueryType.Logs,
       columns: [
-          { name: 'log_ts', type: 'DateTime', hint: ColumnHint.Time },
-          { name: 'log_level', type: 'String', hint: ColumnHint.LogLevel },
-          { name: 'log_body', type: 'String', hint: ColumnHint.LogMessage },
+        { name: 'log_ts', type: 'DateTime', hint: ColumnHint.Time },
+        { name: 'log_level', type: 'String', hint: ColumnHint.LogLevel },
+        { name: 'log_body', type: 'String', hint: ColumnHint.LogMessage },
       ],
       limit: 1000,
       filters: [
@@ -89,7 +144,7 @@ describe('SQL Generator', () => {
           key: '',
           condition: 'AND',
           hint: ColumnHint.Time,
-          operator: FilterOperator.WithInGrafanaTimeRange
+          operator: FilterOperator.WithInGrafanaTimeRange,
         },
         {
           filterType: 'custom',
@@ -98,18 +153,108 @@ describe('SQL Generator', () => {
           value: 'error',
           condition: 'AND',
           hint: ColumnHint.LogLevel,
-          operator: FilterOperator.Equals
-        }
+          operator: FilterOperator.Equals,
+        },
       ],
-      orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.DESC }]
+      orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.DESC }],
     };
 
     const expectedSqlParts = [
       'SELECT log_ts as "timestamp", log_body as "body", log_level as "level"',
       'FROM "default"."logs"',
       'WHERE ( timestamp >= $__fromTime AND timestamp <= $__toTime )',
-      'AND ( level = \'error\' )',
-      'ORDER BY timestamp DESC LIMIT 1000'
+      "AND ( level = 'error' )",
+      'ORDER BY timestamp DESC LIMIT 1000',
+    ];
+
+    const sql = generateSql(opts);
+    expect(sql).toEqual(expectedSqlParts.join(' '));
+  });
+
+  // Regression test for #1882: opentelemetry-collector-contrib clickhouseexporter v0.151.0
+  // dropped the TimestampTime column from otel_logs. The default WHERE filter and ORDER BY
+  // entries the logs query builder installs reference ColumnHint.FilterTime; when that hint
+  // isn't mapped (the 1.3.0 OTel schema), the generator must fall back to ColumnHint.Time and
+  // emit `Timestamp`, not `TimestampTime`.
+  it('falls back to Time column when FilterTime is unmapped (collector-contrib v0.151.0+ schema)', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'otel',
+      table: 'otel_logs',
+      queryType: QueryType.Logs,
+      columns: [
+        { name: 'Timestamp', type: 'DateTime64(9)', hint: ColumnHint.Time },
+        { name: 'SeverityText', type: 'String', hint: ColumnHint.LogLevel },
+        { name: 'Body', type: 'String', hint: ColumnHint.LogMessage },
+      ],
+      limit: 1000,
+      filters: [
+        {
+          filterType: 'custom',
+          type: 'datetime',
+          key: '',
+          condition: 'AND',
+          hint: ColumnHint.FilterTime,
+          operator: FilterOperator.WithInGrafanaTimeRange,
+        },
+      ],
+      orderBy: [
+        { name: '', hint: ColumnHint.FilterTime, dir: OrderByDirection.DESC, default: true },
+        { name: '', hint: ColumnHint.Time, dir: OrderByDirection.DESC, default: true },
+      ],
+    };
+
+    const expectedSqlParts = [
+      'SELECT Timestamp as "timestamp", Body as "body", SeverityText as "level"',
+      'FROM "otel"."otel_logs"',
+      'WHERE ( timestamp >= $__fromTime AND timestamp <= $__toTime )',
+      'ORDER BY timestamp DESC LIMIT 1000',
+    ];
+
+    const sql = generateSql(opts);
+    expect(sql).toEqual(expectedSqlParts.join(' '));
+    expect(sql).not.toContain('TimestampTime');
+  });
+
+  // Companion to the v0.151.0 test above: when both FilterTime and Time are mapped (the older
+  // 1.2.9 schema where otel_logs has both `TimestampTime` and `Timestamp` columns), the grouped
+  // ORDER BY must still emit `(TimestampTime, Timestamp) DESC` and the WHERE filter must use
+  // `TimestampTime`. Locks in the pre-0.151 behavior so re-pointing `latest` to 1.3.0 doesn't
+  // silently regress users on the older schema.
+  it('emits TimestampTime when FilterTime is mapped (collector-contrib v0.150.x and earlier schema)', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'otel',
+      table: 'otel_logs',
+      queryType: QueryType.Logs,
+      columns: [
+        { name: 'TimestampTime', type: 'DateTime', hint: ColumnHint.FilterTime },
+        { name: 'Timestamp', type: 'DateTime64(9)', hint: ColumnHint.Time },
+        { name: 'SeverityText', type: 'String', hint: ColumnHint.LogLevel },
+        { name: 'Body', type: 'String', hint: ColumnHint.LogMessage },
+      ],
+      limit: 1000,
+      filters: [
+        {
+          filterType: 'custom',
+          type: 'datetime',
+          key: '',
+          condition: 'AND',
+          hint: ColumnHint.FilterTime,
+          operator: FilterOperator.WithInGrafanaTimeRange,
+        },
+      ],
+      orderBy: [
+        { name: '', hint: ColumnHint.FilterTime, dir: OrderByDirection.DESC, default: true },
+        { name: '', hint: ColumnHint.Time, dir: OrderByDirection.DESC, default: true },
+      ],
+    };
+
+    // The FilterTime column (TimestampTime) is used verbatim in the WHERE clause and grouped with
+    // the Time column's alias ("timestamp") in the ORDER BY.
+    const expectedSqlParts = [
+      'SELECT Timestamp as "timestamp", Body as "body", SeverityText as "level"',
+      'FROM "otel"."otel_logs"',
+      'WHERE ( TimestampTime >= $__fromTime AND TimestampTime <= $__toTime )',
+      'ORDER BY (TimestampTime, timestamp) DESC LIMIT 1000',
     ];
 
     const sql = generateSql(opts);
@@ -122,8 +267,8 @@ describe('SQL Generator', () => {
       table: 'time_data',
       queryType: QueryType.TimeSeries,
       columns: [
-          { name: 'time_field', type: 'DateTime', hint: ColumnHint.Time },
-          { name: 'number_field', type: 'UInt64' },
+        { name: 'time_field', type: 'DateTime', hint: ColumnHint.Time },
+        { name: 'number_field', type: 'UInt64' },
       ],
       limit: 100,
       filters: [
@@ -133,15 +278,15 @@ describe('SQL Generator', () => {
           type: 'UInt64',
           condition: 'AND',
           operator: FilterOperator.GreaterThan,
-          value: 0
-        }
+          value: 0,
+        },
       ],
-      orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC }]
+      orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC }],
     };
     const expectedSqlParts = [
       'SELECT time_field as "time", number_field',
       'FROM "default"."time_data" WHERE ( number_field > 0 )',
-      'ORDER BY time ASC LIMIT 100'
+      'ORDER BY time ASC LIMIT 100',
     ];
 
     const sql = generateSql(opts);
@@ -154,8 +299,8 @@ describe('SQL Generator', () => {
       table: 'time_data',
       queryType: QueryType.TimeSeries,
       columns: [
-          { name: 'time_field', type: 'DateTime', hint: ColumnHint.Time },
-          { name: 'number_field', type: 'UInt64' },
+        { name: 'time_field', type: 'DateTime', hint: ColumnHint.Time },
+        { name: 'number_field', type: 'UInt64' },
       ],
       limit: 100,
       aggregates: [{ aggregateType: AggregateType.Sum, column: 'number_field', alias: 'total' }],
@@ -166,15 +311,15 @@ describe('SQL Generator', () => {
           type: 'UInt64',
           condition: 'AND',
           operator: FilterOperator.GreaterThan,
-          value: 0
-        }
+          value: 0,
+        },
       ],
-      orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC }]
+      orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC }],
     };
     const expectedSqlParts = [
       'SELECT time_field as "time", number_field, sum(number_field) as total',
       'FROM "default"."time_data" WHERE ( number_field > 0 )',
-      'GROUP BY time ORDER BY time ASC LIMIT 100'
+      'GROUP BY time ORDER BY time ASC LIMIT 100',
     ];
 
     const sql = generateSql(opts);
@@ -205,10 +350,10 @@ describe('SQL Generator', () => {
         otelVersion: 'latest',
         traceDurationUnit: TimeUnit.Nanoseconds,
         isTraceIdMode: true,
-        traceId: 'abcdefg'
+        traceId: 'abcdefg',
       },
       limit: 1000,
-      orderBy: []
+      orderBy: [],
     };
     const expectedSqlParts = [
       'SELECT "TraceId" as traceID, "SpanId" as spanID, "ParentSpanId" as parentSpanID,',
@@ -219,7 +364,263 @@ describe('SQL Generator', () => {
       `arrayMap(key -> map('key', key, 'value',"ResourceAttributes"[key]), mapKeys("ResourceAttributes")) as serviceTags,`,
       `if("StatusCode" IN ('Error', 'STATUS_CODE_ERROR'), 2, 0) as statusCode`,
       `FROM "default"."otel_traces" WHERE traceID = 'abcdefg'`,
-      'LIMIT 1000'
+    ];
+
+    const sql = generateSql(opts);
+    expect(sql).toEqual(expectedSqlParts.join(' '));
+  });
+
+  it('generates trace ID query with JSON-typed tags columns', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'otel_traces',
+      queryType: QueryType.Traces,
+      columns: [
+        { name: 'TraceId', type: 'String', hint: ColumnHint.TraceId },
+        { name: 'SpanId', type: 'String', hint: ColumnHint.TraceSpanId },
+        { name: 'ParentSpanId', type: 'String', hint: ColumnHint.TraceParentSpanId },
+        { name: 'ServiceName', type: 'LowCardinality(String)', hint: ColumnHint.TraceServiceName },
+        { name: 'SpanName', type: 'LowCardinality(String)', hint: ColumnHint.TraceOperationName },
+        { name: 'Timestamp', type: 'DateTime64(9)', hint: ColumnHint.Time },
+        { name: 'Duration', type: 'Int64', hint: ColumnHint.TraceDurationTime },
+        { name: 'SpanAttributes', type: 'JSON', hint: ColumnHint.TraceTags },
+        { name: 'ResourceAttributes', type: 'JSON', hint: ColumnHint.TraceServiceTags },
+      ],
+      filters: [],
+      meta: {
+        minimized: true,
+        otelEnabled: false,
+        traceDurationUnit: TimeUnit.Nanoseconds,
+        isTraceIdMode: true,
+        traceId: 'abcdefg',
+      },
+      limit: 1000,
+      orderBy: [],
+    };
+
+    const sql = generateSql(opts);
+
+    expect(sql).toContain('"SpanAttributes" as tags');
+    expect(sql).toContain('"ResourceAttributes" as serviceTags');
+    expect(sql).not.toContain('JSONAllPaths("SpanAttributes")');
+    expect(sql).not.toContain('JSONAllPaths("ResourceAttributes")');
+    expect(sql).not.toContain('mapKeys("SpanAttributes")');
+    expect(sql).not.toContain('mapKeys("ResourceAttributes")');
+    expect(sql).not.toContain('CAST');
+  });
+
+  it('generates trace ID query with JSON-typed tags and events/links columns, flatten nested disabled', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'otel_traces',
+      queryType: QueryType.Traces,
+      columns: [
+        { name: 'TraceId', type: 'String', hint: ColumnHint.TraceId },
+        { name: 'SpanId', type: 'String', hint: ColumnHint.TraceSpanId },
+        { name: 'ParentSpanId', type: 'String', hint: ColumnHint.TraceParentSpanId },
+        { name: 'ServiceName', type: 'LowCardinality(String)', hint: ColumnHint.TraceServiceName },
+        { name: 'SpanName', type: 'LowCardinality(String)', hint: ColumnHint.TraceOperationName },
+        { name: 'Timestamp', type: 'DateTime64(9)', hint: ColumnHint.Time },
+        { name: 'Duration', type: 'Int64', hint: ColumnHint.TraceDurationTime },
+        { name: 'SpanAttributes', type: 'JSON', hint: ColumnHint.TraceTags },
+        { name: 'ResourceAttributes', type: 'JSON', hint: ColumnHint.TraceServiceTags },
+      ],
+      filters: [],
+      meta: {
+        minimized: true,
+        otelEnabled: true,
+        otelVersion: 'latest',
+        traceDurationUnit: TimeUnit.Nanoseconds,
+        isTraceIdMode: true,
+        traceId: 'abcdefg',
+        flattenNested: false,
+        traceEventsColumnPrefix: 'Events',
+        traceLinksColumnPrefix: 'Links',
+        tagsAreJSON: true,
+      },
+      limit: 1000,
+      orderBy: [],
+    };
+
+    const sql = generateSql(opts);
+
+    expect(sql).toContain('"SpanAttributes" as tags');
+    expect(sql).toContain('"ResourceAttributes" as serviceTags');
+    expect(sql).not.toContain('JSONAllPaths("SpanAttributes")');
+    expect(sql).not.toContain('JSONAllPaths("ResourceAttributes")');
+    // events/links attributes are passed as raw JSON and expanded client-side
+    expect(sql).toContain(`map('key', '${JSON_SENTINEL_KEY}', 'value', toJSONString(attributes))`);
+    expect(sql).not.toContain('mapKeys(attributes)');
+    expect(sql).not.toContain('CAST');
+  });
+
+  it('generates trace ID query with JSON-typed tags and events/links columns, flatten nested enabled', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'otel_traces',
+      queryType: QueryType.Traces,
+      columns: [
+        { name: 'TraceId', type: 'String', hint: ColumnHint.TraceId },
+        { name: 'SpanId', type: 'String', hint: ColumnHint.TraceSpanId },
+        { name: 'ParentSpanId', type: 'String', hint: ColumnHint.TraceParentSpanId },
+        { name: 'ServiceName', type: 'LowCardinality(String)', hint: ColumnHint.TraceServiceName },
+        { name: 'SpanName', type: 'LowCardinality(String)', hint: ColumnHint.TraceOperationName },
+        { name: 'Timestamp', type: 'DateTime64(9)', hint: ColumnHint.Time },
+        { name: 'Duration', type: 'Int64', hint: ColumnHint.TraceDurationTime },
+        { name: 'SpanAttributes', type: 'JSON', hint: ColumnHint.TraceTags },
+        { name: 'ResourceAttributes', type: 'JSON', hint: ColumnHint.TraceServiceTags },
+      ],
+      filters: [],
+      meta: {
+        minimized: true,
+        otelEnabled: true,
+        otelVersion: 'latest',
+        traceDurationUnit: TimeUnit.Nanoseconds,
+        isTraceIdMode: true,
+        traceId: 'abcdefg',
+        flattenNested: true,
+        traceEventsColumnPrefix: 'Events',
+        traceLinksColumnPrefix: 'Links',
+        tagsAreJSON: true,
+      },
+      limit: 1000,
+      orderBy: [],
+    };
+
+    const sql = generateSql(opts);
+
+    expect(sql).toContain('"SpanAttributes" as tags');
+    expect(sql).toContain('"ResourceAttributes" as serviceTags');
+    expect(sql).not.toContain('JSONAllPaths("SpanAttributes")');
+    expect(sql).not.toContain('JSONAllPaths("ResourceAttributes")');
+    // events/links attributes are passed as raw JSON and expanded client-side
+    expect(sql).toContain(`map('key', '${JSON_SENTINEL_KEY}', 'value', toJSONString(event.Attributes))`);
+    expect(sql).toContain(`map('key', '${JSON_SENTINEL_KEY}', 'value', toJSONString(link.Attributes))`);
+    expect(sql).not.toContain('mapKeys(event.Attributes)');
+    expect(sql).not.toContain('mapKeys(link.Attributes)');
+    expect(sql).not.toContain('CAST');
+  });
+
+  it('generates trace ID query with additional fields, flatten nested disabled', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'otel_traces',
+      queryType: QueryType.Traces,
+      columns: [
+        { name: 'TraceId', type: 'String', hint: ColumnHint.TraceId },
+        { name: 'SpanId', type: 'String', hint: ColumnHint.TraceSpanId },
+        { name: 'ParentSpanId', type: 'String', hint: ColumnHint.TraceParentSpanId },
+        { name: 'ServiceName', type: 'LowCardinality(String)', hint: ColumnHint.TraceServiceName },
+        { name: 'SpanName', type: 'LowCardinality(String)', hint: ColumnHint.TraceOperationName },
+        { name: 'Timestamp', type: 'DateTime64(9)', hint: ColumnHint.Time },
+        { name: 'Duration', type: 'Int64', hint: ColumnHint.TraceDurationTime },
+        { name: 'SpanAttributes', type: 'Map(LowCardinality(String), String)', hint: ColumnHint.TraceTags },
+        { name: 'ResourceAttributes', type: 'Map(LowCardinality(String), String)', hint: ColumnHint.TraceServiceTags },
+        { name: 'StatusCode', type: 'LowCardinality(String)', hint: ColumnHint.TraceStatusCode },
+        { name: 'Kind', type: 'String', hint: ColumnHint.TraceKind },
+        { name: 'StatusMessage', type: 'String', hint: ColumnHint.TraceStatusMessage },
+        { name: 'InstrumentationLibraryName', type: 'String', hint: ColumnHint.TraceInstrumentationLibraryName },
+        { name: 'InstrumentationLibraryVersion', type: 'String', hint: ColumnHint.TraceInstrumentationLibraryVersion },
+        { name: 'TraceState', type: 'String', hint: ColumnHint.TraceState },
+      ],
+      filters: [],
+      meta: {
+        minimized: true,
+        otelEnabled: true,
+        otelVersion: 'latest',
+        traceDurationUnit: TimeUnit.Nanoseconds,
+        isTraceIdMode: true,
+        traceId: 'abcdefg',
+        flattenNested: false,
+        traceEventsColumnPrefix: 'Events',
+        traceLinksColumnPrefix: 'Links',
+        hasTraceTimestampTable: true,
+      },
+      limit: 1000,
+      orderBy: [],
+    };
+
+    const expectedSqlParts = [
+      `WITH 'abcdefg' as __gf_trace_id, (SELECT min(Start) FROM "default"."otel_traces_trace_id_ts" WHERE TraceId = __gf_trace_id) as __gf_trace_start,`,
+      `(SELECT max(End) + 1 FROM "default"."otel_traces_trace_id_ts" WHERE TraceId = __gf_trace_id) as __gf_trace_end`,
+      'SELECT "TraceId" as traceID, "SpanId" as spanID, "ParentSpanId" as parentSpanID,',
+      '"ServiceName" as serviceName, "SpanName" as operationName, multiply(toUnixTimestamp64Nano("Timestamp"), 0.000001) as startTime,',
+      'multiply("Duration", 0.000001) as duration,',
+      `arrayMap(key -> map('key', key, 'value',"SpanAttributes"[key]),`,
+      `mapKeys("SpanAttributes")) as tags,`,
+      `arrayMap(key -> map('key', key, 'value',"ResourceAttributes"[key]), mapKeys("ResourceAttributes")) as serviceTags,`,
+      `if("StatusCode" IN ('Error', 'STATUS_CODE_ERROR'), 2, 0) as statusCode,`,
+      `arrayMap((name, timestamp, attributes) -> tuple(name, toString(toUnixTimestamp64Milli(timestamp)), arrayMap(key -> map('key', key, 'value', attributes[key]), mapKeys(attributes)))::Tuple(name String, timestamp String, fields Array(Map(String, String))), "Events".Name, "Events".Timestamp, "Events".Attributes) AS logs,`,
+      `arrayMap((traceID, spanID, attributes) -> tuple(traceID, spanID, arrayMap(key -> map('key', key, 'value', attributes[key]), mapKeys(attributes)))::Tuple(traceID String, spanID String, tags Array(Map(String, String))), "Links".TraceId, "Links".SpanId, "Links".Attributes) AS references,`,
+      '"Kind" as kind,',
+      '"StatusMessage" as statusMessage,',
+      '"InstrumentationLibraryName" as instrumentationLibraryName,',
+      '"InstrumentationLibraryVersion" as instrumentationLibraryVersion,',
+      '"TraceState" as traceState',
+      `FROM "default"."otel_traces" WHERE traceID = __gf_trace_id AND "Timestamp" >= __gf_trace_start AND "Timestamp" <= __gf_trace_end`,
+    ];
+
+    const sql = generateSql(opts);
+    expect(sql).toEqual(expectedSqlParts.join(' '));
+  });
+
+  it('generates trace ID query with additional fields, flatten nested enabled', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'otel_traces',
+      queryType: QueryType.Traces,
+      columns: [
+        { name: 'TraceId', type: 'String', hint: ColumnHint.TraceId },
+        { name: 'SpanId', type: 'String', hint: ColumnHint.TraceSpanId },
+        { name: 'ParentSpanId', type: 'String', hint: ColumnHint.TraceParentSpanId },
+        { name: 'ServiceName', type: 'LowCardinality(String)', hint: ColumnHint.TraceServiceName },
+        { name: 'SpanName', type: 'LowCardinality(String)', hint: ColumnHint.TraceOperationName },
+        { name: 'Timestamp', type: 'DateTime64(9)', hint: ColumnHint.Time },
+        { name: 'Duration', type: 'Int64', hint: ColumnHint.TraceDurationTime },
+        { name: 'SpanAttributes', type: 'Map(LowCardinality(String), String)', hint: ColumnHint.TraceTags },
+        { name: 'ResourceAttributes', type: 'Map(LowCardinality(String), String)', hint: ColumnHint.TraceServiceTags },
+        { name: 'StatusCode', type: 'LowCardinality(String)', hint: ColumnHint.TraceStatusCode },
+        { name: 'Kind', type: 'String', hint: ColumnHint.TraceKind },
+        { name: 'StatusMessage', type: 'String', hint: ColumnHint.TraceStatusMessage },
+        { name: 'InstrumentationLibraryName', type: 'String', hint: ColumnHint.TraceInstrumentationLibraryName },
+        { name: 'InstrumentationLibraryVersion', type: 'String', hint: ColumnHint.TraceInstrumentationLibraryVersion },
+        { name: 'TraceState', type: 'String', hint: ColumnHint.TraceState },
+      ],
+      filters: [],
+      meta: {
+        minimized: true,
+        otelEnabled: true,
+        otelVersion: 'latest',
+        traceDurationUnit: TimeUnit.Nanoseconds,
+        isTraceIdMode: true,
+        traceId: 'abcdefg',
+        flattenNested: true,
+        traceEventsColumnPrefix: 'Events',
+        traceLinksColumnPrefix: 'Links',
+        hasTraceTimestampTable: true,
+      },
+      limit: 1000,
+      orderBy: [],
+    };
+
+    const expectedSqlParts = [
+      `WITH 'abcdefg' as __gf_trace_id, (SELECT min(Start) FROM "default"."otel_traces_trace_id_ts" WHERE TraceId = __gf_trace_id) as __gf_trace_start,`,
+      `(SELECT max(End) + 1 FROM "default"."otel_traces_trace_id_ts" WHERE TraceId = __gf_trace_id) as __gf_trace_end`,
+      'SELECT "TraceId" as traceID, "SpanId" as spanID, "ParentSpanId" as parentSpanID,',
+      '"ServiceName" as serviceName, "SpanName" as operationName, multiply(toUnixTimestamp64Nano("Timestamp"), 0.000001) as startTime,',
+      'multiply("Duration", 0.000001) as duration,',
+      `arrayMap(key -> map('key', key, 'value',"SpanAttributes"[key]),`,
+      `mapKeys("SpanAttributes")) as tags,`,
+      `arrayMap(key -> map('key', key, 'value',"ResourceAttributes"[key]), mapKeys("ResourceAttributes")) as serviceTags,`,
+      `if("StatusCode" IN ('Error', 'STATUS_CODE_ERROR'), 2, 0) as statusCode,`,
+      `arrayMap(event -> tuple(multiply(toFloat64(event.Timestamp), 1000), arrayConcat(arrayMap(key -> map('key', key, 'value', event.Attributes[key]), mapKeys(event.Attributes)), [map('key', 'message', 'value', event.Name)]))::Tuple(timestamp Float64, fields Array(Map(String, String))), "Events") as logs,`,
+      `arrayMap(link -> tuple(link.TraceId, link.SpanId, arrayMap(key -> map('key', key, 'value', link.Attributes[key]), mapKeys(link.Attributes)))::Tuple(traceID String, spanID String, tags Array(Map(String, String))), "Links") AS references,`,
+      '"Kind" as kind,',
+      '"StatusMessage" as statusMessage,',
+      '"InstrumentationLibraryName" as instrumentationLibraryName,',
+      '"InstrumentationLibraryVersion" as instrumentationLibraryVersion,',
+      '"TraceState" as traceState',
+      `FROM "default"."otel_traces" WHERE traceID = __gf_trace_id AND "Timestamp" >= __gf_trace_start AND "Timestamp" <= __gf_trace_end`,
     ];
 
     const sql = generateSql(opts);
@@ -250,14 +651,15 @@ describe('SQL Generator', () => {
         otelVersion: 'latest',
         traceDurationUnit: TimeUnit.Nanoseconds,
         isTraceIdMode: true,
-        traceId: 'abcdefg'
+        traceId: 'abcdefg',
+        hasTraceTimestampTable: true,
       },
       limit: 1000,
-      orderBy: []
+      orderBy: [],
     };
     const expectedSqlParts = [
-      `WITH 'abcdefg' as trace_id, (SELECT min(Start) FROM "default"."otel_traces_trace_id_ts" WHERE TraceId = trace_id) as trace_start,`,
-      `(SELECT max(End) + 1 FROM "default"."otel_traces_trace_id_ts" WHERE TraceId = trace_id) as trace_end`,
+      `WITH 'abcdefg' as __gf_trace_id, (SELECT min(Start) FROM "default"."otel_traces_trace_id_ts" WHERE TraceId = __gf_trace_id) as __gf_trace_start,`,
+      `(SELECT max(End) + 1 FROM "default"."otel_traces_trace_id_ts" WHERE TraceId = __gf_trace_id) as __gf_trace_end`,
       'SELECT "TraceId" as traceID, "SpanId" as spanID, "ParentSpanId" as parentSpanID,',
       '"ServiceName" as serviceName, "SpanName" as operationName, multiply(toUnixTimestamp64Nano("Timestamp"), 0.000001) as startTime,',
       'multiply("Duration", 0.000001) as duration,',
@@ -265,12 +667,208 @@ describe('SQL Generator', () => {
       `mapKeys("SpanAttributes")) as tags,`,
       `arrayMap(key -> map('key', key, 'value',"ResourceAttributes"[key]), mapKeys("ResourceAttributes")) as serviceTags,`,
       `if("StatusCode" IN ('Error', 'STATUS_CODE_ERROR'), 2, 0) as statusCode`,
-      `FROM "default"."otel_traces" WHERE traceID = trace_id AND "Timestamp" >= trace_start AND "Timestamp" <= trace_end`,
-      'LIMIT 1000'
+      `FROM "default"."otel_traces" WHERE traceID = __gf_trace_id AND "Timestamp" >= __gf_trace_start AND "Timestamp" <= __gf_trace_end`,
     ];
 
     const sql = generateSql(opts);
     expect(sql).toEqual(expectedSqlParts.join(' '));
+  });
+
+  it('generates an OTel trace ID query without the time range optimization when the trace timestamp table does not exist ', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'otel_traces',
+      queryType: QueryType.Traces,
+      columns: [
+        { name: 'TraceId', type: 'String', hint: ColumnHint.TraceId },
+        { name: 'SpanId', type: 'String', hint: ColumnHint.TraceSpanId },
+        { name: 'ParentSpanId', type: 'String', hint: ColumnHint.TraceParentSpanId },
+        { name: 'ServiceName', type: 'LowCardinality(String)', hint: ColumnHint.TraceServiceName },
+        { name: 'SpanName', type: 'LowCardinality(String)', hint: ColumnHint.TraceOperationName },
+        { name: 'Timestamp', type: 'DateTime64(9)', hint: ColumnHint.Time },
+        { name: 'Duration', type: 'Int64', hint: ColumnHint.TraceDurationTime },
+        { name: 'SpanAttributes', type: 'Map(LowCardinality(String), String)', hint: ColumnHint.TraceTags },
+        { name: 'ResourceAttributes', type: 'Map(LowCardinality(String), String)', hint: ColumnHint.TraceServiceTags },
+        { name: 'StatusCode', type: 'LowCardinality(String)', hint: ColumnHint.TraceStatusCode },
+      ],
+      filters: [],
+      meta: {
+        minimized: true,
+        otelEnabled: true,
+        otelVersion: 'latest',
+        traceDurationUnit: TimeUnit.Nanoseconds,
+        isTraceIdMode: true,
+        traceId: 'abcdefg',
+        hasTraceTimestampTable: false, // trace timestamp table does not exist
+      },
+      limit: 1000,
+      orderBy: [],
+    };
+    const expectedSqlParts = [
+      'SELECT "TraceId" as traceID, "SpanId" as spanID, "ParentSpanId" as parentSpanID,',
+      '"ServiceName" as serviceName, "SpanName" as operationName, multiply(toUnixTimestamp64Nano("Timestamp"), 0.000001) as startTime,',
+      'multiply("Duration", 0.000001) as duration,',
+      `arrayMap(key -> map('key', key, 'value',"SpanAttributes"[key]),`,
+      `mapKeys("SpanAttributes")) as tags,`,
+      `arrayMap(key -> map('key', key, 'value',"ResourceAttributes"[key]), mapKeys("ResourceAttributes")) as serviceTags,`,
+      `if("StatusCode" IN ('Error', 'STATUS_CODE_ERROR'), 2, 0) as statusCode`,
+      `FROM "default"."otel_traces" WHERE traceID = 'abcdefg'`,
+    ];
+
+    const sql = generateSql(opts);
+    expect(sql).toEqual(expectedSqlParts.join(' '));
+  });
+
+  it('regression #1541: trace ID query does not apply LIMIT (spans must not be truncated)', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'otel_traces',
+      queryType: QueryType.Traces,
+      columns: [
+        { name: 'TraceId', type: 'String', hint: ColumnHint.TraceId },
+        { name: 'SpanId', type: 'String', hint: ColumnHint.TraceSpanId },
+        { name: 'Timestamp', type: 'DateTime64(9)', hint: ColumnHint.Time },
+      ],
+      filters: [],
+      meta: {
+        minimized: true,
+        otelEnabled: false,
+        otelVersion: 'latest',
+        isTraceIdMode: true,
+        traceId: 'abcdefg',
+      },
+      // Inherited from the trace-search builder; this is the bug: spans of
+      // the selected trace must not be capped at this number.
+      limit: 3,
+      orderBy: [],
+    };
+    const sql = generateSql(opts);
+    expect(sql).not.toMatch(/\bLIMIT\b/);
+  });
+
+  it('generates an optimized trace ID query without OTel when a trace timestamp table exists', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'custom_traces',
+      queryType: QueryType.Traces,
+      columns: [
+        { name: 'TraceId', type: 'String', hint: ColumnHint.TraceId },
+        { name: 'SpanId', type: 'String', hint: ColumnHint.TraceSpanId },
+        { name: 'ParentSpanId', type: 'String', hint: ColumnHint.TraceParentSpanId },
+        { name: 'ServiceName', type: 'LowCardinality(String)', hint: ColumnHint.TraceServiceName },
+        { name: 'SpanName', type: 'LowCardinality(String)', hint: ColumnHint.TraceOperationName },
+        { name: 'Timestamp', type: 'DateTime64(9)', hint: ColumnHint.Time },
+        { name: 'Duration', type: 'Int64', hint: ColumnHint.TraceDurationTime },
+        { name: 'SpanAttributes', type: 'Map(LowCardinality(String), String)', hint: ColumnHint.TraceTags },
+        { name: 'ResourceAttributes', type: 'Map(LowCardinality(String), String)', hint: ColumnHint.TraceServiceTags },
+        { name: 'StatusCode', type: 'LowCardinality(String)', hint: ColumnHint.TraceStatusCode },
+      ],
+      filters: [],
+      meta: {
+        minimized: true,
+        otelEnabled: false,
+        otelVersion: undefined,
+        traceDurationUnit: TimeUnit.Nanoseconds,
+        isTraceIdMode: true,
+        traceId: 'abcdefg',
+        hasTraceTimestampTable: true,
+      },
+      limit: 1000,
+      orderBy: [],
+    };
+    const expectedSqlParts = [
+      `WITH 'abcdefg' as __gf_trace_id, (SELECT min(Start) FROM "default"."custom_traces_trace_id_ts" WHERE TraceId = __gf_trace_id) as __gf_trace_start,`,
+      `(SELECT max(End) + 1 FROM "default"."custom_traces_trace_id_ts" WHERE TraceId = __gf_trace_id) as __gf_trace_end`,
+      'SELECT "TraceId" as traceID, "SpanId" as spanID, "ParentSpanId" as parentSpanID,',
+      '"ServiceName" as serviceName, "SpanName" as operationName, multiply(toUnixTimestamp64Nano("Timestamp"), 0.000001) as startTime,',
+      'multiply("Duration", 0.000001) as duration,',
+      `arrayMap(key -> map('key', key, 'value',"SpanAttributes"[key]),`,
+      `mapKeys("SpanAttributes")) as tags,`,
+      `arrayMap(key -> map('key', key, 'value',"ResourceAttributes"[key]), mapKeys("ResourceAttributes")) as serviceTags,`,
+      `if("StatusCode" IN ('Error', 'STATUS_CODE_ERROR'), 2, 0) as statusCode`,
+      `FROM "default"."custom_traces" WHERE traceID = __gf_trace_id AND "Timestamp" >= __gf_trace_start AND "Timestamp" <= __gf_trace_end`,
+    ];
+
+    const sql = generateSql(opts);
+    expect(sql).toEqual(expectedSqlParts.join(' '));
+  });
+
+  it('honours a configured traceTimestampTableSuffix in the optimized trace ID query', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'custom_traces',
+      queryType: QueryType.Traces,
+      columns: [
+        { name: 'TraceId', type: 'String', hint: ColumnHint.TraceId },
+        { name: 'SpanId', type: 'String', hint: ColumnHint.TraceSpanId },
+        { name: 'ParentSpanId', type: 'String', hint: ColumnHint.TraceParentSpanId },
+        { name: 'ServiceName', type: 'LowCardinality(String)', hint: ColumnHint.TraceServiceName },
+        { name: 'SpanName', type: 'LowCardinality(String)', hint: ColumnHint.TraceOperationName },
+        { name: 'Timestamp', type: 'DateTime64(9)', hint: ColumnHint.Time },
+        { name: 'Duration', type: 'Int64', hint: ColumnHint.TraceDurationTime },
+        { name: 'SpanAttributes', type: 'Map(LowCardinality(String), String)', hint: ColumnHint.TraceTags },
+        { name: 'ResourceAttributes', type: 'Map(LowCardinality(String), String)', hint: ColumnHint.TraceServiceTags },
+        { name: 'StatusCode', type: 'LowCardinality(String)', hint: ColumnHint.TraceStatusCode },
+      ],
+      filters: [],
+      meta: {
+        minimized: true,
+        otelEnabled: false,
+        otelVersion: undefined,
+        traceDurationUnit: TimeUnit.Nanoseconds,
+        isTraceIdMode: true,
+        traceId: 'abcdefg',
+        hasTraceTimestampTable: true,
+        traceTimestampTableSuffix: '_ts_index',
+      },
+      limit: 1000,
+      orderBy: [],
+    };
+    const sql = generateSql(opts);
+
+    expect(sql).toContain('FROM "default"."custom_traces_ts_index"');
+    expect(sql).not.toContain('custom_traces_trace_id_ts');
+    expect(sql).toContain(`WITH 'abcdefg' as __gf_trace_id`);
+    expect(sql).toContain('"Timestamp" >= __gf_trace_start');
+  });
+
+  // Regression guard: the WITH aliases must never collide with physical columns
+  // on the main traces table. A bare `trace_id` alias is shadowed by a physical
+  // `trace_id` column, so `WHERE traceID = trace_id` becomes a tautology and
+  // every span in the time window is returned mislabelled with the searched ID.
+  it('does not emit WITH aliases that can be shadowed by main-table columns named trace_id/trace_start/trace_end', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'custom_traces',
+      queryType: QueryType.Traces,
+      columns: [
+        { name: 'trace_id', type: 'String', hint: ColumnHint.TraceId },
+        { name: 'span_id', type: 'String', hint: ColumnHint.TraceSpanId },
+        { name: 'trace_start', type: 'DateTime64(9)', hint: ColumnHint.Time },
+        { name: 'duration', type: 'Int64', hint: ColumnHint.TraceDurationTime },
+      ],
+      filters: [],
+      meta: {
+        minimized: true,
+        otelEnabled: false,
+        otelVersion: undefined,
+        traceDurationUnit: TimeUnit.Nanoseconds,
+        isTraceIdMode: true,
+        traceId: 'abcdefg',
+        hasTraceTimestampTable: true,
+      },
+      limit: 1000,
+      orderBy: [],
+    };
+    const sql = generateSql(opts);
+
+    expect(sql).not.toMatch(/\bas trace_id\b/i);
+    expect(sql).not.toMatch(/\bas trace_start\b/i);
+    expect(sql).not.toMatch(/\bas trace_end\b/i);
+    expect(sql).toContain(`WITH 'abcdefg' as __gf_trace_id`);
+    expect(sql).toContain('WHERE traceID = __gf_trace_id');
+    expect(sql).toContain('"trace_start" >= __gf_trace_start');
+    expect(sql).toContain('"trace_start" <= __gf_trace_end');
   });
 
   it('generates trace search query', () => {
@@ -296,7 +894,7 @@ describe('SQL Generator', () => {
           hint: ColumnHint.Time,
           key: '',
           operator: FilterOperator.WithInGrafanaTimeRange,
-          type: 'datetime'
+          type: 'datetime',
         },
         {
           condition: 'AND',
@@ -305,7 +903,7 @@ describe('SQL Generator', () => {
           key: '',
           operator: FilterOperator.IsEmpty,
           type: 'string',
-          value: ''
+          value: '',
         },
         {
           condition: 'AND',
@@ -314,7 +912,7 @@ describe('SQL Generator', () => {
           key: '',
           operator: FilterOperator.GreaterThan,
           type: 'UInt64',
-          value: 0
+          value: 0,
         },
         {
           condition: 'AND',
@@ -323,25 +921,49 @@ describe('SQL Generator', () => {
           key: '',
           operator: FilterOperator.IsAnything,
           type: 'string',
-          value: ''
-        }
+          value: '',
+        },
       ],
       meta: {
         otelEnabled: true,
         otelVersion: 'latest',
-        traceDurationUnit: TimeUnit.Nanoseconds
+        traceDurationUnit: TimeUnit.Nanoseconds,
       },
       limit: 1000,
       orderBy: [
         { name: '', hint: ColumnHint.Time, dir: OrderByDirection.DESC },
-        { name: '', hint: ColumnHint.TraceDurationTime, dir: OrderByDirection.DESC }
-      ]
+        { name: '', hint: ColumnHint.TraceDurationTime, dir: OrderByDirection.DESC },
+      ],
     };
     const expectedSqlParts = [
       'SELECT "TraceId" as traceID, "ServiceName" as serviceName, "SpanName" as operationName,',
       '"Timestamp" as startTime, multiply("Duration", 0.000001) as duration',
       'FROM "default"."otel_traces" WHERE ( Timestamp >= $__fromTime AND Timestamp <= $__toTime )',
-      'AND ( ParentSpanId = \'\' ) AND ( Duration > 0 ) ORDER BY Timestamp DESC, Duration DESC LIMIT 1000'
+      "AND ( ParentSpanId = '' ) AND ( Duration > 0 ) ORDER BY Timestamp DESC, Duration DESC LIMIT 1000",
+    ];
+
+    const sql = generateSql(opts);
+    expect(sql).toEqual(expectedSqlParts.join(' '));
+  });
+
+  it('generates table query with column names containing colons', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'verifications',
+      queryType: QueryType.Table,
+      columns: [
+        { name: 'verification:id', type: 'String' },
+        { name: 'my:name', type: 'String' },
+        { name: 'regular_column', type: 'String' },
+      ],
+      limit: 1000,
+      filters: [],
+      orderBy: [],
+    };
+
+    const expectedSqlParts = [
+      'SELECT "verification:id", "my:name", regular_column',
+      'FROM "default"."verifications" LIMIT 1000',
     ];
 
     const sql = generateSql(opts);
@@ -351,7 +973,9 @@ describe('SQL Generator', () => {
 
 describe('isAggregateQuery', () => {
   it('returns true for aggregate query', () => {
-    const builderOptions = { aggregates: [{ column: 'foo', aggregateType: AggregateType.Count }] } as QueryBuilderOptions;
+    const builderOptions = {
+      aggregates: [{ column: 'foo', aggregateType: AggregateType.Count }],
+    } as QueryBuilderOptions;
     expect(isAggregateQuery(builderOptions)).toEqual(true);
   });
   it('returns false for query without aggregates', () => {
@@ -403,7 +1027,7 @@ describe('getColumnsByHints', () => {
 });
 
 describe('getColumnIdentifier', () => {
-  const cases: Array<{ input: SelectedColumn, expected: string }> = [
+  const cases: Array<{ input: SelectedColumn; expected: string }> = [
     { input: { name: '' }, expected: `` },
     { input: { name: ' ' }, expected: `" "` },
     { input: { name: 'test' }, expected: `test` },
@@ -411,6 +1035,10 @@ describe('getColumnIdentifier', () => {
     { input: { name: 'test with alias', alias: 'a' }, expected: `"test with alias" as "a"` },
     { input: { name: 'test_with_alias', alias: 'b' }, expected: `test_with_alias as "b"` },
     { input: { name: '"test" as a', alias: '' }, expected: `"test" as a` },
+    { input: { name: 'verification:id' }, expected: `"verification:id"` },
+    { input: { name: 'my:name' }, expected: `"my:name"` },
+    { input: { name: 'namespace:field:value' }, expected: `"namespace:field:value"` },
+    { input: { name: 'verification:id', alias: 'vid' }, expected: `"verification:id" as "vid"` },
   ];
 
   it.each(cases)('returns correct identifier (case %#)', (c) => {
@@ -419,7 +1047,7 @@ describe('getColumnIdentifier', () => {
 });
 
 describe('getTableIdentifier', () => {
-  const cases: Array<{ input: { database: string, table: string }, expected: string }> = [
+  const cases: Array<{ input: { database: string; table: string }; expected: string }> = [
     { input: { database: '', table: '' }, expected: '' },
     { input: { database: 'database', table: '' }, expected: '"database"' },
     { input: { database: 'database', table: 'table' }, expected: '"database"."table"' },
@@ -432,7 +1060,7 @@ describe('getTableIdentifier', () => {
 });
 
 describe('escapeIdentifier', () => {
-  const cases: Array<{ input: string, expected: string }> = [
+  const cases: Array<{ input: string; expected: string }> = [
     { input: '', expected: '' },
     { input: ' ', expected: `" "` },
     { input: 'x', expected: `"x"` },
@@ -446,7 +1074,7 @@ describe('escapeIdentifier', () => {
 });
 
 describe('escapeValue', () => {
-  const cases: Array<{ input: string, expected: string }> = [
+  const cases: Array<{ input: string; expected: string }> = [
     { input: ``, expected: `''` },
     { input: ` `, expected: `' '` },
     { input: `$variable`, expected: `$variable` },
@@ -477,7 +1105,7 @@ describe('concatQueryParts', () => {
       ' ', // spaces allowed
       '*',
       'FROM',
-      'test'
+      'test',
     ];
     const sql = _testExports.concatQueryParts(parts);
     const expectedSql = 'SELECT   * FROM test'; // 3 spaces expected before *
@@ -497,8 +1125,8 @@ describe('getOrderBy', () => {
     const options = {
       orderBy: [
         { name: 'normal', dir: OrderByDirection.ASC },
-        { name: 'order', dir: OrderByDirection.DESC }
-      ]
+        { name: 'order', dir: OrderByDirection.DESC },
+      ],
     } as QueryBuilderOptions;
     const sql = _testExports.getOrderBy(options);
     const expectedSql = 'normal ASC, order DESC';
@@ -511,17 +1139,92 @@ describe('getOrderBy', () => {
       orderBy: [
         { name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC },
         { name: 'normal', dir: OrderByDirection.ASC },
-        { name: 'order', dir: OrderByDirection.DESC }
-      ]
+        { name: 'order', dir: OrderByDirection.DESC },
+      ],
     } as QueryBuilderOptions;
     const sql = _testExports.getOrderBy(options);
     const expectedSql = 'hinted ASC, normal ASC, order DESC';
     expect(sql).toEqual(expectedSql);
   });
+
+  describe('when hintsToGroup is set', () => {
+    it('groups orderBy columns by hintsToGroup', () => {
+      const options = {
+        columns: [
+          { name: 'TimestampTime', hint: ColumnHint.FilterTime },
+          { name: 'Timestamp', hint: ColumnHint.Time },
+          { name: 'SeverityText', hint: ColumnHint.LogLevel },
+        ],
+        orderBy: [
+          { name: '', hint: ColumnHint.FilterTime, dir: OrderByDirection.DESC },
+          { name: '', hint: ColumnHint.LogLevel, dir: OrderByDirection.ASC },
+          { name: '', hint: ColumnHint.Time, dir: OrderByDirection.DESC },
+        ],
+      } as QueryBuilderOptions;
+      const hintsToGroup = new Set([ColumnHint.FilterTime, ColumnHint.Time]);
+      const sql = _testExports.getOrderBy(options, hintsToGroup);
+      const expectedSql = '(TimestampTime, Timestamp) DESC, SeverityText ASC';
+      expect(sql).toEqual(expectedSql);
+    });
+
+    it('does not wrap single grouped column in parentheses', () => {
+      const options = {
+        columns: [
+          { name: 'TimestampTime', hint: ColumnHint.FilterTime },
+          { name: 'Timestamp', hint: ColumnHint.Time },
+          { name: 'SeverityText', hint: ColumnHint.LogLevel },
+        ],
+        orderBy: [
+          { name: '', hint: ColumnHint.FilterTime, dir: OrderByDirection.DESC },
+          { name: '', hint: ColumnHint.LogLevel, dir: OrderByDirection.ASC },
+        ],
+      } as QueryBuilderOptions;
+      const hintsToGroup = new Set([ColumnHint.FilterTime, ColumnHint.Time]);
+      const sql = _testExports.getOrderBy(options, hintsToGroup);
+      const expectedSql = 'TimestampTime DESC, SeverityText ASC';
+      expect(sql).toEqual(expectedSql);
+    });
+
+    it('uses direction of first grouped item for the whole group', () => {
+      const options = {
+        columns: [
+          { name: 'TimestampTime', hint: ColumnHint.FilterTime },
+          { name: 'Timestamp', hint: ColumnHint.Time },
+        ],
+        orderBy: [
+          { name: '', hint: ColumnHint.FilterTime, dir: OrderByDirection.DESC },
+          { name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC },
+        ],
+      } as QueryBuilderOptions;
+      const hintsToGroup = new Set([ColumnHint.FilterTime, ColumnHint.Time]);
+      const sql = _testExports.getOrderBy(options, hintsToGroup);
+      const expectedSql = '(TimestampTime, Timestamp) DESC';
+      expect(sql).toEqual(expectedSql);
+    });
+
+    it('inserts hint group at index of first grouped column when mixed with non-grouped columns', () => {
+      const options = {
+        columns: [
+          { name: 'SeverityText', hint: ColumnHint.LogLevel },
+          { name: 'TimestampTime', hint: ColumnHint.FilterTime },
+          { name: 'Timestamp', hint: ColumnHint.Time },
+        ],
+        orderBy: [
+          { name: '', hint: ColumnHint.LogLevel, dir: OrderByDirection.ASC },
+          { name: '', hint: ColumnHint.FilterTime, dir: OrderByDirection.DESC },
+          { name: '', hint: ColumnHint.Time, dir: OrderByDirection.DESC },
+        ],
+      } as QueryBuilderOptions;
+      const hintsToGroup = new Set([ColumnHint.FilterTime, ColumnHint.Time]);
+      const sql = _testExports.getOrderBy(options, hintsToGroup);
+      const expectedSql = 'SeverityText ASC, (TimestampTime, Timestamp) DESC';
+      expect(sql).toEqual(expectedSql);
+    });
+  });
 });
 
 describe('getLimit', () => {
-  const cases: Array<{ input: number | undefined, expected: string }> = [
+  const cases: Array<{ input: number | undefined; expected: string }> = [
     { input: undefined, expected: '' },
     { input: -1, expected: '' },
     { input: 0, expected: '' },
@@ -536,7 +1239,7 @@ describe('getLimit', () => {
 });
 
 describe('is*Type', () => {
-  it.each<{ input: string, expected: boolean }>([
+  it.each<{ input: string; expected: boolean }>([
     { input: 'String', expected: true },
     { input: 'Nullable(String)', expected: true },
     { input: 'LowCardinality(Nullable(String))', expected: true },
@@ -567,13 +1270,213 @@ describe('getFilters', () => {
           key: 'col',
           operator: FilterOperator.In,
           type: 'string',
-          value: '1, (2), 3, some string, \'another string\', someFunction(123), "column reference"'.split(',')
-        }
-      ]
+          value: '1, (2), 3, some string, \'another string\', someFunction(123), "column reference"'.split(','),
+        },
+      ],
     } as QueryBuilderOptions;
     const sql = _testExports.getFilters(options);
     const expectedSql = `( col IN ('1', (2), '3', 'some string', 'another string', someFunction(123), "column reference") )`;
     expect(sql).toEqual(expectedSql);
+  });
+
+  it('extracts Map value type for mapKey filter with Map(String, String)', () => {
+    const options = {
+      filters: [
+        {
+          condition: 'AND',
+          filterType: 'custom',
+          key: 'ResourceAttributes',
+          mapKey: 'service.name',
+          operator: FilterOperator.Equals,
+          type: 'Map(String, String)',
+          value: 'my-service',
+        },
+      ],
+    } as QueryBuilderOptions;
+    const sql = _testExports.getFilters(options);
+    expect(sql).toEqual(`( ResourceAttributes['service.name'] = 'my-service' )`);
+  });
+
+  it('extracts Map value type for mapKey filter with Map(String, UInt64)', () => {
+    const options = {
+      filters: [
+        {
+          condition: 'AND',
+          filterType: 'custom',
+          key: 'NumericMap',
+          mapKey: 'count',
+          operator: FilterOperator.Equals,
+          type: 'Map(String, UInt64)',
+          value: 42,
+        },
+      ],
+    } as QueryBuilderOptions;
+    const sql = _testExports.getFilters(options);
+    expect(sql).toEqual(`( NumericMap['count'] = 42 )`);
+  });
+
+  it('extracts Map value type for mapKey filter with Map(LowCardinality(String), String)', () => {
+    const options = {
+      filters: [
+        {
+          condition: 'AND',
+          filterType: 'custom',
+          key: 'SpanAttributes',
+          mapKey: 'http.method',
+          operator: FilterOperator.Like,
+          type: 'Map(LowCardinality(String), String)',
+          value: 'GET',
+        },
+      ],
+    } as QueryBuilderOptions;
+    const sql = _testExports.getFilters(options);
+    expect(sql).toEqual(`( SpanAttributes['http.method'] LIKE '%GET%' )`);
+  });
+
+  it('extracts Map value type for mapKey filter with Map(LowCardinality(String), UInt64)', () => {
+    const options = {
+      filters: [
+        {
+          condition: 'AND',
+          filterType: 'custom',
+          key: 'NumericAttrs',
+          mapKey: 'retry_count',
+          operator: FilterOperator.Equals,
+          type: 'Map(LowCardinality(String), UInt64)',
+          value: 3,
+        },
+      ],
+    } as QueryBuilderOptions;
+    const sql = _testExports.getFilters(options);
+    expect(sql).toEqual(`( NumericAttrs['retry_count'] = 3 )`);
+  });
+
+  it('generates dot-notation SQL for JSON mapKey filter (basic path)', () => {
+    const options = {
+      filters: [
+        {
+          condition: 'AND',
+          filterType: 'custom',
+          key: 'LogAttributes',
+          mapKey: 'request_id',
+          operator: FilterOperator.Equals,
+          type: 'JSON',
+          value: 'abc123',
+        },
+      ],
+    } as QueryBuilderOptions;
+    const sql = _testExports.getFilters(options);
+    expect(sql).toEqual("( LogAttributes.`request_id`::Nullable(String) = 'abc123' )");
+  });
+
+  it('generates dot-notation SQL for JSON mapKey filter (nested path)', () => {
+    const options = {
+      filters: [
+        {
+          condition: 'AND',
+          filterType: 'custom',
+          key: 'SpanAttributes',
+          mapKey: 'http.status_code',
+          operator: FilterOperator.Equals,
+          type: 'JSON',
+          value: '200',
+        },
+      ],
+    } as QueryBuilderOptions;
+    const sql = _testExports.getFilters(options);
+    expect(sql).toEqual("( SpanAttributes.`http`.`status_code`::Nullable(String) = '200' )");
+  });
+
+  it('generates correct IN clause for JSON mapKey filter', () => {
+    const options = {
+      filters: [
+        {
+          condition: 'AND',
+          filterType: 'custom',
+          key: 'LogAttributes',
+          mapKey: 'level',
+          operator: FilterOperator.In,
+          type: 'JSON',
+          value: ['error', 'warn'],
+        },
+      ],
+    } as QueryBuilderOptions;
+    const sql = _testExports.getFilters(options);
+    expect(sql).toEqual("( LogAttributes.`level`::Nullable(String) IN ('error', 'warn') )");
+  });
+
+  it('generates correct NOT IN clause for JSON mapKey filter', () => {
+    const options = {
+      filters: [
+        {
+          condition: 'AND',
+          filterType: 'custom',
+          key: 'LogAttributes',
+          mapKey: 'level',
+          operator: FilterOperator.NotIn,
+          type: 'JSON',
+          value: ['debug', 'trace'],
+        },
+      ],
+    } as QueryBuilderOptions;
+    const sql = _testExports.getFilters(options);
+    expect(sql).toEqual("( LogAttributes.`level`::Nullable(String) NOT IN ('debug', 'trace') )");
+  });
+
+  it('generates LIKE clause for JSON mapKey filter', () => {
+    const options = {
+      filters: [
+        {
+          condition: 'AND',
+          filterType: 'custom',
+          key: 'ResourceAttributes',
+          mapKey: 'service.name',
+          operator: FilterOperator.Like,
+          type: 'JSON',
+          value: 'my-service',
+        },
+      ],
+    } as QueryBuilderOptions;
+    const sql = _testExports.getFilters(options);
+    expect(sql).toEqual("( ResourceAttributes.`service`.`name`::Nullable(String) LIKE '%my-service%' )");
+  });
+
+  it('routes a compact popover JSON filter through the JSON accessor, not bare LIKE', () => {
+    // The compact filter popover keeps the real column type, which may carry
+    // parameters on newer schemas (e.g. JSON(max_dynamic_paths=100)).
+    const options = {
+      filters: [
+        {
+          condition: 'AND',
+          filterType: 'custom',
+          key: 'LogAttributes',
+          mapKey: 'service.name',
+          operator: FilterOperator.Like,
+          type: 'JSON(max_dynamic_paths=100)',
+          value: 'grafana',
+        },
+      ],
+    } as QueryBuilderOptions;
+    const sql = _testExports.getFilters(options);
+    expect(sql).toEqual("( LogAttributes.`service`.`name`::Nullable(String) LIKE '%grafana%' )");
+    expect(sql).not.toContain('LogAttributes LIKE');
+  });
+
+  it('generates IS NULL clause for JSON mapKey filter', () => {
+    const options = {
+      filters: [
+        {
+          condition: 'AND',
+          filterType: 'custom',
+          key: 'LogAttributes',
+          mapKey: 'user_id',
+          operator: FilterOperator.IsNull,
+          type: 'JSON',
+        },
+      ],
+    } as QueryBuilderOptions;
+    const sql = _testExports.getFilters(options);
+    expect(sql).toEqual('( LogAttributes.`user_id`::Nullable(String) IS NULL )');
   });
 
   it('returns complex filter array', () => {
@@ -586,7 +1489,7 @@ describe('getFilters', () => {
           hint: ColumnHint.Time,
           key: '',
           operator: FilterOperator.WithInGrafanaTimeRange,
-          type: 'datetime'
+          type: 'datetime',
         },
         {
           condition: 'AND',
@@ -594,7 +1497,7 @@ describe('getFilters', () => {
           key: 'text',
           operator: FilterOperator.IsEmpty,
           type: 'string',
-          value: ''
+          value: '',
         },
         {
           condition: 'AND',
@@ -602,7 +1505,7 @@ describe('getFilters', () => {
           key: 'volume',
           operator: FilterOperator.GreaterThan,
           type: 'UInt64',
-          value: 0
+          value: 0,
         },
         {
           condition: 'AND',
@@ -610,12 +1513,12 @@ describe('getFilters', () => {
           key: 'should_be_excluded_from_filters',
           operator: FilterOperator.IsAnything,
           type: 'string',
-          value: ''
-        }
-      ]
+          value: '',
+        },
+      ],
     } as QueryBuilderOptions;
     const sql = _testExports.getFilters(options);
-    const expectedSql = '( hinted >= $__fromTime AND hinted <= $__toTime ) AND ( text = \'\' ) AND ( volume > 0 )';
+    const expectedSql = "( hinted >= $__fromTime AND hinted <= $__toTime ) AND ( text = '' ) AND ( volume > 0 )";
     expect(sql).toEqual(expectedSql);
   });
 });

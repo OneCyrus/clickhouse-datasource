@@ -1,5 +1,10 @@
 # Contributing to ClickHouse Datasource
 
+## Signed commits are required
+
+> [!IMPORTANT]
+> All commits must be [signed](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits) (GPG, SSH, or S/MIME) to be merged into this repository. Pull requests with unsigned commits will need to be re-committed with signatures before they can be merged.
+
 Thank you for your interest in contributing to this repository. We are glad you want to help us to improve the project and join our community. Feel free to [browse the open issues](https://github.com/grafana/clickhouse-datasource/issues). If you want more straightforward tasks to complete, [we have some](https://github.com/grafana/clickhouse-datasource/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22). For more details about how you can help, please take a look at [Grafana’s Contributing Guide](https://github.com/grafana/grafana/blob/main/CONTRIBUTING.md).
 
 ## Development setup
@@ -23,25 +28,27 @@ mage build:backend && mage reloadPlugin # builds and reloads the plugin in Grafa
 
 #### Compiling the frontend
 
-You can build and test the frontend by using `yarn`:
+You can build and test the frontend by using `npm`:
 
 ```sh
-yarn test # run all test cases
-yarn dev # builds and puts the output at ./dist
+npm run test # run all test cases
+npm run dev # builds and puts the output at ./dist
 ```
 
-You can also have `yarn` watch for changes and automatically recompile them:
+You can also have `npm` watch for changes and automatically recompile them:
 
 ```sh
-yarn watch
+npm run watch
 ```
 
 #### Running E2E tests locally
 
 1. Install [K6](https://k6.io/docs/get-started/installation/)
-2. Run `yarn test:e2e:local`
+2. Run `npm run test:e2e:local`
 
 ## Create a pull request
+
+Run `npm run lint` and `npm run prettier:check` to check for any style errors. Any PRs that have linter or `prettier` errors will not pass pull request CI checks. Run `npm run lint:fix && npm run prettier:write` to automatically fix linter or prettier errors.
 
 Once you are ready to make a pull request, please read and follow [Create a pull request](https://github.com/grafana/grafana/blob/master/contribute/create-pull-request.md).
 
