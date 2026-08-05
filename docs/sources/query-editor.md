@@ -46,13 +46,15 @@ The query editor appears in [Explore](https://grafana.com/docs/grafana/latest/vi
 - **Type-specific options** — Configure columns, filters, grouping, sorting, limit (max rows), and (for traces) trace ID. The builder generates the SQL for you.
 - **SQL preview** — At the bottom of the builder, you can see the generated SQL. You can switch to SQL mode to edit it manually.
 
-If the data source is configured in **Single source** mode, the query builder uses the configured logs or traces source as its default database, table, and column mapping.
+If the data source is configured in **Single source** mode, the query builder uses the configured logs, traces, or metrics source as its default database, table, and column mapping.
 
 ### Compact query mode
 
-When a data source is configured in **Single source** mode for logs or traces, the query builder uses a compact editor focused on the configured source. The compact editor omits database, table, and query type controls because those values come from the data source configuration.
+When a data source is configured in **Single source** mode for logs, traces, or metrics, the query builder uses a compact editor focused on the configured source. The compact editor omits database, table, and query type controls because those values come from the data source configuration.
 
 For logs, use the search field to filter log message text. Use **Add filter** to add column filters, and use the advanced options to adjust sorting and the result limit.
+
+For metrics, choose the time column and value or aggregate columns in the time-series editor. Use **Add filter** for the same per-query column filters available to logs and traces, and use the advanced options to adjust sorting and the result limit.
 
 Compact filters use Grafana's selected time range automatically. The configured time fields are not shown in the filter field list because the query builder manages the time range filter for you.
 
@@ -268,7 +270,7 @@ Trace-panel column aliases are fixed; choose the table columns that play each ro
 
 Set the **Duration Unit** to match the units your column stores (OTel uses nanoseconds; other schemas often use milliseconds or seconds). The builder converts durations to milliseconds for the trace panel.
 
-To avoid re-mapping roles for every query, configure defaults under **Data source settings → Logs** and **Data source settings → Traces**, or use **Single source** mode when a data source is dedicated to one logs or traces table. Enabling **OTel** mode populates every role with the OTel-conventional column name automatically.
+To avoid re-mapping roles for every query, configure defaults under **Data source settings → Logs**, **Traces**, or **Metrics**, or use **Single source** mode when a data source is dedicated to one signal table. Enabling **OTel** mode populates every role with the OTel-conventional column name automatically.
 
 ## Macros
 

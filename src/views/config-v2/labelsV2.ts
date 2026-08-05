@@ -319,6 +319,32 @@ export default {
           },
         },
       },
+      MetricsConfig: {
+        title: 'Metrics configuration',
+        description: '(Optional) default settings for time-series metric queries',
+        variants: {
+          singleTable: {
+            title: 'Metrics Table & Schema',
+            description: 'Configure the database, table, and time column for metric queries.',
+          },
+        },
+        defaultDatabase: {
+          label: 'Default metrics database',
+          description: 'The default database used by the metrics query builder',
+          name: 'defaultDatabase',
+          placeholder: 'default',
+        },
+        defaultTable: {
+          label: 'Default metrics table',
+          description: 'The default table used by the metrics query builder',
+          name: 'defaultTable',
+          placeholder: 'table',
+        },
+        timeColumn: {
+          label: 'Time column',
+          tooltip: 'Column containing the metric timestamp',
+        },
+      },
     },
     EditorTypeSwitcher: {
       label: 'Editor Type',

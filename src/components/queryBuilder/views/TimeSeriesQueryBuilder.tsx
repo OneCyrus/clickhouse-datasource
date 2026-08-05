@@ -32,6 +32,7 @@ interface TimeSeriesQueryBuilderProps {
   datasource: Datasource;
   builderOptions: QueryBuilderOptions;
   builderOptionsDispatch: React.Dispatch<BuilderOptionsReducerAction>;
+  compact?: boolean;
 }
 
 interface TimeSeriesQueryBuilderState {
@@ -46,7 +47,7 @@ interface TimeSeriesQueryBuilderState {
 }
 
 export const TimeSeriesQueryBuilder = (props: TimeSeriesQueryBuilderProps) => {
-  const { datasource, builderOptions, builderOptionsDispatch } = props;
+  const { datasource, builderOptions, builderOptionsDispatch, compact = false } = props;
   const isNewQuery = useIsNewQuery(builderOptions);
   const allColumns = useColumns(datasource, builderOptions.database, builderOptions.table);
   const labels = allLabels.components.TimeSeriesQueryBuilder;
@@ -143,20 +144,24 @@ export const TimeSeriesQueryBuilder = (props: TimeSeriesQueryBuilderProps) => {
         />
       )}
 
-      <OrderByEditor
-        orderByOptions={getOrderByOptions(builderOptions, allColumns)}
-        orderBy={builderState.orderBy}
-        onOrderByChange={onOptionChange('orderBy')}
-      />
-      <LimitEditor limit={builderState.limit} onLimitChange={onOptionChange('limit')} />
-      <FiltersEditor
-        filters={builderState.filters}
-        onFiltersChange={onOptionChange('filters')}
-        allColumns={allColumns}
-        datasource={datasource}
-        database={builderOptions.database}
-        table={builderOptions.table}
-      />
+      {!compact && (
+        <>
+          <OrderByEditor
+            orderByOptions={getOrderByOptions(builderOptions, allColumns)}
+            orderBy={builderState.orderBy}
+            onOrderByChange={onOptionChange('orderBy')}
+          />
+          <LimitEditor limit={builderState.limit} onLimitChange={onOptionChange('limit')} />
+          <FiltersEditor
+            filters={builderState.filters}
+            onFiltersChange={onOptionChange('filters')}
+            allColumns={allColumns}
+            datasource={datasource}
+            database={builderOptions.database}
+            table={builderOptions.table}
+          />
+        </>
+      )}
     </div>
   );
 };

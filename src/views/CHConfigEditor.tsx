@@ -11,6 +11,7 @@ import {
   CHCustomSetting,
   CHSecureConfig,
   CHLogsConfig,
+  CHMetricsConfig,
   Protocol,
   CHTracesConfig,
   AliasTableEntry,
@@ -26,6 +27,7 @@ import { DefaultDatabaseTableConfig } from 'components/configEditor/DefaultDatab
 import { QuerySettingsConfig } from 'components/configEditor/QuerySettingsConfig';
 import { LogsConfig } from 'components/configEditor/LogsConfig';
 import { TracesConfig } from 'components/configEditor/TracesConfig';
+import { MetricsConfig } from 'components/configEditor/MetricsConfig';
 import { HttpHeadersConfig } from 'components/configEditor/HttpHeadersConfig';
 import allLabels from '../labels';
 import { createValidationAPI, onHttpHeadersChange, useConfigDefaults } from './CHConfigEditorHooks';
@@ -229,6 +231,18 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
       },
     });
   };
+  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string) => {
+    onOptionsChange({
+      ...options,
+      jsonData: {
+        ...options.jsonData,
+        metrics: {
+          ...options.jsonData.metrics,
+          [key]: value,
+        },
+      },
+    });
+  };
   const onAliasTableConfigChange = (aliasTables: AliasTableEntry[]) => {
     // track events when both a target table and alias table has a value
     if (aliasTables.length > 0 && aliasTables[0].targetTable && aliasTables[0].aliasTable) {
@@ -255,7 +269,8 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
     options.jsonData.enableSecureSocksProxy ||
     options.jsonData.customSettings ||
     options.jsonData.logs ||
-    options.jsonData.traces
+    options.jsonData.traces ||
+    options.jsonData.metrics
   );
   const configMode = jsonData.configMode || (jsonData.signalType ? 'single-table' : 'classic');
   const isSingleTableMode = configMode === 'single-table';
@@ -509,6 +524,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
               options={[
                 { label: 'Logs', value: 'logs', description: 'Log search with severity, message, and attributes' },
                 { label: 'Traces', value: 'traces', description: 'Distributed tracing with spans and service maps' },
+                { label: 'Metrics', value: 'metrics', description: 'Time-series metrics with dimensions and filters' },
               ]}
               value={selectedSignalType}
               onChange={(v) => {
@@ -583,6 +599,18 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
                 onLinksColumnPrefixChange={(c) => onTracesConfigChange('traceLinksColumnPrefix', c)}
                 onShowTraceLinksChange={(v) => onTracesConfigChange('showTraceLinks', v)}
                 onTraceTimestampTableSuffixChange={(v) => onTracesConfigChange('traceTimestampTableSuffix', v)}
+              />
+            </>
+          )}
+          {selectedSignalType === 'metrics' && (
+            <>
+              <Divider />
+              <MetricsConfig
+                variant="single-table"
+                metricsConfig={jsonData.metrics}
+                onDefaultDatabaseChange={(db) => onMetricsConfigChange('defaultDatabase', db)}
+                onDefaultTableChange={(table) => onMetricsConfigChange('defaultTable', table)}
+                onTimeColumnChange={(column) => onMetricsConfigChange('timeColumn', column)}
               />
             </>
           )}
@@ -827,6 +855,14 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
                 trackingV1.trackClickhouseConfigV1TracesConfig({ traceTimestampTableSuffix: c });
                 onTracesConfigChange('traceTimestampTableSuffix', c);
               }}
+            />
+
+            <Divider />
+            <MetricsConfig
+              metricsConfig={jsonData.metrics}
+              onDefaultDatabaseChange={(db) => onMetricsConfigChange('defaultDatabase', db)}
+              onDefaultTableChange={(table) => onMetricsConfigChange('defaultTable', table)}
+              onTimeColumnChange={(column) => onMetricsConfigChange('timeColumn', column)}
             />
 
             <Divider />

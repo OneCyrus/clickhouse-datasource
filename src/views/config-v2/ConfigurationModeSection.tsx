@@ -8,7 +8,16 @@ import { Box, CollapsableSection, Divider, Field, RadioButtonGroup, Text } from 
 import { LogsConfig } from 'components/configEditor/LogsConfig';
 import { QuerySettingsConfig } from 'components/configEditor/QuerySettingsConfig';
 import { TracesConfig } from 'components/configEditor/TracesConfig';
-import { CHConfig, CHLogsConfig, CHSecureConfig, CHTracesConfig, ConfigMode, SignalType } from 'types/config';
+import { MetricsConfig } from 'components/configEditor/MetricsConfig';
+import {
+  CHConfig,
+  CHLogsConfig,
+  CHMetricsConfig,
+  CHSecureConfig,
+  CHTracesConfig,
+  ConfigMode,
+  SignalType,
+} from 'types/config';
 import { TimeUnit } from 'types/queryBuilder';
 import { CONFIG_SECTION_HEADERS, CONTAINER_MIN_WIDTH } from './constants';
 import {
@@ -63,6 +72,19 @@ export const ConfigurationModeSection = (props: Props) => {
     onTracesConfigChange(key, value);
   };
 
+  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string) => {
+    onOptionsChange({
+      ...options,
+      jsonData: {
+        ...options.jsonData,
+        metrics: {
+          ...options.jsonData.metrics,
+          [key]: value,
+        },
+      },
+    });
+  };
+
   return (
     <Box
       borderStyle="solid"
@@ -104,6 +126,7 @@ export const ConfigurationModeSection = (props: Props) => {
               options={[
                 { label: 'Logs', value: 'logs', description: 'Log search with severity, message, and attributes' },
                 { label: 'Traces', value: 'traces', description: 'Distributed tracing with spans and service maps' },
+                { label: 'Metrics', value: 'metrics', description: 'Time-series metrics with dimensions and filters' },
               ]}
               value={selectedSignalType}
               onChange={(v) => {
@@ -176,6 +199,18 @@ export const ConfigurationModeSection = (props: Props) => {
               onLinksColumnPrefixChange={(c) => onUpdateTracesConfig('traceLinksColumnPrefix', c)}
               onShowTraceLinksChange={(v) => onUpdateTracesConfig('showTraceLinks', v)}
               onTraceTimestampTableSuffixChange={(v) => onUpdateTracesConfig('traceTimestampTableSuffix', v)}
+            />
+          </>
+        )}
+        {selectedSignalType === 'metrics' && (
+          <>
+            <Divider />
+            <MetricsConfig
+              variant="single-table"
+              metricsConfig={jsonData.metrics}
+              onDefaultDatabaseChange={(db) => onMetricsConfigChange('defaultDatabase', db)}
+              onDefaultTableChange={(table) => onMetricsConfigChange('defaultTable', table)}
+              onTimeColumnChange={(column) => onMetricsConfigChange('timeColumn', column)}
             />
           </>
         )}

@@ -16,7 +16,9 @@ jest.mock('./views/LogsQueryBuilder', () => ({
   ),
 }));
 jest.mock('./views/TimeSeriesQueryBuilder', () => ({
-  TimeSeriesQueryBuilder: () => <div data-testid="time-series-component" />,
+  TimeSeriesQueryBuilder: ({ compact }: { compact?: boolean }) => (
+    <div data-testid="time-series-component" data-compact={compact ? 'true' : 'false'} />
+  ),
 }));
 jest.mock('./views/TraceQueryBuilder', () => ({
   TraceQueryBuilder: ({ builderOptions }: any) => (
@@ -43,6 +45,9 @@ describe('QueryBuilder', () => {
   mockDs.getDefaultTable = jest.fn((_db?: string) => '');
   mockDs.getDefaultTraceDatabase = jest.fn((_db?: string) => '');
   mockDs.getDefaultTraceTable = jest.fn((_db?: string) => '');
+  mockDs.getDefaultMetricsDatabase = jest.fn((_db?: string) => '');
+  mockDs.getDefaultMetricsTable = jest.fn((_db?: string) => '');
+  mockDs.getDefaultMetricsTimeColumn = jest.fn((_db?: string) => '');
   mockDs.getDefaultTraceDurationUnit = jest.fn((_db?: string) => 'ms' as TimeUnit);
   mockDs.getTraceOtelVersion = jest.fn((_db?: string) => '');
   mockDs.getDefaultTraceFlattenNested = jest.fn((_db?: string) => false);
@@ -81,6 +86,35 @@ describe('QueryBuilder', () => {
   it('maps configured signal types to compact modes', () => {
     expect(getDefaultCompactMode('logs')).toBe('otel-logs');
     expect(getDefaultCompactMode('traces')).toBe('otel-traces');
+    expect(getDefaultCompactMode('metrics')).toBe('metrics');
+  });
+
+  it('renders the metrics compact editor with the time-series builder and filter bar', () => {
+    const signalTypeSpy = jest.spyOn(mockDs, 'getSignalType').mockReturnValue('metrics');
+    const singleTableSpy = jest.spyOn(mockDs, 'isSingleTableMode').mockReturnValue(true);
+
+    render(
+      <QueryBuilder
+        app={CoreApp.PanelEditor}
+        builderOptions={{
+          queryType: QueryType.TimeSeries,
+          mode: BuilderMode.Trend,
+          database: 'metrics',
+          table: 'otel_metrics',
+          columns: [{ name: 'Timestamp', hint: ColumnHint.Time }],
+          filters: [],
+        }}
+        builderOptionsDispatch={() => {}}
+        datasource={mockDs}
+        generatedSql=""
+      />
+    );
+
+    expect(screen.getByTestId('time-series-component')).toHaveAttribute('data-compact', 'true');
+    expect(screen.getByTestId('compact-filter-bar')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Search logs')).not.toBeInTheDocument();
+    signalTypeSpy.mockRestore();
+    singleTableSpy.mockRestore();
   });
 
   it('renders correctly', async () => {

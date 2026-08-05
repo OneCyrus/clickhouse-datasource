@@ -267,6 +267,39 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
     );
   };
 
+  if (signalType === 'metrics') {
+    return (
+      <div data-testid="query-editor-section-builder">
+        <TimeSeriesQueryBuilder
+          datasource={datasource}
+          builderOptions={activeOptions}
+          builderOptionsDispatch={builderOptionsDispatch}
+          compact
+        />
+        <CompactFilterBar
+          datasource={datasource}
+          database={activeOptions.database}
+          table={activeOptions.table}
+          filters={activeOptions.filters || []}
+          allColumns={filterColumns}
+          selectedColumns={activeOptions.columns || []}
+          onFiltersChange={(filters: Filter[]) => mergeActiveOptions({ filters }, true)}
+          onToggleAdvanced={() => setAdvancedOpen(!advancedOpen)}
+          advancedOpen={advancedOpen}
+        />
+        {advancedOpen && (
+          <CompactAdvanced
+            builderOptions={activeOptions}
+            allColumns={allColumns}
+            onOrderByChange={(orderBy: OrderBy[]) => mergeActiveOptions({ orderBy }, true)}
+            onLimitChange={(limit: number) => mergeActiveOptions({ limit }, true)}
+          />
+        )}
+        <SqlPreview sql={generatedSql} compact onEditAsSql={() => onEditAsSql?.(activeOptions)} />
+      </div>
+    );
+  }
+
   return (
     <div data-testid="query-editor-section-builder">
       <CompactModeBar

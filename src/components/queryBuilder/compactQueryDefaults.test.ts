@@ -5,7 +5,14 @@ import {
   isDefaultCompactQuery,
   shouldBuildCompactQueryDefaults,
 } from './compactQueryDefaults';
-import { BuilderMode, ColumnHint, OrderByDirection, QueryBuilderOptions, QueryType } from 'types/queryBuilder';
+import {
+  BuilderMode,
+  ColumnHint,
+  FilterOperator,
+  OrderByDirection,
+  QueryBuilderOptions,
+  QueryType,
+} from 'types/queryBuilder';
 import { SignalType } from 'types/config';
 import otel from 'otel';
 
@@ -126,6 +133,16 @@ describe('buildCompactQueryDefaults', () => {
     return mockDs;
   };
 
+  const createMetricsDatasource = (): Datasource => {
+    const mockDs = {} as Datasource;
+    mockDs.getDefaultMetricsDatabase = jest.fn(() => 'metrics');
+    mockDs.getDefaultMetricsTable = jest.fn(() => 'otel_metrics');
+    mockDs.getDefaultMetricsTimeColumn = jest.fn(() => 'Timestamp');
+    mockDs.getDefaultDatabase = jest.fn(() => 'default');
+    mockDs.getDefaultTable = jest.fn(() => '');
+    return mockDs;
+  };
+
   // otel_logs table created by clickhouseexporter before v0.151.0.
   const preV151ColumnNames = [
     'Timestamp',
@@ -182,5 +199,23 @@ describe('buildCompactQueryDefaults', () => {
 
     expect(options.meta?.otelEnabled).toBe(true);
     expect(options.meta?.otelVersion).toBe('latest');
+  });
+
+  it('builds time-series defaults from the configured metrics source', () => {
+    const options = buildCompactQueryDefaults(createMetricsDatasource(), 'metrics');
+
+    expect(options).toMatchObject({
+      database: 'metrics',
+      table: 'otel_metrics',
+      queryType: QueryType.TimeSeries,
+      mode: BuilderMode.Trend,
+      columns: [{ name: 'Timestamp', hint: ColumnHint.Time }],
+    });
+    expect(options.filters).toEqual([
+      expect.objectContaining({
+        hint: ColumnHint.Time,
+        operator: FilterOperator.WithInGrafanaTimeRange,
+      }),
+    ]);
   });
 });

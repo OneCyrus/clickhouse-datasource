@@ -1,5 +1,13 @@
 import { Datasource } from 'data/CHDatasource';
-import { BuilderMode, ColumnHint, QueryBuilderOptions, QueryType, SelectedColumn } from 'types/queryBuilder';
+import {
+  BuilderMode,
+  ColumnHint,
+  FilterOperator,
+  OrderByDirection,
+  QueryBuilderOptions,
+  QueryType,
+  SelectedColumn,
+} from 'types/queryBuilder';
 import { SignalType } from 'types/config';
 import { isBuilderOptionsRunnable } from 'data/utils';
 import otel from 'otel';
@@ -11,7 +19,13 @@ import {
 } from './defaultQueryOptions';
 
 export const getCompactQueryType = (signalType: SignalType): QueryType => {
-  return signalType === 'logs' ? QueryType.Logs : QueryType.Traces;
+  if (signalType === 'logs') {
+    return QueryType.Logs;
+  }
+  if (signalType === 'metrics') {
+    return QueryType.TimeSeries;
+  }
+  return QueryType.Traces;
 };
 
 export const isDefaultCompactQuery = (builderOptions: QueryBuilderOptions): boolean => {
@@ -54,8 +68,36 @@ export function buildCompactQueryDefaults(
 ): QueryBuilderOptions {
   return signalType === 'logs'
     ? buildCompactLogsDefaults(datasource, fallbackTable, tableColumnNames)
-    : buildCompactTracesDefaults(datasource, fallbackTable);
+    : signalType === 'metrics'
+      ? buildCompactMetricsDefaults(datasource, fallbackTable)
+      : buildCompactTracesDefaults(datasource, fallbackTable);
 }
+
+const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: string): QueryBuilderOptions => {
+  const defaultDb = datasource.getDefaultMetricsDatabase?.() || datasource.getDefaultDatabase();
+  const defaultTable = datasource.getDefaultMetricsTable?.() || datasource.getDefaultTable() || fallbackTable;
+  const timeColumn = datasource.getDefaultMetricsTimeColumn?.();
+
+  return {
+    database: defaultDb,
+    table: defaultTable || '',
+    queryType: QueryType.TimeSeries,
+    mode: BuilderMode.Trend,
+    columns: timeColumn ? [{ name: timeColumn, hint: ColumnHint.Time }] : [],
+    filters: [
+      {
+        type: 'datetime',
+        operator: FilterOperator.WithInGrafanaTimeRange,
+        filterType: 'custom',
+        key: '',
+        hint: ColumnHint.Time,
+        condition: 'AND',
+      },
+    ],
+    orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC, default: true }],
+    limit: 1000,
+  };
+};
 
 const buildCompactLogsDefaults = (
   datasource: Datasource,

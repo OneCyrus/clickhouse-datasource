@@ -11,6 +11,7 @@ import {
   CHConfig,
   CHCustomSetting,
   CHLogsConfig,
+  CHMetricsConfig,
   CHSecureConfig,
   CHTracesConfig,
   defaultCHAdditionalSettingsConfig,
@@ -20,6 +21,7 @@ import { DefaultDatabaseTableConfig } from 'components/configEditor/DefaultDatab
 import { LogsConfig } from 'components/configEditor/LogsConfig';
 import { QuerySettingsConfig } from 'components/configEditor/QuerySettingsConfig';
 import { TracesConfig } from 'components/configEditor/TracesConfig';
+import { MetricsConfig } from 'components/configEditor/MetricsConfig';
 import { config } from '@grafana/runtime';
 import { TimeUnit } from 'types/queryBuilder';
 import { useConfigDefaults } from 'views/CHConfigEditorHooks';
@@ -101,6 +103,19 @@ export const AdditionalSettingsSection = (props: Props) => {
     onTracesConfigChange(key, value);
   };
 
+  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string) => {
+    onOptionsChange({
+      ...options,
+      jsonData: {
+        ...options.jsonData,
+        metrics: {
+          ...(options.jsonData.metrics || {}),
+          [key]: value,
+        },
+      },
+    });
+  };
+
   const onAliasTableConfigChange = (aliasTables: AliasTableEntry[]) => {
     onOptionsChange({
       ...options,
@@ -141,7 +156,8 @@ export const AdditionalSettingsSection = (props: Props) => {
             !!jsonData.validateSql ||
             jsonData.enableMapKeysDiscovery === false ||
             !isEqual(logs, defaultLogs) ||
-            !isEqual(traces, defaultTraces)
+            !isEqual(traces, defaultTraces) ||
+            !!jsonData.metrics
           );
         })()) ||
       (jsonData.aliasTables?.length ?? 0) > 0 ||
@@ -276,6 +292,12 @@ export const AdditionalSettingsSection = (props: Props) => {
               onTraceTimestampTableSuffixChange={(c) => onUpdateTracesConfig('traceTimestampTableSuffix', c)}
             />
             <Divider />
+            <MetricsConfig
+              metricsConfig={jsonData.metrics}
+              onDefaultDatabaseChange={(db) => onMetricsConfigChange('defaultDatabase', db)}
+              onDefaultTableChange={(table) => onMetricsConfigChange('defaultTable', table)}
+              onTimeColumnChange={(column) => onMetricsConfigChange('timeColumn', column)}
+            />
           </>
         )}
         <AliasTableConfig aliasTables={jsonData.aliasTables} onAliasTablesChange={onAliasTableConfigChange} />
