@@ -270,7 +270,7 @@ Trace-panel column aliases are fixed; choose the table columns that play each ro
 
 Set the **Duration Unit** to match the units your column stores (OTel uses nanoseconds; other schemas often use milliseconds or seconds). The builder converts durations to milliseconds for the trace panel.
 
-To avoid re-mapping roles for every query, configure defaults under **Data source settings → Logs**, **Traces**, or **Metrics**, or use **Single source** mode when a data source is dedicated to one logs or traces table. Enabling **OTel** mode populates every role with the OTel-conventional column name automatically.
+To avoid re-mapping roles for every query, configure defaults under **Data source settings → Logs** and **Data source settings → Traces**, or use **Single source** mode when a data source is dedicated to one logs or traces table. Enabling **OTel** mode populates every role with the OTel-conventional column name automatically.
 
 ## Macros
 
