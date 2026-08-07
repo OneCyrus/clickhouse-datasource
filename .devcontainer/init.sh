@@ -1,2 +1,3 @@
 mage -v build:linux
-yarn install
+sudo corepack enable
+npm install

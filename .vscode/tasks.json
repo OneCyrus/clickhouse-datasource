@@ -3,13 +3,13 @@
 	"tasks": [
 		{
 			"type": "shell",
-			"command": "yarn install",
+			"command": "npm install",
 			"label": "frontend: yarn install",
 			"detail": "install frontend dependencies"
 		},
 		{
 			"type": "shell",
-			"command": "yarn dev",
+			"command": "npm dev",
 			"label": "frontend: yarn dev",
 			"dependsOn": [
 				"frontend: yarn install"
