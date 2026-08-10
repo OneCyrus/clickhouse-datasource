@@ -623,7 +623,7 @@ describe('ClickHouseDatasource', () => {
 
       expect(spyOnQuery).toHaveBeenCalled();
 
-      expect(keys).toEqual({});
+      expect(keys).toEqual([]);
     });
 
     it('returns tags when CH version is greater than 22.7 ', async () => {

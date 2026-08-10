@@ -5,6 +5,8 @@ import {
   DataQueryError,
   DataQueryRequest,
   DataQueryResponse,
+  DataSourceGetTagKeysOptions,
+  DataSourceGetTagValuesOptions,
   DataSourceInstanceSettings,
   DataSourceWithLogsContextSupport,
   DataSourceWithLogsLabelTypesSupport,
@@ -1513,11 +1515,16 @@ export class Datasource
     return frame?.fields[0]?.values.map((text) => text);
   }
 
-  async getTagKeys(): Promise<MetricFindValue[]> {
+  /**
+   * Grafana's built-in ad hoc picker calls this method when adding or editing
+   * a filter. Keep the optional request argument for compatibility with older
+   * Grafana versions that called the legacy no-argument form.
+   */
+  async getTagKeys(_options?: DataSourceGetTagKeysOptions<CHQuery>): Promise<MetricFindValue[]> {
     if (this.adHocFiltersStatus === AdHocFilterStatus.disabled || this.adHocFiltersStatus === AdHocFilterStatus.none) {
       this.adHocFiltersStatus = await this.canUseAdhocFilters();
       if (this.adHocFiltersStatus === AdHocFilterStatus.disabled) {
-        return {} as MetricFindValue[];
+        return [];
       }
     }
     const { type, frame } = await this.fetchTags();
@@ -1677,7 +1684,13 @@ export class Datasource
     return raw.includes('.') ? raw.split('.')[1] : undefined;
   }
 
-  async getTagValues({ key }: any): Promise<MetricFindValue[]> {
+  /**
+   * Grafana's built-in ad hoc picker also passes filters and time-range
+   * context here. The key is the only context required by ClickHouse's
+   * existing schema/query discovery paths, but accepting the full request
+   * shape keeps editing compatible with the native picker.
+   */
+  async getTagValues({ key }: Pick<DataSourceGetTagValuesOptions<CHQuery>, 'key'>): Promise<MetricFindValue[]> {
     const { type } = this.getTagSource();
     this.skipAdHocFilter = true;
     if (type === TagType.query) {
