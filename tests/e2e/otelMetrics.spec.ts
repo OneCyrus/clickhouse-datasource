@@ -84,7 +84,7 @@ test.describe('OTel metrics demo data', () => {
     await page.goto(exploreUrl());
     await enterSql(
       page,
-      "SELECT MetricName, Value, TimeUnix FROM e2e_test.otel_metrics_gauge WHERE MetricName = 'process.cpu.utilization' ORDER BY TimeUnix"
+      "SELECT MetricName, Value, toUnixTimestamp(TimeUnix) AS TimeUnix, Flags, ScopeDroppedAttrCount, ResourceSchemaUrl FROM e2e_test.otel_metrics_gauge WHERE MetricName = 'process.cpu.utilization' ORDER BY TimeUnix, Attributes['cpu'], Attributes['state']"
     );
 
     const { responsePromise, getBody } = await waitForQueryDataResponseWithBody(explorePage);
@@ -92,16 +92,25 @@ test.describe('OTel metrics demo data', () => {
 
     await responsePromise;
     const values = getFrameValues(getBody());
-    expect(values.length).toBeGreaterThan(0);
-    expect(values[0]).toContain('process.cpu.utilization');
-    expect(values[0].length).toBe(4);
+    expect(values.length).toBe(6);
+    expect(values[0]).toEqual([
+      'process.cpu.utilization',
+      'process.cpu.utilization',
+      'process.cpu.utilization',
+      'process.cpu.utilization',
+    ]);
+    expect(values[1]).toEqual([0.05, 0.12, 0.09, 0.71]);
+    expect(values[2]).toEqual([1710496800, 1710496800, 1710496860, 1710496920]);
+    expect(values[3]).toEqual([0, 0, 0, 0]);
+    expect(values[4]).toEqual([0, 1, 0, 0]);
+    expect(values[5]).toEqual(['', 'https://opentelemetry.io/schemas/1.30.0', '', '']);
   });
 
   test('sum table returns monotonic counter rows with temporality metadata', async ({ page, explorePage }) => {
     await page.goto(exploreUrl());
     await enterSql(
       page,
-      "SELECT MetricName, Value, IsMonotonic, AggregationTemporality FROM e2e_test.otel_metrics_sum WHERE MetricName = 'http.server.request.count' ORDER BY TimeUnix"
+      "SELECT MetricName, Value, toUnixTimestamp(TimeUnix) AS TimeUnix, IsMonotonic, AggregationTemporality FROM e2e_test.otel_metrics_sum WHERE MetricName = 'http.server.request.count' AND Attributes['http.request.method'] = 'GET' AND Attributes['http.response.status_code'] = '200' ORDER BY TimeUnix"
     );
 
     const { responsePromise, getBody } = await waitForQueryDataResponseWithBody(explorePage);
@@ -109,17 +118,19 @@ test.describe('OTel metrics demo data', () => {
 
     await responsePromise;
     const values = getFrameValues(getBody());
-    expect(values.length).toBeGreaterThan(0);
-    expect(values[0]).toContain('http.server.request.count');
-    expect(values[2]).toEqual([true, true, true]);
-    expect(values[3]).toEqual([2, 2, 2]);
+    expect(values.length).toBe(5);
+    expect(values[0]).toEqual(['http.server.request.count', 'http.server.request.count']);
+    expect(values[1]).toEqual([1250, 1412]);
+    expect(values[2]).toEqual([1710496800, 1710497100]);
+    expect(values[3]).toEqual([true, true]);
+    expect(values[4]).toEqual([2, 2]);
   });
 
   test('histogram table returns bucket counts aligned with explicit bounds', async ({ page, explorePage }) => {
     await page.goto(exploreUrl());
     await enterSql(
       page,
-      "SELECT MetricName, Count, BucketCounts, ExplicitBounds FROM e2e_test.otel_metrics_histogram WHERE MetricName = 'http.server.request.duration' ORDER BY TimeUnix LIMIT 1"
+      "SELECT MetricName, Count, BucketCounts, ExplicitBounds FROM e2e_test.otel_metrics_histogram WHERE MetricName IN ('http.server.request.duration', 'job.processing.duration') ORDER BY TimeUnix, ServiceName, Attributes['http.request.method']"
     );
 
     const { responsePromise, getBody } = await waitForQueryDataResponseWithBody(explorePage);
@@ -127,16 +138,19 @@ test.describe('OTel metrics demo data', () => {
 
     await responsePromise;
     const values = getFrameValues(getBody());
-    expect(values.length).toBeGreaterThan(0);
-    // values[2] and values[3] are column arrays holding a single nested-array row
-    expect(values[2][0].length).toBe(values[3][0].length + 1);
+    expect(values.length).toBe(4);
+    expect(values[0].length).toBe(3);
+    expect(values[1]).toEqual([1250, 310, 864]);
+    for (let index = 0; index < values[0].length; index++) {
+      expect(values[2][index].length).toBe(values[3][index].length + 1);
+    }
   });
 
   test('summary table returns quantile values', async ({ page, explorePage }) => {
     await page.goto(exploreUrl());
     await enterSql(
       page,
-      "SELECT MetricName, ValueAtQuantiles.Quantile, ValueAtQuantiles.Value FROM e2e_test.otel_metrics_summary WHERE MetricName = 'job.queue.duration' ORDER BY TimeUnix LIMIT 1"
+      "SELECT MetricName, ValueAtQuantiles.Quantile, ValueAtQuantiles.Value FROM e2e_test.otel_metrics_summary WHERE MetricName = 'job.queue.duration' ORDER BY TimeUnix"
     );
 
     const { responsePromise, getBody } = await waitForQueryDataResponseWithBody(explorePage);
@@ -144,17 +158,23 @@ test.describe('OTel metrics demo data', () => {
 
     await responsePromise;
     const values = getFrameValues(getBody());
-    expect(values.length).toBeGreaterThan(0);
-    // values[1] and values[2] are column arrays holding a single nested-array row
-    expect(values[1][0]).toEqual([0.5, 0.9, 0.99]);
-    expect(values[2][0].length).toBe(3);
+    expect(values.length).toBe(3);
+    expect(values[0].length).toBe(2);
+    expect(values[1]).toEqual([
+      [0.5, 0.9, 0.99],
+      [0.5, 0.9, 0.99],
+    ]);
+    expect(values[2]).toEqual([
+      [1.1, 2.8, 5.6],
+      [1.0, 2.4, 4.9],
+    ]);
   });
 
   test('exponential histogram table returns scale and bucket counts', async ({ page, explorePage }) => {
     await page.goto(exploreUrl());
     await enterSql(
       page,
-      "SELECT MetricName, Scale, PositiveOffset, PositiveBucketCounts FROM e2e_test.otel_metrics_exponential_histogram WHERE MetricName = 'http.server.request.duration' ORDER BY TimeUnix LIMIT 1"
+      "SELECT ServiceName, MetricName, Scale, PositiveOffset, PositiveBucketCounts, NegativeOffset, NegativeBucketCounts FROM e2e_test.otel_metrics_exponential_histogram WHERE MetricName IN ('http.server.request.duration', 'job.processing.duration') ORDER BY TimeUnix, ServiceName"
     );
 
     const { responsePromise, getBody } = await waitForQueryDataResponseWithBody(explorePage);
@@ -162,8 +182,16 @@ test.describe('OTel metrics demo data', () => {
 
     await responsePromise;
     const values = getFrameValues(getBody());
-    expect(values.length).toBeGreaterThan(0);
-    expect(values[1]).toEqual([4]);
-    expect(values[3]).toEqual([[900, 300, 45]]);
+    expect(values.length).toBe(7);
+    expect(values[0]).toEqual(['api', 'worker']);
+    expect(values[1]).toEqual(['http.server.request.duration', 'job.processing.duration']);
+    expect(values[2]).toEqual([4, 4]);
+    expect(values[3]).toEqual([0, -3]);
+    expect(values[4]).toEqual([
+      [900, 300, 45],
+      [40, 320, 400, 90, 10],
+    ]);
+    expect(values[5]).toEqual([0, -1]);
+    expect(values[6]).toEqual([[], [2, 1, 1]]);
   });
 });

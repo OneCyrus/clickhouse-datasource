@@ -57,14 +57,18 @@ PARTITION BY toDate(TimeUnix)
 ORDER BY (ServiceName, MetricName, toStartOfHour(TimeUnix), cityHash64(Attributes), TimeUnix)
 SETTINGS index_granularity=8192, ttl_only_drop_parts = 1;
 
+TRUNCATE TABLE e2e_test.otel_metrics_gauge;
+
 INSERT INTO e2e_test.otel_metrics_gauge
     (ResourceAttributes, ResourceSchemaUrl, ScopeName, ScopeVersion, ScopeAttributes, ScopeDroppedAttrCount, ScopeSchemaUrl,
      ServiceName, MetricName, MetricDescription, MetricUnit, Attributes,
      StartTimeUnix, TimeUnix, Value, Flags,
      Exemplars.FilteredAttributes, Exemplars.TimeUnix, Exemplars.Value, Exemplars.SpanId, Exemplars.TraceId) VALUES
-    ({'service.name': 'api', 'deployment.environment': 'test'}, '', 'otelcol/process', '1.30.0', {}, 0, '',
+    ({'service.name': 'api', 'deployment.environment': 'test'}, 'https://opentelemetry.io/schemas/1.30.0', 'otelcol/process', '1.30.0',
+     {'telemetry.sdk.name': 'opentelemetry'}, 1, 'https://opentelemetry.io/schemas/1.30.0',
      'api', 'process.cpu.utilization', 'Fraction of time the CPU is utilized', '1',
-     {'cpu': 'cpu0', 'state': 'user'}, '2024-03-15 10:00:00', '2024-03-15 10:00:00', 0.12, 0, [], [], [], [], []),
+     {'cpu': 'cpu0', 'state': 'user'}, '2024-03-15 10:00:00', '2024-03-15 10:00:00', 0.12, 0,
+     [{'http.request.method': 'GET'}], ['2024-03-15 10:00:00'], [0.12], ['0123456789abcdef'], ['0123456789abcdef0123456789abcdef']),
     ({'service.name': 'api', 'deployment.environment': 'test'}, '', 'otelcol/process', '1.30.0', {}, 0, '',
      'api', 'process.cpu.utilization', 'Fraction of time the CPU is utilized', '1',
      {'cpu': 'cpu0', 'state': 'system'}, '2024-03-15 10:00:00', '2024-03-15 10:00:00', 0.05, 0, [], [], [], [], []),
@@ -123,6 +127,8 @@ PARTITION BY toDate(TimeUnix)
 ORDER BY (ServiceName, MetricName, toStartOfHour(TimeUnix), cityHash64(Attributes), TimeUnix)
 SETTINGS index_granularity=8192, ttl_only_drop_parts = 1;
 
+TRUNCATE TABLE e2e_test.otel_metrics_sum;
+
 INSERT INTO e2e_test.otel_metrics_sum
     (ResourceAttributes, ResourceSchemaUrl, ScopeName, ScopeVersion, ScopeAttributes, ScopeDroppedAttrCount, ScopeSchemaUrl,
      ServiceName, MetricName, MetricDescription, MetricUnit, Attributes,
@@ -132,7 +138,12 @@ INSERT INTO e2e_test.otel_metrics_sum
     ({'service.name': 'api', 'deployment.environment': 'test'}, '', 'io.opentelemetry.contrib', '1.0.0', {}, 0, '',
      'api', 'http.server.request.count', 'Total number of HTTP requests received', '{requests}',
      {'http.request.method': 'GET', 'http.response.status_code': '200'},
-     '2024-03-15 10:00:00', '2024-03-15 10:00:00', 1250, 0, [], [], [], [], [], 2, true),
+     '2024-03-15 10:00:00', '2024-03-15 10:00:00', 1250, 0,
+     [{'http.route': '/checkout'}], ['2024-03-15 10:00:00'], [0.035], ['fedcba9876543210'], ['fedcba9876543210fedcba9876543210'], 2, true),
+    ({'service.name': 'api', 'deployment.environment': 'test'}, '', 'io.opentelemetry.contrib', '1.0.0', {}, 0, '',
+     'api', 'http.server.request.count', 'Total number of HTTP requests received', '{requests}',
+     {'http.request.method': 'GET', 'http.response.status_code': '200'},
+     '2024-03-15 10:00:00', '2024-03-15 10:05:00', 1412, 0, [], [], [], [], [], 2, true),
     ({'service.name': 'api', 'deployment.environment': 'test'}, '', 'io.opentelemetry.contrib', '1.0.0', {}, 0, '',
      'api', 'http.server.request.count', 'Total number of HTTP requests received', '{requests}',
      {'http.request.method': 'GET', 'http.response.status_code': '500'},
@@ -200,6 +211,8 @@ PARTITION BY toDate(TimeUnix)
 ORDER BY (ServiceName, MetricName, toStartOfHour(TimeUnix), cityHash64(Attributes), TimeUnix)
 SETTINGS index_granularity=8192, ttl_only_drop_parts = 1;
 
+TRUNCATE TABLE e2e_test.otel_metrics_histogram;
+
 INSERT INTO e2e_test.otel_metrics_histogram
     (ResourceAttributes, ResourceSchemaUrl, ScopeName, ScopeVersion, ScopeAttributes, ScopeDroppedAttrCount, ScopeSchemaUrl,
      ServiceName, MetricName, MetricDescription, MetricUnit, Attributes,
@@ -265,6 +278,8 @@ ENGINE = MergeTree
 PARTITION BY toDate(TimeUnix)
 ORDER BY (ServiceName, MetricName, toStartOfHour(TimeUnix), cityHash64(Attributes), TimeUnix)
 SETTINGS index_granularity=8192, ttl_only_drop_parts = 1;
+
+TRUNCATE TABLE e2e_test.otel_metrics_summary;
 
 INSERT INTO e2e_test.otel_metrics_summary
     (ResourceAttributes, ResourceSchemaUrl, ScopeName, ScopeVersion, ScopeAttributes, ScopeDroppedAttrCount, ScopeSchemaUrl,
@@ -332,6 +347,8 @@ PARTITION BY toDate(TimeUnix)
 ORDER BY (ServiceName, MetricName, toStartOfHour(TimeUnix), cityHash64(Attributes), TimeUnix)
 SETTINGS index_granularity=8192, ttl_only_drop_parts = 1;
 
+TRUNCATE TABLE e2e_test.otel_metrics_exponential_histogram;
+
 INSERT INTO e2e_test.otel_metrics_exponential_histogram
     (ResourceAttributes, ResourceSchemaUrl, ScopeName, ScopeVersion, ScopeAttributes, ScopeDroppedAttrCount, ScopeSchemaUrl,
      ServiceName, MetricName, MetricDescription, MetricUnit, Attributes,
@@ -343,7 +360,9 @@ INSERT INTO e2e_test.otel_metrics_exponential_histogram
      'api', 'http.server.request.duration', 'Duration of HTTP requests', 's',
      {'http.request.method': 'GET'},
      '2024-03-15 10:00:00', '2024-03-15 10:00:00', 1250, 42.5, 4, 5, 0,
-     [900, 300, 45], 0, [], [], [], [], [], [], 0, 0.001, 0.08, 2),
+     [900, 300, 45], 0, [],
+     [{'http.request.method': 'GET'}], ['2024-03-15 10:00:00'], [0.007], ['0123456789abcdef'], ['0123456789abcdef0123456789abcdef'],
+     0, 0.001, 0.08, 2),
     ({'service.name': 'worker', 'deployment.environment': 'test'}, '', 'io.opentelemetry.contrib', '1.0.0', {}, 0, '',
      'worker', 'job.processing.duration', 'Duration of job processing', 's',
      {'queue.name': 'jobs'},
