@@ -979,6 +979,14 @@ export class Datasource
     return this.settings.jsonData.metrics?.timeColumn;
   }
 
+  getDefaultMetricsValueColumn(): string | undefined {
+    return this.settings.jsonData.metrics?.valueColumn;
+  }
+
+  getDefaultMetricsAggregation(): AggregateType | undefined {
+    return this.settings.jsonData.metrics?.aggregation;
+  }
+
   getDefaultTraceColumns(): Map<ColumnHint, string> {
     const result = new Map<ColumnHint, string>();
     const traceConfig = this.settings.jsonData.traces;

@@ -1,5 +1,6 @@
 import { Datasource } from 'data/CHDatasource';
 import {
+  AggregateType,
   BuilderMode,
   ColumnHint,
   FilterOperator,
@@ -7,10 +8,12 @@ import {
   QueryBuilderOptions,
   QueryType,
   SelectedColumn,
+  TableColumn,
 } from 'types/queryBuilder';
 import { SignalType } from 'types/config';
 import { isBuilderOptionsRunnable } from 'data/utils';
 import otel from 'otel';
+import { columnFilterDateTime } from 'data/columnFilters';
 import {
   getDefaultLogsFilters,
   getDefaultLogsOrderBy,
@@ -64,26 +67,46 @@ export function buildCompactQueryDefaults(
   datasource: Datasource,
   signalType: SignalType,
   fallbackTable = '',
-  tableColumnNames: readonly string[] = []
+  tableColumnNames: readonly string[] = [],
+  tableColumns: readonly TableColumn[] = []
 ): QueryBuilderOptions {
   return signalType === 'logs'
     ? buildCompactLogsDefaults(datasource, fallbackTable, tableColumnNames)
     : signalType === 'metrics'
-      ? buildCompactMetricsDefaults(datasource, fallbackTable)
+      ? buildCompactMetricsDefaults(datasource, fallbackTable, tableColumns)
       : buildCompactTracesDefaults(datasource, fallbackTable);
 }
 
-const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: string): QueryBuilderOptions => {
+const buildCompactMetricsDefaults = (
+  datasource: Datasource,
+  fallbackTable: string,
+  tableColumns: readonly TableColumn[]
+): QueryBuilderOptions => {
   const defaultDb = datasource.getDefaultMetricsDatabase?.() || datasource.getDefaultDatabase();
   const defaultTable = datasource.getDefaultMetricsTable?.() || datasource.getDefaultTable() || fallbackTable;
-  const timeColumn = datasource.getDefaultMetricsTimeColumn?.();
+  const configuredTimeColumn = datasource.getDefaultMetricsTimeColumn?.();
+  const inferredTimeColumn = tableColumns.find(columnFilterDateTime);
+  const timeColumn = configuredTimeColumn || inferredTimeColumn?.name;
+  const valueColumn =
+    datasource.getDefaultMetricsValueColumn?.() || getDefaultMetricValueColumn(tableColumns, timeColumn);
+  const aggregation = datasource.getDefaultMetricsAggregation?.() || AggregateType.Average;
+  const timeSelectedColumn = timeColumn
+    ? [
+        {
+          name: timeColumn,
+          type: tableColumns.find((column) => column.name === timeColumn)?.type,
+          hint: ColumnHint.Time,
+        },
+      ]
+    : [];
 
   return {
     database: defaultDb,
     table: defaultTable || '',
     queryType: QueryType.TimeSeries,
     mode: BuilderMode.Trend,
-    columns: timeColumn ? [{ name: timeColumn, hint: ColumnHint.Time }] : [],
+    columns: timeSelectedColumn,
+    aggregates: valueColumn ? [{ aggregateType: aggregation, column: valueColumn }] : [],
     filters: [
       {
         type: 'datetime',
@@ -97,6 +120,26 @@ const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: stri
     orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC, default: true }],
     limit: 1000,
   };
+};
+
+const getDefaultMetricValueColumn = (tableColumns: readonly TableColumn[], timeColumn?: string): string | undefined => {
+  const candidateColumns = tableColumns.filter((column) => column.name !== timeColumn && isNumericColumn(column.type));
+  const preferredNames = ['value', 'value_float', 'value_double', 'metric_value', 'gauge', 'sum', 'count', 'total'];
+  const preferredColumn = preferredNames
+    .map((name) => candidateColumns.find((column) => column.name.toLowerCase() === name))
+    .find(Boolean);
+
+  return preferredColumn?.name || candidateColumns[0]?.name;
+};
+
+const isNumericColumn = (type: string): boolean => {
+  let normalizedType = type.trim();
+  let unwrappedType = '';
+  while (normalizedType !== unwrappedType) {
+    unwrappedType = normalizedType;
+    normalizedType = normalizedType.replace(/^(?:nullable|lowcardinality)\((.*)\)$/i, '$1').trim();
+  }
+  return /^(u?int|float|decimal|double|bfloat|number)/i.test(normalizedType);
 };
 
 const buildCompactLogsDefaults = (

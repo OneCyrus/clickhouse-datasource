@@ -6,6 +6,7 @@ import {
   shouldBuildCompactQueryDefaults,
 } from './compactQueryDefaults';
 import {
+  AggregateType,
   BuilderMode,
   ColumnHint,
   FilterOperator,
@@ -133,11 +134,11 @@ describe('buildCompactQueryDefaults', () => {
     return mockDs;
   };
 
-  const createMetricsDatasource = (): Datasource => {
+  const createMetricsDatasource = (timeColumn = 'Timestamp'): Datasource => {
     const mockDs = {} as Datasource;
     mockDs.getDefaultMetricsDatabase = jest.fn(() => 'metrics');
     mockDs.getDefaultMetricsTable = jest.fn(() => 'otel_metrics');
-    mockDs.getDefaultMetricsTimeColumn = jest.fn(() => 'Timestamp');
+    mockDs.getDefaultMetricsTimeColumn = jest.fn(() => timeColumn);
     mockDs.getDefaultDatabase = jest.fn(() => 'default');
     mockDs.getDefaultTable = jest.fn(() => '');
     return mockDs;
@@ -217,5 +218,47 @@ describe('buildCompactQueryDefaults', () => {
         operator: FilterOperator.WithInGrafanaTimeRange,
       }),
     ]);
+  });
+
+  it('infers a time column and numeric value series from the metrics schema', () => {
+    const options = buildCompactQueryDefaults(
+      createMetricsDatasource(''),
+      'metrics',
+      '',
+      [],
+      [
+        { name: 'Timestamp', type: 'DateTime64(3)', picklistValues: [] },
+        { name: 'service', type: 'String', picklistValues: [] },
+        { name: 'value', type: 'Float64', picklistValues: [] },
+      ]
+    );
+
+    expect(options.columns).toEqual([{ name: 'Timestamp', type: 'DateTime64(3)', hint: ColumnHint.Time }]);
+    expect(options.aggregates).toEqual([{ aggregateType: AggregateType.Average, column: 'value' }]);
+  });
+
+  it('uses configured value and aggregation defaults', () => {
+    const datasource = createMetricsDatasource();
+    datasource.getDefaultMetricsValueColumn = jest.fn(() => 'request_count');
+    datasource.getDefaultMetricsAggregation = jest.fn(() => AggregateType.Sum);
+
+    const options = buildCompactQueryDefaults(datasource, 'metrics');
+
+    expect(options.aggregates).toEqual([{ aggregateType: AggregateType.Sum, column: 'request_count' }]);
+  });
+
+  it('unwraps nested ClickHouse numeric types when selecting a value column', () => {
+    const options = buildCompactQueryDefaults(
+      createMetricsDatasource(''),
+      'metrics',
+      '',
+      [],
+      [
+        { name: 'Timestamp', type: 'DateTime', picklistValues: [] },
+        { name: 'value', type: 'LowCardinality(Nullable(Float64))', picklistValues: [] },
+      ]
+    );
+
+    expect(options.aggregates).toEqual([{ aggregateType: AggregateType.Average, column: 'value' }]);
   });
 });

@@ -18,7 +18,7 @@ import {
   ConfigMode,
   SignalType,
 } from 'types/config';
-import { TimeUnit } from 'types/queryBuilder';
+import { AggregateType, TimeUnit } from 'types/queryBuilder';
 import { CONFIG_SECTION_HEADERS, CONTAINER_MIN_WIDTH } from './constants';
 import {
   trackClickhouseConfigV2LogsConfig,
@@ -73,7 +73,7 @@ export const ConfigurationModeSection = (props: Props) => {
     onTracesConfigChange(key, value);
   };
 
-  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string) => {
+  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string | AggregateType | undefined) => {
     onOptionsChange({
       ...options,
       jsonData: {
@@ -86,7 +86,7 @@ export const ConfigurationModeSection = (props: Props) => {
     });
   };
 
-  const onUpdateMetricsConfig = (key: keyof CHMetricsConfig, value: string) => {
+  const onUpdateMetricsConfig = (key: keyof CHMetricsConfig, value: string | AggregateType | undefined) => {
     trackClickhouseConfigV2MetricsConfig({ [key]: value });
     onMetricsConfigChange(key, value);
   };
@@ -217,6 +217,8 @@ export const ConfigurationModeSection = (props: Props) => {
               onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
               onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
               onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
+              onValueColumnChange={(column) => onUpdateMetricsConfig('valueColumn', column)}
+              onAggregationChange={(aggregation) => onUpdateMetricsConfig('aggregation', aggregation)}
             />
           </>
         )}

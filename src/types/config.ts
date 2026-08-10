@@ -167,6 +167,8 @@ export interface CHMetricsConfig {
   defaultDatabase?: string;
   defaultTable?: string;
   timeColumn?: string;
+  valueColumn?: string;
+  aggregation?: import('./queryBuilder').AggregateType;
 }
 
 export interface AliasTableEntry {

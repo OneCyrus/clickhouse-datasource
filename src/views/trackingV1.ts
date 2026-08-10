@@ -105,6 +105,8 @@ export const trackClickhouseConfigV1MetricsConfig = (props: {
   defaultDatabase?: string;
   defaultTable?: string;
   timeColumn?: string;
+  valueColumn?: string;
+  aggregation?: string;
 }) => {
   reportInteraction('clickhouse_config_v1_metrics_config', props);
 };

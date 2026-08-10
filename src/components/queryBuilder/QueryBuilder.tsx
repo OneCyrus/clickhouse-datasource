@@ -213,17 +213,35 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
     if (lastInitializationKey.current === initializationKey) {
       return;
     }
-    lastInitializationKey.current = initializationKey;
 
-    const nextOptions = buildCompactQueryDefaults(datasource, signalType, builderOptions.table, tableColumnNames);
+    const nextOptions = buildCompactQueryDefaults(
+      datasource,
+      signalType,
+      builderOptions.table,
+      tableColumnNames,
+      allColumns
+    );
+    if (signalType === 'metrics' && !getColumnByHint(nextOptions, ColumnHint.Time)) {
+      return;
+    }
+
+    lastInitializationKey.current = initializationKey;
     if (!isEqual(builderOptions, nextOptions)) {
       builderOptionsDispatch(setAllOptions(nextOptions));
       onQueryChangeRef.current?.(nextOptions);
     }
-  }, [builderOptions, builderOptionsDispatch, datasource, needsInitialization, signalType, tableColumnNames]);
+  }, [
+    allColumns,
+    builderOptions,
+    builderOptionsDispatch,
+    datasource,
+    needsInitialization,
+    signalType,
+    tableColumnNames,
+  ]);
 
   const activeOptions = needsInitialization
-    ? buildCompactQueryDefaults(datasource, signalType, builderOptions.table, tableColumnNames)
+    ? buildCompactQueryDefaults(datasource, signalType, builderOptions.table, tableColumnNames, allColumns)
     : builderOptions;
   const filterColumns = useMemo(() => getCompactFilterColumns(allColumns, activeOptions), [allColumns, activeOptions]);
 

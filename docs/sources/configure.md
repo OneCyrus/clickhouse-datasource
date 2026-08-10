@@ -169,9 +169,9 @@ When **Secure connection** is enabled, the following TLS settings become availab
 
 Use **Configuration mode** to choose how the data source is used by the query builder.
 
-| Mode              | Description                                                                                                                                                               |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **All databases** | Allows queries against any database and table the ClickHouse user can read. Use this mode for general exploration and dashboards that query multiple tables.              |
+| Mode              | Description                                                                                                                                                       |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **All databases** | Allows queries against any database and table the ClickHouse user can read. Use this mode for general exploration and dashboards that query multiple tables.      |
 | **Single source** | Focuses the data source on one logs, traces, or metrics table. Choose a **Signal type**, then configure the database, table, and column mappings for that source. |
 
 Use **Single source** when the data source is dedicated to one logs, traces, or metrics table, such as an OpenTelemetry table. This keeps the logs or traces schema settings with the selected source and avoids reconfiguring column mappings in each query. Single source data sources use the [compact query mode](/docs/plugins/grafana-clickhouse-datasource/<CLICKHOUSE_PLUGIN_VERSION>/query-editor/#compact-query-mode) in the query editor.
@@ -228,11 +228,13 @@ When **Configuration mode** is set to **Single source** and **Signal type** is s
 
 For a metrics source, configure the default database and table, plus the timestamp column used by time-series queries. If the time column is left blank, the query builder selects the first DateTime-compatible column returned by ClickHouse.
 
-| Setting                      | Description                                     |
-| ---------------------------- | ----------------------------------------------- |
-| **Default metrics database** | The default database for metric queries.        |
-| **Default metrics table**    | The default table for metric queries.           |
-| **Time column**              | The timestamp column used for time-series data. |
+| Setting                      | Description                                                                                                                |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **Default metrics database** | The default database for metric queries.                                                                                   |
+| **Default metrics table**    | The default table for metric queries.                                                                                      |
+| **Time column**              | The timestamp column used for time-series data.                                                                            |
+| **Default value column**     | The numeric metric column used for the default series. If blank, the query builder selects a numeric column when possible. |
+| **Default aggregation**      | The aggregation for the default series. If blank, the query builder uses **Average**.                                      |
 
 When **Configuration mode** is set to **Single source** and **Signal type** is set to **Metrics**, these settings define the focused metrics source.
 

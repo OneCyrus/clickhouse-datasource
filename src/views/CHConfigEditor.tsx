@@ -22,7 +22,7 @@ import { isVersionGtOrEq as versionGte } from 'utils/version';
 import { ConfigSection, ConfigSubSection, DataSourceDescription } from 'components/experimental/ConfigSection';
 import { config } from '@grafana/runtime';
 import { Divider } from 'components/Divider';
-import { TimeUnit } from 'types/queryBuilder';
+import { AggregateType, TimeUnit } from 'types/queryBuilder';
 import { DefaultDatabaseTableConfig } from 'components/configEditor/DefaultDatabaseTableConfig';
 import { QuerySettingsConfig } from 'components/configEditor/QuerySettingsConfig';
 import { LogsConfig } from 'components/configEditor/LogsConfig';
@@ -231,7 +231,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
       },
     });
   };
-  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string) => {
+  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string | AggregateType | undefined) => {
     onOptionsChange({
       ...options,
       jsonData: {
@@ -243,7 +243,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
       },
     });
   };
-  const onUpdateMetricsConfig = (key: keyof CHMetricsConfig, value: string) => {
+  const onUpdateMetricsConfig = (key: keyof CHMetricsConfig, value: string | AggregateType | undefined) => {
     trackingV1.trackClickhouseConfigV1MetricsConfig({ [key]: value });
     onMetricsConfigChange(key, value);
   };
@@ -615,6 +615,8 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
                 onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
                 onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
                 onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
+                onValueColumnChange={(column) => onUpdateMetricsConfig('valueColumn', column)}
+                onAggregationChange={(aggregation) => onUpdateMetricsConfig('aggregation', aggregation)}
               />
             </>
           )}
@@ -867,6 +869,8 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
               onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
               onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
               onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
+              onValueColumnChange={(column) => onUpdateMetricsConfig('valueColumn', column)}
+              onAggregationChange={(aggregation) => onUpdateMetricsConfig('aggregation', aggregation)}
             />
 
             <Divider />

@@ -54,7 +54,7 @@ When a data source is configured in **Single source** mode for logs, traces, or 
 
 For logs, use the search field to filter log message text. Use **Add filter** to add column filters, and use the advanced options to adjust sorting and the result limit.
 
-For metrics, choose the time column and value or aggregate columns in the time-series editor. Use **Add filter** for the same per-query column filters available to logs and traces, and use the advanced options to adjust sorting and the result limit.
+For metrics, choose the time column and value or aggregate columns in the time-series editor. Single-table metrics sources can provide a default numeric value column and aggregation; otherwise the editor chooses the first suitable numeric column when the table schema is available. Use **Add filter** for the same per-query column filters available to logs and traces, and use the advanced options to adjust sorting and the result limit.
 
 Compact filters use Grafana's selected time range automatically. The configured time fields are not shown in the filter field list because the query builder manages the time range filter for you.
 

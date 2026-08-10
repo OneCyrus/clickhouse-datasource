@@ -3,7 +3,15 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { getCompactFilterColumns, QueryBuilder } from './QueryBuilder';
 import { getDefaultCompactMode } from './CompactModeBar';
 import { Datasource } from 'data/CHDatasource';
-import { BuilderMode, ColumnHint, FilterOperator, OrderByDirection, QueryType, TimeUnit } from 'types/queryBuilder';
+import {
+  AggregateType,
+  BuilderMode,
+  ColumnHint,
+  FilterOperator,
+  OrderByDirection,
+  QueryType,
+  TimeUnit,
+} from 'types/queryBuilder';
 import { setColumnByHint } from 'hooks/useBuilderOptionsState';
 import { CoreApp } from '@grafana/data';
 
@@ -115,6 +123,89 @@ describe('QueryBuilder', () => {
     expect(screen.queryByPlaceholderText('Search logs')).not.toBeInTheDocument();
     signalTypeSpy.mockRestore();
     singleTableSpy.mockRestore();
+  });
+
+  it('does not persist metrics defaults before a time column is available', async () => {
+    const compactDs = {
+      ...mockDs,
+      uid: 'metrics-without-time-column',
+      getSignalType: jest.fn(() => 'metrics'),
+      getConfigMode: jest.fn(() => 'single-table'),
+      isSingleTableMode: jest.fn(() => true),
+      getDefaultMetricsDatabase: jest.fn(() => 'metrics'),
+      getDefaultMetricsTable: jest.fn(() => 'metrics'),
+      getDefaultMetricsTimeColumn: jest.fn(() => ''),
+      fetchColumns: jest.fn(() => Promise.resolve([])),
+    } as unknown as Datasource;
+    const onQueryChange = jest.fn();
+
+    render(
+      <QueryBuilder
+        app={CoreApp.PanelEditor}
+        builderOptions={{
+          queryType: QueryType.Table,
+          mode: BuilderMode.List,
+          database: '',
+          table: '',
+          columns: [],
+          filters: [],
+        }}
+        builderOptionsDispatch={jest.fn()}
+        datasource={compactDs}
+        generatedSql=""
+        onQueryChange={onQueryChange}
+      />
+    );
+
+    await waitFor(() => expect(compactDs.fetchColumns).toHaveBeenCalled());
+    expect(onQueryChange).not.toHaveBeenCalled();
+  });
+
+  it('initializes metrics defaults from the table schema', async () => {
+    const compactDs = {
+      ...mockDs,
+      uid: 'metrics-with-schema',
+      getSignalType: jest.fn(() => 'metrics'),
+      getConfigMode: jest.fn(() => 'single-table'),
+      isSingleTableMode: jest.fn(() => true),
+      getDefaultMetricsDatabase: jest.fn(() => 'metrics'),
+      getDefaultMetricsTable: jest.fn(() => 'metrics'),
+      getDefaultMetricsTimeColumn: jest.fn(() => ''),
+      fetchColumns: jest.fn(() =>
+        Promise.resolve([
+          { name: 'timestamp', type: 'DateTime', picklistValues: [] },
+          { name: 'value', type: 'Float64', picklistValues: [] },
+        ])
+      ),
+    } as unknown as Datasource;
+    const onQueryChange = jest.fn();
+
+    render(
+      <QueryBuilder
+        app={CoreApp.PanelEditor}
+        builderOptions={{
+          queryType: QueryType.Table,
+          mode: BuilderMode.List,
+          database: '',
+          table: '',
+          columns: [],
+          filters: [],
+        }}
+        builderOptionsDispatch={jest.fn()}
+        datasource={compactDs}
+        generatedSql=""
+        onQueryChange={onQueryChange}
+      />
+    );
+
+    await waitFor(() =>
+      expect(onQueryChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          columns: [{ name: 'timestamp', type: 'DateTime', hint: ColumnHint.Time }],
+          aggregates: [{ aggregateType: AggregateType.Average, column: 'value' }],
+        })
+      )
+    );
   });
 
   it('renders correctly', async () => {

@@ -367,7 +367,7 @@ export default {
         variants: {
           singleTable: {
             title: 'Metrics Table & Schema',
-            description: 'Configure the database, table, and time column for metric queries.',
+            description: 'Configure the database, table, time column, and default metric series.',
           },
         },
         defaultDatabase: {
@@ -385,6 +385,14 @@ export default {
         timeColumn: {
           label: 'Time column',
           tooltip: 'Column containing the metric timestamp',
+        },
+        valueColumn: {
+          label: 'Default value column',
+          tooltip: 'Numeric column used as the default metric series',
+        },
+        aggregation: {
+          label: 'Default aggregation',
+          tooltip: 'Aggregation used for the default metric series',
         },
       },
     },

@@ -1,6 +1,7 @@
 import React from 'react';
 import { ConfigSection } from 'components/experimental/ConfigSection';
-import { Input, Field } from '@grafana/ui';
+import { Input, Field, Select } from '@grafana/ui';
+import { AggregateType } from 'types/queryBuilder';
 import { CHMetricsConfig, ConfigMode } from 'types/config';
 import allLabels from 'labels';
 import { LabeledInput } from './LabeledInput';
@@ -12,12 +13,29 @@ interface MetricsConfigProps {
   onDefaultDatabaseChange: (v: string) => void;
   onDefaultTableChange: (v: string) => void;
   onTimeColumnChange: (v: string) => void;
+  onValueColumnChange: (v: string) => void;
+  onAggregationChange: (v: AggregateType | undefined) => void;
 }
 
 export const MetricsConfig = (props: MetricsConfigProps) => {
-  const { metricsConfig, variant, onDefaultDatabaseChange, onDefaultTableChange, onTimeColumnChange } = props;
+  const {
+    metricsConfig,
+    variant,
+    onDefaultDatabaseChange,
+    onDefaultTableChange,
+    onTimeColumnChange,
+    onValueColumnChange,
+    onAggregationChange,
+  } = props;
   const labels = allLabels.components.Config.MetricsConfig;
   const sectionLabels = variant === 'single-table' ? labels.variants.singleTable : labels;
+  const aggregationOptions = [
+    { label: 'Average', value: AggregateType.Average },
+    { label: 'Sum', value: AggregateType.Sum },
+    { label: 'Min', value: AggregateType.Min },
+    { label: 'Max', value: AggregateType.Max },
+    { label: 'Count', value: AggregateType.Count },
+  ];
 
   return (
     <ConfigSection title={sectionLabels.title} description={sectionLabels.description}>
@@ -50,6 +68,23 @@ export const MetricsConfig = (props: MetricsConfigProps) => {
         value={metricsConfig?.timeColumn || ''}
         onChange={onTimeColumnChange}
       />
+      <LabeledInput
+        label={labels.valueColumn.label}
+        placeholder={columnLabelToPlaceholder(labels.valueColumn.label)}
+        tooltip={labels.valueColumn.tooltip}
+        value={metricsConfig?.valueColumn || ''}
+        onChange={onValueColumnChange}
+      />
+      <Field label={labels.aggregation.label} description={labels.aggregation.tooltip}>
+        <Select
+          options={aggregationOptions}
+          value={metricsConfig?.aggregation}
+          onChange={(option) => onAggregationChange(option.value)}
+          isClearable
+          placeholder="Auto"
+          width={30}
+        />
+      </Field>
     </ConfigSection>
   );
 };

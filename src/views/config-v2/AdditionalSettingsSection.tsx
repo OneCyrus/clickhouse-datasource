@@ -23,7 +23,7 @@ import { QuerySettingsConfig } from 'components/configEditor/QuerySettingsConfig
 import { TracesConfig } from 'components/configEditor/TracesConfig';
 import { MetricsConfig } from 'components/configEditor/MetricsConfig';
 import { config } from '@grafana/runtime';
-import { TimeUnit } from 'types/queryBuilder';
+import { AggregateType, TimeUnit } from 'types/queryBuilder';
 import { useConfigDefaults } from 'views/CHConfigEditorHooks';
 import { isVersionGtOrEq as versionGte } from 'utils/version';
 import {
@@ -104,7 +104,7 @@ export const AdditionalSettingsSection = (props: Props) => {
     onTracesConfigChange(key, value);
   };
 
-  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string) => {
+  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string | AggregateType | undefined) => {
     onOptionsChange({
       ...options,
       jsonData: {
@@ -117,7 +117,7 @@ export const AdditionalSettingsSection = (props: Props) => {
     });
   };
 
-  const onUpdateMetricsConfig = (key: keyof CHMetricsConfig, value: string) => {
+  const onUpdateMetricsConfig = (key: keyof CHMetricsConfig, value: string | AggregateType | undefined) => {
     trackClickhouseConfigV2MetricsConfig({ [key]: value });
     onMetricsConfigChange(key, value);
   };
@@ -303,6 +303,8 @@ export const AdditionalSettingsSection = (props: Props) => {
               onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
               onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
               onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
+              onValueColumnChange={(column) => onUpdateMetricsConfig('valueColumn', column)}
+              onAggregationChange={(aggregation) => onUpdateMetricsConfig('aggregation', aggregation)}
             />
           </>
         )}

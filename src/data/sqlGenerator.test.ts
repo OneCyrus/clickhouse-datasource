@@ -326,6 +326,50 @@ describe('SQL Generator', () => {
     expect(sql).toEqual(expectedSqlParts.join(' '));
   });
 
+  it('generates a graphable metrics query with a default value aggregate', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'metrics',
+      queryType: QueryType.TimeSeries,
+      mode: BuilderMode.Trend,
+      columns: [{ name: 'timestamp', type: 'DateTime', hint: ColumnHint.Time }],
+      aggregates: [{ aggregateType: AggregateType.Average, column: 'value' }],
+      filters: [
+        {
+          filterType: 'custom',
+          key: '',
+          type: 'datetime',
+          condition: 'AND',
+          operator: FilterOperator.WithInGrafanaTimeRange,
+          hint: ColumnHint.Time,
+        },
+      ],
+      orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC }],
+      limit: 1000,
+    };
+
+    expect(generateSql(opts)).toBe(
+      'SELECT $__timeInterval(timestamp) as "time", avg(value) FROM "default"."metrics" ' +
+        'WHERE ( time >= $__fromTime AND time <= $__toTime ) ' +
+        'GROUP BY time ORDER BY time ASC LIMIT 1000'
+    );
+  });
+
+  it('keeps aggregate time-series SQL valid while the time column is unresolved', () => {
+    const opts: QueryBuilderOptions = {
+      database: 'default',
+      table: 'metrics',
+      queryType: QueryType.TimeSeries,
+      mode: BuilderMode.Trend,
+      columns: [],
+      filters: [],
+      aggregates: [],
+      orderBy: [],
+    };
+
+    expect(generateSql(opts)).toBe('SELECT 1 FROM "default"."metrics"');
+  });
+
   it('generates trace ID query without OTel enabled', () => {
     const opts: QueryBuilderOptions = {
       database: 'default',
