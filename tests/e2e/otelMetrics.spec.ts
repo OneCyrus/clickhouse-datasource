@@ -18,8 +18,8 @@ const CLOUD_DEFAULT_UID = 'clickhouse-native-ds-m';
 const LOCAL_DEFAULT_UID = 'clickhouse-e2e';
 const DATASOURCE_UID = process.env.DS_E2E_UID || (isCloudRun ? CLOUD_DEFAULT_UID : LOCAL_DEFAULT_UID);
 
-const FIXTURE_FROM_ISO = '2024-03-15T09:45:00.000Z';
-const FIXTURE_TO_ISO = '2024-03-15T10:15:00.000Z';
+const FIXTURE_FROM_ISO = '2026-03-15T09:45:00.000Z';
+const FIXTURE_TO_ISO = '2026-03-15T10:15:00.000Z';
 
 function exploreUrl(): string {
   const query: Record<string, unknown> = {
@@ -100,7 +100,7 @@ test.describe('OTel metrics demo data', () => {
       'process.cpu.utilization',
     ]);
     expect(values[1]).toEqual([0.05, 0.12, 0.09, 0.71]);
-    expect(values[2]).toEqual([1710496800, 1710496800, 1710496860, 1710496920]);
+    expect(values[2]).toEqual([1773568800, 1773568800, 1773568860, 1773568920]);
     expect(values[3]).toEqual([0, 0, 0, 0]);
     expect(values[4]).toEqual([0, 1, 0, 0]);
     expect(values[5]).toEqual(['', 'https://opentelemetry.io/schemas/1.30.0', '', '']);
@@ -121,7 +121,7 @@ test.describe('OTel metrics demo data', () => {
     expect(values.length).toBe(5);
     expect(values[0]).toEqual(['http.server.request.count', 'http.server.request.count']);
     expect(values[1]).toEqual([1250, 1412]);
-    expect(values[2]).toEqual([1710496800, 1710497100]);
+    expect(values[2]).toEqual([1773568800, 1773569100]);
     expect(values[3]).toEqual([true, true]);
     expect(values[4]).toEqual([2, 2]);
   });
