@@ -33,6 +33,7 @@ import allLabels from 'labels';
 import {
   buildCompactQueryDefaults,
   isCompactQueryTypeMismatch,
+  normalizeCompactMetricsOptions,
   shouldBuildCompactQueryDefaults,
 } from './compactQueryDefaults';
 import { useDefaultLogColumnsByName } from './views/logsQueryBuilderHooks';
@@ -242,7 +243,9 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
 
   const activeOptions = needsInitialization
     ? buildCompactQueryDefaults(datasource, signalType, builderOptions.table, tableColumnNames, allColumns)
-    : builderOptions;
+    : signalType === 'metrics'
+      ? normalizeCompactMetricsOptions(builderOptions)
+      : builderOptions;
   const filterColumns = useMemo(() => getCompactFilterColumns(allColumns, activeOptions), [allColumns, activeOptions]);
 
   // Compact defaults take columns from datasource config only, so a non-OTel
@@ -302,17 +305,7 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
           allColumns={filterColumns}
           selectedColumns={activeOptions.columns || []}
           onFiltersChange={(filters: Filter[]) => mergeActiveOptions({ filters }, true)}
-          onToggleAdvanced={() => setAdvancedOpen(!advancedOpen)}
-          advancedOpen={advancedOpen}
         />
-        {advancedOpen && (
-          <CompactAdvanced
-            builderOptions={activeOptions}
-            allColumns={allColumns}
-            onOrderByChange={(orderBy: OrderBy[]) => mergeActiveOptions({ orderBy }, true)}
-            onLimitChange={(limit: number) => mergeActiveOptions({ limit }, true)}
-          />
-        )}
         <SqlPreview sql={generatedSql} compact onEditAsSql={() => onEditAsSql?.(activeOptions)} />
       </div>
     );

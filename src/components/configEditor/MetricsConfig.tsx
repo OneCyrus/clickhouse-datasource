@@ -75,16 +75,18 @@ export const MetricsConfig = (props: MetricsConfigProps) => {
         value={metricsConfig?.valueColumn || ''}
         onChange={onValueColumnChange}
       />
-      <Field label={labels.aggregation.label} description={labels.aggregation.tooltip}>
-        <Select
-          options={aggregationOptions}
-          value={metricsConfig?.aggregation}
-          onChange={(option) => onAggregationChange(option.value)}
-          isClearable
-          placeholder="Auto"
-          width={30}
-        />
-      </Field>
+      {variant !== 'single-table' && (
+        <Field label={labels.aggregation.label} description={labels.aggregation.tooltip}>
+          <Select
+            options={aggregationOptions}
+            value={metricsConfig?.aggregation}
+            onChange={(option) => onAggregationChange(option.value)}
+            isClearable
+            placeholder="Auto"
+            width={30}
+          />
+        </Field>
+      )}
     </ConfigSection>
   );
 };

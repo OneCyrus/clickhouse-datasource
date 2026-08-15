@@ -3,6 +3,7 @@ import {
   buildCompactQueryDefaults,
   isCompactQueryTypeMismatch,
   isDefaultCompactQuery,
+  normalizeCompactMetricsOptions,
   shouldBuildCompactQueryDefaults,
 } from './compactQueryDefaults';
 import {
@@ -209,7 +210,7 @@ describe('buildCompactQueryDefaults', () => {
       database: 'metrics',
       table: 'otel_metrics',
       queryType: QueryType.TimeSeries,
-      mode: BuilderMode.Trend,
+      mode: BuilderMode.Aggregate,
       columns: [{ name: 'Timestamp', hint: ColumnHint.Time }],
     });
     expect(options.filters).toEqual([
@@ -233,18 +234,23 @@ describe('buildCompactQueryDefaults', () => {
       ]
     );
 
-    expect(options.columns).toEqual([{ name: 'Timestamp', type: 'DateTime64(3)', hint: ColumnHint.Time }]);
-    expect(options.aggregates).toEqual([{ aggregateType: AggregateType.Average, column: 'value' }]);
+    expect(options.mode).toBe(BuilderMode.Aggregate);
+    expect(options.columns).toEqual([
+      { name: 'Timestamp', type: 'DateTime64(3)', hint: ColumnHint.Time },
+      { name: 'value', type: 'Float64' },
+    ]);
+    expect(options.aggregates).toEqual([]);
   });
 
-  it('uses configured value and aggregation defaults', () => {
+  it('uses configured value column for simple mode', () => {
     const datasource = createMetricsDatasource();
     datasource.getDefaultMetricsValueColumn = jest.fn(() => 'request_count');
-    datasource.getDefaultMetricsAggregation = jest.fn(() => AggregateType.Sum);
 
     const options = buildCompactQueryDefaults(datasource, 'metrics');
 
-    expect(options.aggregates).toEqual([{ aggregateType: AggregateType.Sum, column: 'request_count' }]);
+    expect(options.mode).toBe(BuilderMode.Aggregate);
+    expect(options.columns).toContainEqual({ name: 'request_count' });
+    expect(options.aggregates).toEqual([]);
   });
 
   it('unwraps nested ClickHouse numeric types when selecting a value column', () => {
@@ -259,6 +265,28 @@ describe('buildCompactQueryDefaults', () => {
       ]
     );
 
-    expect(options.aggregates).toEqual([{ aggregateType: AggregateType.Average, column: 'value' }]);
+    expect(options.mode).toBe(BuilderMode.Aggregate);
+    expect(options.columns).toContainEqual({ name: 'value', type: 'LowCardinality(Nullable(Float64))' });
+    expect(options.aggregates).toEqual([]);
+  });
+
+  it('normalizes saved aggregate metrics queries to simple mode', () => {
+    const options = normalizeCompactMetricsOptions({
+      database: 'metrics',
+      table: 'otel_metrics',
+      queryType: QueryType.TimeSeries,
+      mode: BuilderMode.Trend,
+      columns: [{ name: 'Timestamp', hint: ColumnHint.Time }],
+      aggregates: [{ aggregateType: AggregateType.Average, column: 'value' }],
+      groupBy: ['service'],
+    });
+
+    expect(options.mode).toBe(BuilderMode.Aggregate);
+    expect(options.columns).toEqual([
+      { name: 'Timestamp', hint: ColumnHint.Time },
+      { name: 'value' },
+    ]);
+    expect(options.aggregates).toEqual([]);
+    expect(options.groupBy).toEqual([]);
   });
 });

@@ -1,6 +1,5 @@
 import { Datasource } from 'data/CHDatasource';
 import {
-  AggregateType,
   BuilderMode,
   ColumnHint,
   FilterOperator,
@@ -89,7 +88,6 @@ const buildCompactMetricsDefaults = (
   const timeColumn = configuredTimeColumn || inferredTimeColumn?.name;
   const valueColumn =
     datasource.getDefaultMetricsValueColumn?.() || getDefaultMetricValueColumn(tableColumns, timeColumn);
-  const aggregation = datasource.getDefaultMetricsAggregation?.() || AggregateType.Average;
   const timeSelectedColumn = timeColumn
     ? [
         {
@@ -104,9 +102,19 @@ const buildCompactMetricsDefaults = (
     database: defaultDb,
     table: defaultTable || '',
     queryType: QueryType.TimeSeries,
-    mode: BuilderMode.Trend,
-    columns: timeSelectedColumn,
-    aggregates: valueColumn ? [{ aggregateType: aggregation, column: valueColumn }] : [],
+    mode: BuilderMode.Aggregate,
+    columns: [
+      ...timeSelectedColumn,
+      ...(valueColumn
+        ? [
+            {
+              name: valueColumn,
+              type: tableColumns.find((column) => column.name === valueColumn)?.type,
+            },
+          ]
+        : []),
+    ],
+    aggregates: [],
     filters: [
       {
         type: 'datetime',
@@ -119,6 +127,31 @@ const buildCompactMetricsDefaults = (
     ],
     orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC, default: true }],
     limit: 1000,
+  };
+};
+
+/**
+ * Single-table metrics always use the simple time-series query. Convert an
+ * older saved aggregate query to the equivalent selected-column query so it
+ * cannot bring the hidden aggregate mode back into Explore.
+ */
+export const normalizeCompactMetricsOptions = (options: QueryBuilderOptions): QueryBuilderOptions => {
+  const columns = [...(options.columns || [])];
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  for (const aggregate of options.aggregates || []) {
+    if (aggregate.column !== '*' && !columnNames.has(aggregate.column)) {
+      columns.push({ name: aggregate.column, alias: aggregate.alias });
+      columnNames.add(aggregate.column);
+    }
+  }
+
+  return {
+    ...options,
+    mode: BuilderMode.Aggregate,
+    columns,
+    aggregates: [],
+    groupBy: [],
   };
 };
 

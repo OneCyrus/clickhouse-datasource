@@ -4,7 +4,6 @@ import { getCompactFilterColumns, QueryBuilder } from './QueryBuilder';
 import { getDefaultCompactMode } from './CompactModeBar';
 import { Datasource } from 'data/CHDatasource';
 import {
-  AggregateType,
   BuilderMode,
   ColumnHint,
   FilterOperator,
@@ -120,6 +119,7 @@ describe('QueryBuilder', () => {
 
     expect(screen.getByTestId('time-series-component')).toHaveAttribute('data-compact', 'true');
     expect(screen.getByTestId('compact-filter-bar')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Order by' })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText('Search logs')).not.toBeInTheDocument();
     signalTypeSpy.mockRestore();
     singleTableSpy.mockRestore();
@@ -201,8 +201,12 @@ describe('QueryBuilder', () => {
     await waitFor(() =>
       expect(onQueryChange).toHaveBeenCalledWith(
         expect.objectContaining({
-          columns: [{ name: 'timestamp', type: 'DateTime', hint: ColumnHint.Time }],
-          aggregates: [{ aggregateType: AggregateType.Average, column: 'value' }],
+          mode: BuilderMode.Aggregate,
+          columns: [
+            { name: 'timestamp', type: 'DateTime', hint: ColumnHint.Time },
+            { name: 'value', type: 'Float64' },
+          ],
+          aggregates: [],
         })
       )
     );
