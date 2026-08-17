@@ -376,6 +376,18 @@ export default {
           singleTable: {
             title: 'Metrics Table & Schema',
             description: 'Configure the database, table, time column, and default metric series.',
+            database: {
+              label: 'Metrics database',
+              description: 'Database containing the configured metrics table',
+              name: 'defaultDatabase',
+              placeholder: 'default',
+            },
+            table: {
+              label: 'Metrics table',
+              description: 'Specific metrics table queried by this data source',
+              name: 'defaultTable',
+              placeholder: 'table',
+            },
           },
         },
         defaultDatabase: {
@@ -397,6 +409,10 @@ export default {
         valueColumn: {
           label: 'Default value column',
           tooltip: 'Numeric column used as the default metric series',
+        },
+        metricType: {
+          label: 'Metric table type',
+          tooltip: 'Select the OpenTelemetry metric table schema.',
         },
         aggregation: {
           label: 'Default aggregation',

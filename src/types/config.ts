@@ -1,5 +1,5 @@
 import { DataSourceJsonData, KeyValue } from '@grafana/data';
-import otel, { defaultLogsTable, defaultTraceTable } from 'otel';
+import otel, { defaultLogsTable, defaultTraceTable, OtelMetricType } from 'otel';
 import { TimeUnit } from './queryBuilder';
 
 export type SignalType = 'logs' | 'traces' | 'metrics';
@@ -168,6 +168,9 @@ export interface CHTracesConfig {
 export interface CHMetricsConfig {
   defaultDatabase?: string;
   defaultTable?: string;
+  otelEnabled?: boolean;
+  otelVersion?: string;
+  otelMetricType?: OtelMetricType;
   timeColumn?: string;
   valueColumn?: string;
   aggregation?: import('./queryBuilder').AggregateType;

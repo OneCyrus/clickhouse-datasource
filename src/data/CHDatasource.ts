@@ -31,7 +31,7 @@ import { DataSourceWithBackend, getTemplateSrv } from '@grafana/runtime';
 import { trackClickhouseHealthCheckFailed } from 'tracking';
 import LogsContextPanel from 'components/LogsContextPanel';
 import { cloneDeep, isString } from 'lodash';
-import otel from 'otel';
+import otel, { getMetricTable, getMetricTypeForTable, OtelMetricTableDefinition, OtelMetricType } from 'otel';
 import { createElement as createReactElement, ReactNode } from 'react';
 import { catchError, concatMap, firstValueFrom, Observable, of } from 'rxjs';
 import { CHConfig, ConfigMode, SignalType } from 'types/config';
@@ -972,14 +972,34 @@ export class Datasource
   }
 
   getDefaultMetricsTable(): string | undefined {
-    return this.settings.jsonData.metrics?.defaultTable;
+    const metricsConfig = this.settings.jsonData.metrics;
+    return metricsConfig?.defaultTable ||
+      (metricsConfig?.otelEnabled ? getMetricTable(metricsConfig.otelMetricType).table : undefined);
+  }
+
+  getDefaultMetricsType(): OtelMetricType | undefined {
+    const metricsConfig = this.settings.jsonData.metrics;
+    return metricsConfig?.otelMetricType || getMetricTypeForTable(metricsConfig?.defaultTable);
+  }
+
+  getDefaultMetricsTableDefinition(): OtelMetricTableDefinition | undefined {
+    const metricsConfig = this.settings.jsonData.metrics;
+    return metricsConfig?.otelEnabled ? getMetricTable(this.getDefaultMetricsType()) : undefined;
   }
 
   getDefaultMetricsTimeColumn(): string | undefined {
+    const metricsConfig = this.settings.jsonData.metrics;
+    if (metricsConfig?.otelEnabled) {
+      return this.getDefaultMetricsTableDefinition()?.timeColumn || 'TimeUnix';
+    }
     return this.settings.jsonData.metrics?.timeColumn;
   }
 
   getDefaultMetricsValueColumn(): string | undefined {
+    const metricsConfig = this.settings.jsonData.metrics;
+    if (metricsConfig?.otelEnabled) {
+      return this.getDefaultMetricsTableDefinition()?.valueColumn || 'Value';
+    }
     return this.settings.jsonData.metrics?.valueColumn;
   }
 

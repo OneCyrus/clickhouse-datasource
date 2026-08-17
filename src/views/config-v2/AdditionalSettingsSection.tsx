@@ -1,6 +1,6 @@
 import { ConfigSubSection } from 'components/experimental/ConfigSection';
 import allLabels from './labelsV2';
-import React, { ChangeEvent, useMemo, useState } from 'react';
+import React, { ChangeEvent, useMemo, useRef, useState } from 'react';
 import {
   DataSourcePluginOptionsEditorProps,
   onUpdateDatasourceJsonDataOption,
@@ -24,6 +24,7 @@ import { TracesConfig } from 'components/configEditor/TracesConfig';
 import { MetricsConfig } from 'components/configEditor/MetricsConfig';
 import { config } from '@grafana/runtime';
 import { AggregateType, TimeUnit } from 'types/queryBuilder';
+import { OtelMetricType } from 'otel';
 import { useConfigDefaults } from 'views/CHConfigEditorHooks';
 import { isVersionGtOrEq as versionGte } from 'utils/version';
 import {
@@ -65,6 +66,12 @@ export const AdditionalSettingsSection = (props: Props) => {
 
   useConfigDefaults(options, onOptionsChange);
 
+  // Keep a ref to the latest options so sequential updates in the same event
+  // handler (e.g. changing the metric type also updates the default table) are
+  // based on the most recent state instead of a stale closure.
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
   const [customSettings, setCustomSettings] = useState(jsonData.customSettings || []);
 
   const onLogsConfigChange = (key: keyof CHLogsConfig, value: string | boolean | string[]) => {
@@ -104,20 +111,29 @@ export const AdditionalSettingsSection = (props: Props) => {
     onTracesConfigChange(key, value);
   };
 
-  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string | AggregateType | undefined) => {
-    onOptionsChange({
-      ...options,
+  const onMetricsConfigChange = (
+    key: keyof CHMetricsConfig,
+    value: string | boolean | AggregateType | OtelMetricType | undefined
+  ) => {
+    const current = optionsRef.current;
+    const next = {
+      ...current,
       jsonData: {
-        ...options.jsonData,
+        ...current.jsonData,
         metrics: {
-          ...(options.jsonData.metrics || {}),
+          ...(current.jsonData.metrics || {}),
           [key]: value,
         },
       },
-    });
+    };
+    optionsRef.current = next;
+    onOptionsChange(next);
   };
 
-  const onUpdateMetricsConfig = (key: keyof CHMetricsConfig, value: string | AggregateType | undefined) => {
+  const onUpdateMetricsConfig = (
+    key: keyof CHMetricsConfig,
+    value: string | boolean | AggregateType | OtelMetricType | undefined
+  ) => {
     trackClickhouseConfigV2MetricsConfig({ [key]: value });
     onMetricsConfigChange(key, value);
   };
@@ -302,6 +318,9 @@ export const AdditionalSettingsSection = (props: Props) => {
               metricsConfig={jsonData.metrics}
               onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
               onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
+              onOtelEnabledChange={(enabled) => onUpdateMetricsConfig('otelEnabled', enabled)}
+              onOtelVersionChange={(version) => onUpdateMetricsConfig('otelVersion', version)}
+              onOtelMetricTypeChange={(type) => onUpdateMetricsConfig('otelMetricType', type)}
               onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
               onValueColumnChange={(column) => onUpdateMetricsConfig('valueColumn', column)}
               onAggregationChange={(aggregation) => onUpdateMetricsConfig('aggregation', aggregation)}

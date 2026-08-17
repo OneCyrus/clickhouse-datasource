@@ -1,4 +1,4 @@
-import React, { ChangeEvent, useEffect, useMemo, useState } from 'react';
+import React, { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DataSourcePluginOptionsEditorProps,
   onUpdateDatasourceJsonDataOption,
@@ -45,6 +45,7 @@ import allLabels from '../labels';
 import { createValidationAPI, onHttpHeadersChange, useConfigDefaults } from './CHConfigEditorHooks';
 import { AliasTableConfig } from '../components/configEditor/AliasTableConfig';
 import * as trackingV1 from './trackingV1';
+import { OtelMetricType } from 'otel';
 
 export interface ConfigEditorProps extends DataSourcePluginOptionsEditorProps<CHConfig, CHSecureConfig> {}
 
@@ -71,6 +72,12 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
   ];
 
   useConfigDefaults(options, onOptionsChange);
+
+  // Keep a ref to the latest options so sequential updates in the same event
+  // handler (e.g. changing the metric type also updates the default table) are
+  // based on the most recent state instead of a stale closure.
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   // Register a validator for required fields. The validator runs when
   // validation.validate() is called by Grafana before saving — if it returns
@@ -243,19 +250,28 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
       },
     });
   };
-  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string | AggregateType | undefined) => {
-    onOptionsChange({
-      ...options,
+  const onMetricsConfigChange = (
+    key: keyof CHMetricsConfig,
+    value: string | boolean | AggregateType | OtelMetricType | undefined
+  ) => {
+    const current = optionsRef.current;
+    const next = {
+      ...current,
       jsonData: {
-        ...options.jsonData,
+        ...current.jsonData,
         metrics: {
-          ...(options.jsonData.metrics || {}),
+          ...(current.jsonData.metrics || {}),
           [key]: value,
         },
       },
-    });
+    };
+    optionsRef.current = next;
+    onOptionsChange(next);
   };
-  const onUpdateMetricsConfig = (key: keyof CHMetricsConfig, value: string | AggregateType | undefined) => {
+  const onUpdateMetricsConfig = (
+    key: keyof CHMetricsConfig,
+    value: string | boolean | AggregateType | OtelMetricType | undefined
+  ) => {
     trackingV1.trackClickhouseConfigV1MetricsConfig({ [key]: value });
     onMetricsConfigChange(key, value);
   };
@@ -681,6 +697,9 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
                 metricsConfig={jsonData.metrics}
                 onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
                 onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
+                onOtelEnabledChange={(enabled) => onUpdateMetricsConfig('otelEnabled', enabled)}
+                onOtelVersionChange={(version) => onUpdateMetricsConfig('otelVersion', version)}
+                onOtelMetricTypeChange={(type) => onUpdateMetricsConfig('otelMetricType', type)}
                 onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
                 onValueColumnChange={(column) => onUpdateMetricsConfig('valueColumn', column)}
                 onAggregationChange={(aggregation) => onUpdateMetricsConfig('aggregation', aggregation)}
@@ -935,6 +954,9 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
               metricsConfig={jsonData.metrics}
               onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
               onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
+              onOtelEnabledChange={(enabled) => onUpdateMetricsConfig('otelEnabled', enabled)}
+              onOtelVersionChange={(version) => onUpdateMetricsConfig('otelVersion', version)}
+              onOtelMetricTypeChange={(type) => onUpdateMetricsConfig('otelMetricType', type)}
               onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
               onValueColumnChange={(column) => onUpdateMetricsConfig('valueColumn', column)}
               onAggregationChange={(aggregation) => onUpdateMetricsConfig('aggregation', aggregation)}

@@ -1,9 +1,68 @@
-import { ColumnHint, TimeUnit } from 'types/queryBuilder';
+import { AggregateType, ColumnHint, TimeUnit } from 'types/queryBuilder';
 
 export const defaultLogsTable = 'otel_logs';
 export const defaultTraceTable = 'otel_traces';
 
 export const traceTimestampTableSuffix = '_trace_id_ts';
+
+export type OtelMetricType = 'gauge' | 'sum' | 'histogram' | 'summary' | 'exponential_histogram';
+
+export interface OtelMetricTableDefinition {
+  type: OtelMetricType;
+  table: string;
+  timeColumn: string;
+  valueColumn: string;
+  defaultAggregation: AggregateType;
+  additionalValueColumns: string[];
+}
+
+export const metricTables: Record<OtelMetricType, OtelMetricTableDefinition> = {
+  gauge: {
+    type: 'gauge',
+    table: 'otel_metrics_gauge',
+    timeColumn: 'TimeUnix',
+    valueColumn: 'Value',
+    defaultAggregation: AggregateType.Average,
+    additionalValueColumns: [],
+  },
+  sum: {
+    type: 'sum',
+    table: 'otel_metrics_sum',
+    timeColumn: 'TimeUnix',
+    valueColumn: 'Value',
+    defaultAggregation: AggregateType.Sum,
+    additionalValueColumns: [],
+  },
+  histogram: {
+    type: 'histogram',
+    table: 'otel_metrics_histogram',
+    timeColumn: 'TimeUnix',
+    valueColumn: 'Count',
+    defaultAggregation: AggregateType.Sum,
+    additionalValueColumns: ['Sum', 'Min', 'Max'],
+  },
+  summary: {
+    type: 'summary',
+    table: 'otel_metrics_summary',
+    timeColumn: 'TimeUnix',
+    valueColumn: 'Count',
+    defaultAggregation: AggregateType.Sum,
+    additionalValueColumns: ['Sum'],
+  },
+  exponential_histogram: {
+    type: 'exponential_histogram',
+    table: 'otel_metrics_exponential_histogram',
+    timeColumn: 'TimeUnix',
+    valueColumn: 'Count',
+    defaultAggregation: AggregateType.Sum,
+    additionalValueColumns: ['Sum', 'Min', 'Max'],
+  },
+};
+
+export const getMetricTable = (type?: OtelMetricType): OtelMetricTableDefinition => metricTables[type || 'gauge'];
+
+export const getMetricTypeForTable = (table?: string): OtelMetricType | undefined =>
+  (Object.values(metricTables).find((definition) => definition.table === table)?.type as OtelMetricType | undefined);
 
 export interface OtelVersion {
   name: string;
@@ -114,6 +173,7 @@ export const getVersion = (version: string | undefined): OtelVersion | undefined
 
 export default {
   traceTimestampTableSuffix,
+  metricTables,
   versions,
   detectLogsVersion,
   getLatestVersion,
