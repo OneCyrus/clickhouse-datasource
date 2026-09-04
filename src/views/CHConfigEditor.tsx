@@ -23,10 +23,12 @@ import {
   CHCustomSetting,
   CHSecureConfig,
   CHLogsConfig,
+  CHMetricsConfig,
   Protocol,
   CHTracesConfig,
   AliasTableEntry,
   ConfigMode,
+  METRIC_TABLE_FIELDS,
   SignalType,
 } from 'types/config';
 import { isVersionGtOrEq as versionGte } from 'utils/version';
@@ -38,6 +40,7 @@ import { DefaultDatabaseTableConfig } from 'components/configEditor/DefaultDatab
 import { QuerySettingsConfig } from 'components/configEditor/QuerySettingsConfig';
 import { LogsConfig } from 'components/configEditor/LogsConfig';
 import { TracesConfig } from 'components/configEditor/TracesConfig';
+import { MetricsConfig } from 'components/configEditor/MetricsConfig';
 import { HttpHeadersConfig } from 'components/configEditor/HttpHeadersConfig';
 import allLabels from '../labels';
 import { createValidationAPI, onHttpHeadersChange, useConfigDefaults } from './CHConfigEditorHooks';
@@ -241,6 +244,18 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
       },
     });
   };
+  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string | boolean) => {
+    onOptionsChange({
+      ...options,
+      jsonData: {
+        ...options.jsonData,
+        metrics: {
+          ...options.jsonData.metrics,
+          [key]: value,
+        },
+      },
+    });
+  };
   const onAliasTableConfigChange = (aliasTables: AliasTableEntry[]) => {
     // track events when both a target table and alias table has a value
     if (aliasTables.length > 0 && aliasTables[0].targetTable && aliasTables[0].aliasTable) {
@@ -267,7 +282,8 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
     options.jsonData.enableSecureSocksProxy ||
     options.jsonData.customSettings ||
     options.jsonData.logs ||
-    options.jsonData.traces
+    options.jsonData.traces ||
+    options.jsonData.metrics
   );
   const configMode = jsonData.configMode || (jsonData.signalType ? 'single-table' : 'classic');
   const isSingleTableMode = configMode === 'single-table';
@@ -893,6 +909,16 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
               onTraceTimestampTableSuffixChange={(c) => {
                 trackingV1.trackClickhouseConfigV1TracesConfig({ traceTimestampTableSuffix: c });
                 onTracesConfigChange('traceTimestampTableSuffix', c);
+              }}
+            />
+
+            <Divider />
+            <MetricsConfig
+              metricsConfig={jsonData.metrics}
+              onOtelEnabledChange={(v) => onMetricsConfigChange('otelEnabled', v)}
+              onOtelVersionChange={(v) => onMetricsConfigChange('otelVersion', v)}
+              onTableNameChange={(type, v) => {
+                onMetricsConfigChange(METRIC_TABLE_FIELDS[type], v);
               }}
             />
 

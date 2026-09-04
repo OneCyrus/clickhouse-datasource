@@ -12,6 +12,7 @@ import { Datasource } from 'data/CHDatasource';
 import { useBuilderOptionChanges } from 'hooks/useBuilderOptionChanges';
 import useColumns from 'hooks/useColumns';
 import { BuilderOptionsReducerAction, setOptions } from 'hooks/useBuilderOptionsState';
+import { useOtelMetricsColumns } from './metricsQueryBuilderHooks';
 
 interface TableQueryBuilderProps {
   datasource: Datasource;
@@ -33,6 +34,7 @@ export const TableQueryBuilder = (props: TableQueryBuilderProps) => {
   const { datasource, builderOptions, builderOptionsDispatch } = props;
   const allColumns = useColumns(datasource, builderOptions.database, builderOptions.table);
   const labels = allLabels.components.TableQueryBuilder;
+  useOtelMetricsColumns(datasource, allColumns, builderOptions.table, builderOptionsDispatch);
   const builderState: TableQueryBuilderState = useMemo(
     () => ({
       isAggregateMode: builderOptions.mode === BuilderMode.Aggregate,

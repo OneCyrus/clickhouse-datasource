@@ -25,6 +25,7 @@ import { Datasource } from 'data/CHDatasource';
 import { useBuilderOptionChanges } from 'hooks/useBuilderOptionChanges';
 import useColumns from 'hooks/useColumns';
 import { BuilderOptionsReducerAction, setOptions } from 'hooks/useBuilderOptionsState';
+import { useOtelMetricsColumns } from './metricsQueryBuilderHooks';
 import { useDefaultFilters, useDefaultTimeColumn } from './timeSeriesQueryBuilderHooks';
 import useIsNewQuery from 'hooks/useIsNewQuery';
 
@@ -88,7 +89,12 @@ export const TimeSeriesQueryBuilder = (props: TimeSeriesQueryBuilderProps) => {
     );
   }, builderState);
 
-  useDefaultTimeColumn(allColumns, builderOptions.table, builderState.timeColumn, builderOptionsDispatch);
+  const metricsOtelActive = Boolean(
+    datasource.getMetricsOtelVersion() && datasource.getMetricsTableType(builderOptions.table)
+  );
+
+  useOtelMetricsColumns(datasource, allColumns, builderOptions.table, builderOptionsDispatch);
+  useDefaultTimeColumn(allColumns, builderOptions.table, builderState.timeColumn, builderOptionsDispatch, metricsOtelActive);
   useDefaultFilters(builderOptions.table, isNewQuery, builderOptionsDispatch);
 
   return (

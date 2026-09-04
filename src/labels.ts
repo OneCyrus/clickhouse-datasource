@@ -369,6 +369,41 @@ export default {
           },
         },
       },
+      MetricsConfig: {
+        title: 'Metrics configuration',
+        description: '(Optional) settings for metrics queries',
+        variants: {
+          singleTable: {
+            title: 'Metrics Table & Schema',
+            description: 'Configure the table names and column mappings for metric queries.',
+          },
+        },
+        tables: {
+          title: 'Metric tables',
+          description:
+            'The OpenTelemetry Collector writes each metric type to its own table. Names follow the clickhouseexporter convention but can be customized to match your deployment.',
+          gauge: {
+            label: 'Gauge table',
+            tooltip: 'Table storing gauge metrics',
+          },
+          sum: {
+            label: 'Sum table',
+            tooltip: 'Table storing sum metrics',
+          },
+          histogram: {
+            label: 'Histogram table',
+            tooltip: 'Table storing histogram metrics',
+          },
+          expHistogram: {
+            label: 'Exponential histogram table',
+            tooltip: 'Table storing exponential histogram metrics',
+          },
+          summary: {
+            label: 'Summary table',
+            tooltip: 'Table storing summary metrics',
+          },
+        },
+      },
     },
     EditorTypeSwitcher: {
       label: 'Editor Type',
@@ -647,6 +682,13 @@ export default {
       [ColumnHint.TraceInstrumentationLibraryName]: 'Instrumentation Library Name',
       [ColumnHint.TraceInstrumentationLibraryVersion]: 'Instrumentation Library Version',
       [ColumnHint.TraceState]: 'State',
+
+      [ColumnHint.MetricName]: 'Metric Name',
+      [ColumnHint.MetricDescription]: 'Metric Description',
+      [ColumnHint.MetricUnit]: 'Metric Unit',
+      [ColumnHint.MetricServiceName]: 'Service Name',
+      [ColumnHint.MetricStartTime]: 'Start Time',
+      [ColumnHint.MetricAttributes]: 'Metric Attributes',
     },
   },
 };

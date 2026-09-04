@@ -11,13 +11,16 @@ import {
   CHConfig,
   CHCustomSetting,
   CHLogsConfig,
+  CHMetricsConfig,
   CHSecureConfig,
   CHTracesConfig,
+  METRIC_TABLE_FIELDS,
   defaultCHAdditionalSettingsConfig,
 } from 'types/config';
 import { AliasTableConfig } from 'components/configEditor/AliasTableConfig';
 import { DefaultDatabaseTableConfig } from 'components/configEditor/DefaultDatabaseTableConfig';
 import { LogsConfig } from 'components/configEditor/LogsConfig';
+import { MetricsConfig } from 'components/configEditor/MetricsConfig';
 import { QuerySettingsConfig } from 'components/configEditor/QuerySettingsConfig';
 import { TracesConfig } from 'components/configEditor/TracesConfig';
 import { config } from '@grafana/runtime';
@@ -101,6 +104,19 @@ export const AdditionalSettingsSection = (props: Props) => {
     onTracesConfigChange(key, value);
   };
 
+  const onMetricsConfigChange = (key: keyof CHMetricsConfig, value: string | boolean) => {
+    onOptionsChange({
+      ...options,
+      jsonData: {
+        ...options.jsonData,
+        metrics: {
+          ...(options.jsonData.metrics || {}),
+          [key]: value,
+        },
+      },
+    });
+  };
+
   const onAliasTableConfigChange = (aliasTables: AliasTableEntry[]) => {
     onOptionsChange({
       ...options,
@@ -126,8 +142,13 @@ export const AdditionalSettingsSection = (props: Props) => {
         (() => {
           const defaultLogs = defaultCHAdditionalSettingsConfig.logs;
           const defaultTraces = defaultCHAdditionalSettingsConfig.traces;
+          const defaultMetrics = defaultCHAdditionalSettingsConfig.metrics;
           const logs = jsonData.logs ?? defaultLogs;
           const traces = jsonData.traces ?? defaultTraces;
+          // metrics is not stamped into configs by useConfigDefaults, so an
+          // absent metrics object is treated as "at defaults" rather than
+          // comparing undefined against the default object.
+          const metricsDirty = !!jsonData.metrics && !isEqual(jsonData.metrics, defaultMetrics);
 
           return (
             !!jsonData.defaultDatabase ||
@@ -141,7 +162,8 @@ export const AdditionalSettingsSection = (props: Props) => {
             !!jsonData.validateSql ||
             jsonData.enableMapKeysDiscovery === false ||
             !isEqual(logs, defaultLogs) ||
-            !isEqual(traces, defaultTraces)
+            !isEqual(traces, defaultTraces) ||
+            metricsDirty
           );
         })()) ||
       (jsonData.aliasTables?.length ?? 0) > 0 ||
@@ -274,6 +296,13 @@ export const AdditionalSettingsSection = (props: Props) => {
               onLinksColumnPrefixChange={(c) => onUpdateTracesConfig('traceLinksColumnPrefix', c)}
               onShowTraceLinksChange={(v) => onUpdateTracesConfig('showTraceLinks', v)}
               onTraceTimestampTableSuffixChange={(c) => onUpdateTracesConfig('traceTimestampTableSuffix', c)}
+            />
+            <Divider />
+            <MetricsConfig
+              metricsConfig={jsonData.metrics}
+              onOtelEnabledChange={(v) => onMetricsConfigChange('otelEnabled', v)}
+              onOtelVersionChange={(v) => onMetricsConfigChange('otelVersion', v)}
+              onTableNameChange={(type, v) => onMetricsConfigChange(METRIC_TABLE_FIELDS[type], v)}
             />
             <Divider />
           </>

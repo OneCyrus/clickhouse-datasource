@@ -5,6 +5,23 @@ export const defaultTraceTable = 'otel_traces';
 
 export const traceTimestampTableSuffix = '_trace_id_ts';
 
+/**
+ * The clickhouseexporter writes each metric type to its own table
+ * (otel_metrics_gauge, otel_metrics_sum, ...). The table names are freely
+ * configurable per deployment (exporter's metrics_tables.<type>.name option),
+ * so they are treated as configuration rather than a fixed convention —
+ * defaultMetricsTableNames only captures the exporter's default names.
+ */
+export type MetricTableType = 'gauge' | 'sum' | 'histogram' | 'expHistogram' | 'summary';
+
+export const defaultMetricsTableNames: Record<MetricTableType, string> = {
+  gauge: 'otel_metrics_gauge',
+  sum: 'otel_metrics_sum',
+  histogram: 'otel_metrics_histogram',
+  expHistogram: 'otel_metrics_exp_histogram',
+  summary: 'otel_metrics_summary',
+};
+
 export interface OtelVersion {
   name: string;
   version: string;
@@ -18,7 +35,33 @@ export interface OtelVersion {
   flattenNested: boolean;
   traceEventsColumnPrefix: string;
   traceLinksColumnPrefix: string;
+  /**
+   * Column map shared by all five metrics tables. Column names have been
+   * stable since the collector's 2024 schema rework, and the per-type value
+   * columns (Value, Count, Sum, BucketCounts, ...) are deliberately excluded —
+   * they differ per table type and are selected manually from the schema.
+   */
+  metricColumnMap: Map<ColumnHint, string>;
+  /** Exporter default table name per metric type. */
+  metricsTables: Record<MetricTableType, string>;
 }
+
+// Metrics: column names are identical across all five metric tables and have
+// not changed between collector versions covered here (the v0.151.0 release
+// that changed otel_logs did not touch the metrics schemas). Both versions
+// therefore share the same map. See:
+//   https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/internal/sqltemplates
+const metricColumnMap = new Map<ColumnHint, string>([
+  [ColumnHint.Time, 'TimeUnix'],
+  [ColumnHint.MetricName, 'MetricName'],
+  [ColumnHint.MetricDescription, 'MetricDescription'],
+  [ColumnHint.MetricUnit, 'MetricUnit'],
+  [ColumnHint.MetricServiceName, 'ServiceName'],
+  [ColumnHint.MetricStartTime, 'StartTimeUnix'],
+  [ColumnHint.MetricAttributes, 'Attributes'],
+  [ColumnHint.ResourceAttributes, 'ResourceAttributes'],
+  [ColumnHint.ScopeAttributes, 'ScopeAttributes'],
+]);
 
 const otel129: OtelVersion = {
   name: '1.2.9',
@@ -56,6 +99,8 @@ const otel129: OtelVersion = {
   traceDurationUnit: TimeUnit.Nanoseconds,
   traceEventsColumnPrefix: 'Events',
   traceLinksColumnPrefix: 'Links',
+  metricColumnMap,
+  metricsTables: defaultMetricsTableNames,
 };
 
 // otel130 tracks the otel_logs schema produced by opentelemetry-collector-contrib's
@@ -66,7 +111,8 @@ const otel129: OtelVersion = {
 // doesn't resolve. See:
 //   https://github.com/open-telemetry/opentelemetry-collector-contrib/pull/47720
 //   https://github.com/open-telemetry/opentelemetry-collector-contrib/issues/48770
-// otel_traces and otel_traces_trace_id_ts schemas were not changed.
+// otel_traces and otel_traces_trace_id_ts schemas were not changed, and
+// neither were the five metrics tables.
 const otel130: OtelVersion = {
   ...otel129,
   name: '1.3.0',

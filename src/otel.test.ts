@@ -71,6 +71,43 @@ describe('otel trace schema (unchanged in v0.151.0)', () => {
   });
 });
 
+describe('otel metrics schema', () => {
+  const v129 = getVersion('1.29.0')!;
+  const v130 = getVersion('1.30.0')!;
+
+  it('metric column map is identical between 1.2.9 and 1.3.0', () => {
+    // The collector's metrics tables were not touched by the v0.151.0
+    // schema rework, so both plugin schema versions share one map.
+    expect(Array.from(v130.metricColumnMap.entries())).toEqual(Array.from(v129.metricColumnMap.entries()));
+  });
+
+  it('maps the columns shared by all five metric tables', () => {
+    expect(Array.from(v130.metricColumnMap.entries())).toEqual([
+      [ColumnHint.Time, 'TimeUnix'],
+      [ColumnHint.MetricName, 'MetricName'],
+      [ColumnHint.MetricDescription, 'MetricDescription'],
+      [ColumnHint.MetricUnit, 'MetricUnit'],
+      [ColumnHint.MetricServiceName, 'ServiceName'],
+      [ColumnHint.MetricStartTime, 'StartTimeUnix'],
+      [ColumnHint.MetricAttributes, 'Attributes'],
+      [ColumnHint.ResourceAttributes, 'ResourceAttributes'],
+      [ColumnHint.ScopeAttributes, 'ScopeAttributes'],
+    ]);
+  });
+
+  it('exposes the exporter default table names for all metric types', () => {
+    const expected = {
+      gauge: 'otel_metrics_gauge',
+      sum: 'otel_metrics_sum',
+      histogram: 'otel_metrics_histogram',
+      expHistogram: 'otel_metrics_exp_histogram',
+      summary: 'otel_metrics_summary',
+    };
+    expect(v130.metricsTables).toEqual(expected);
+    expect(v129.metricsTables).toEqual(expected);
+  });
+});
+
 describe('detectLogsVersion', () => {
   it('picks the 1.29.0 schema when the table has a TimestampTime column', () => {
     const detected = detectLogsVersion(['Timestamp', 'TimestampTime', 'Body', 'SeverityText']);

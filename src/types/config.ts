@@ -1,5 +1,10 @@
 import { DataSourceJsonData, KeyValue } from '@grafana/data';
-import otel, { defaultLogsTable, defaultTraceTable } from 'otel';
+import otel, {
+  defaultLogsTable,
+  defaultMetricsTableNames,
+  defaultTraceTable,
+  MetricTableType,
+} from 'otel';
 import { TimeUnit } from './queryBuilder';
 
 export type SignalType = 'logs' | 'traces';
@@ -42,6 +47,7 @@ export interface CHConfig extends DataSourceJsonData {
 
   logs?: CHLogsConfig;
   traces?: CHTracesConfig;
+  metrics?: CHMetricsConfig;
 
   aliasTables?: AliasTableEntry[];
 
@@ -164,6 +170,35 @@ export interface CHTracesConfig {
   traceTimestampTableSuffix?: string;
 }
 
+/**
+ * Unlike logs/traces (one table per signal), the clickhouseexporter writes
+ * metrics to five tables — one per metric type — and each table name is
+ * freely configurable on the exporter side (metrics_tables.<type>.name).
+ * Unset fields fall back to the exporter's default names (otel_metrics_gauge,
+ * ...), so table names here are overrides, not requirements.
+ */
+export interface CHMetricsConfig {
+  otelEnabled?: boolean;
+  otelVersion?: string;
+
+  gaugeTable?: string;
+  sumTable?: string;
+  histogramTable?: string;
+  expHistogramTable?: string;
+  summaryTable?: string;
+}
+
+/**
+ * Maps each metric type to its table-name field in CHMetricsConfig.
+ */
+export const METRIC_TABLE_FIELDS: Record<MetricTableType, keyof CHMetricsConfig> = {
+  gauge: 'gaugeTable',
+  sum: 'sumTable',
+  histogram: 'histogramTable',
+  expHistogram: 'expHistogramTable',
+  summary: 'summaryTable',
+};
+
 export interface AliasTableEntry {
   targetDatabase: string;
   targetTable: string;
@@ -187,5 +222,13 @@ export const defaultCHAdditionalSettingsConfig: Partial<CHConfig> = {
     defaultTable: defaultTraceTable,
     otelVersion: otel.getLatestVersion().version,
     durationUnit: TimeUnit.Nanoseconds,
+  },
+  metrics: {
+    otelVersion: otel.getLatestVersion().version,
+    gaugeTable: defaultMetricsTableNames.gauge,
+    sumTable: defaultMetricsTableNames.sum,
+    histogramTable: defaultMetricsTableNames.histogram,
+    expHistogramTable: defaultMetricsTableNames.expHistogram,
+    summaryTable: defaultMetricsTableNames.summary,
   },
 };
