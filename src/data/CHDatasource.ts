@@ -31,10 +31,10 @@ import { DataSourceWithBackend, getTemplateSrv, HealthCheckError } from '@grafan
 import { trackClickhouseHealthCheckFailed } from 'tracking';
 import LogsContextPanel from 'components/LogsContextPanel';
 import { cloneDeep, isString } from 'lodash';
-import otel from 'otel';
+import otel, { defaultMetricsTableNames, MetricTableType } from 'otel';
 import { createElement as createReactElement, ReactNode } from 'react';
 import { catchError, concatMap, firstValueFrom, Observable, of } from 'rxjs';
-import { CHConfig, ConfigMode, SignalType } from 'types/config';
+import { CHConfig, CHMetricsConfig, ConfigMode, METRIC_TABLE_FIELDS, SignalType } from 'types/config';
 import {
   AggregateColumn,
   AggregateType,
@@ -1009,6 +1009,61 @@ export class Datasource
   getTraceOtelVersion(): string | undefined {
     const traceConfig = this.settings.jsonData.traces;
     return traceConfig?.otelEnabled ? traceConfig.otelVersion || undefined : undefined;
+  }
+
+  /**
+   * Get configured OTEL version for metrics. Returns undefined when versioning is disabled/unset.
+   */
+  getMetricsOtelVersion(): string | undefined {
+    const metricsConfig = this.settings.jsonData.metrics;
+    return metricsConfig?.otelEnabled ? metricsConfig.otelVersion || undefined : undefined;
+  }
+
+  /**
+   * Resolves the effective table name for each metric type: the configured
+   * name when set, otherwise the exporter's default name.
+   */
+  getMetricsTables(): Record<MetricTableType, string> {
+    const metricsConfig = this.settings.jsonData.metrics;
+    const result = {} as Record<MetricTableType, string>;
+    for (const type of Object.keys(defaultMetricsTableNames) as MetricTableType[]) {
+      const configured = metricsConfig?.[METRIC_TABLE_FIELDS[type]] as string | undefined;
+      result[type] = configured || defaultMetricsTableNames[type];
+    }
+    return result;
+  }
+
+  /**
+   * Resolves which OTel metrics table a table name refers to. Configured
+   * names take precedence over the exporter defaults, so renamed tables
+   * resolve to their metric type while default-named tables keep working
+   * without any metrics configuration. Returns undefined for non-metrics tables.
+   */
+  getMetricsTableType(table: string | undefined): MetricTableType | undefined {
+    if (!table) {
+      return undefined;
+    }
+
+    const name = table.trim();
+    if (!name) {
+      return undefined;
+    }
+
+    const metricsConfig: CHMetricsConfig | undefined = this.settings.jsonData.metrics;
+    for (const type of Object.keys(defaultMetricsTableNames) as MetricTableType[]) {
+      const configured = metricsConfig?.[METRIC_TABLE_FIELDS[type]] as string | undefined;
+      if (configured && name === configured) {
+        return type;
+      }
+    }
+
+    for (const type of Object.keys(defaultMetricsTableNames) as MetricTableType[]) {
+      if (name === defaultMetricsTableNames[type]) {
+        return type;
+      }
+    }
+
+    return undefined;
   }
 
   getDefaultTraceDurationUnit(): TimeUnit {

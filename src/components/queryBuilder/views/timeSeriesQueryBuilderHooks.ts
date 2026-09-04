@@ -12,17 +12,27 @@ import {
   TableColumn,
 } from 'types/queryBuilder';
 
-// Finds and selects a default log time column, updates when table changes
+// Finds and selects a default time column, updates when table changes.
+// `otelEnabled` skips the default pick for OTel-managed tables (logs, metrics):
+// their column maps already pin the correct time column, and a naive
+// first-DateTime-column pick would grab the wrong one (e.g. StartTimeUnix
+// instead of TimeUnix on OTel metrics tables).
 export const useDefaultTimeColumn = (
   allColumns: readonly TableColumn[],
   table: string,
   timeColumn: SelectedColumn | undefined,
-  builderOptionsDispatch: React.Dispatch<BuilderOptionsReducerAction>
+  builderOptionsDispatch: React.Dispatch<BuilderOptionsReducerAction>,
+  otelEnabled?: boolean
 ) => {
   const didSetDefaultTime = useRef<boolean>(Boolean(timeColumn));
   const lastTable = useRef<string>(table || '');
   if (table !== lastTable.current) {
     didSetDefaultTime.current = false;
+  }
+
+  if (otelEnabled) {
+    lastTable.current = table;
+    didSetDefaultTime.current = true;
   }
 
   useEffect(() => {

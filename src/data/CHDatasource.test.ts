@@ -2741,6 +2741,75 @@ describe('ClickHouseDatasource', () => {
       { name: 'End', type: 'DateTime64(9)', label: 'End', picklistValues: [] },
     ] as TableColumn[];
 
+  describe('metrics otel getters', () => {
+    it('getMetricsOtelVersion returns undefined when metrics OTel is disabled or unset', () => {
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.metrics = undefined;
+      expect(ds.getMetricsOtelVersion()).toBeUndefined();
+
+      ds.settings.jsonData.metrics = { otelEnabled: false, otelVersion: 'latest' };
+      expect(ds.getMetricsOtelVersion()).toBeUndefined();
+
+      ds.settings.jsonData.metrics = { otelEnabled: true, otelVersion: undefined };
+      expect(ds.getMetricsOtelVersion()).toBeUndefined();
+    });
+
+    it('getMetricsOtelVersion returns the configured version when metrics OTel is enabled', () => {
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.metrics = { otelEnabled: true, otelVersion: 'latest' };
+      expect(ds.getMetricsOtelVersion()).toBe('latest');
+    });
+
+    it('getMetricsTableType resolves configured table names over the exporter defaults', () => {
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.metrics = {
+        otelEnabled: true,
+        gaugeTable: 'gauges',
+        sumTable: 'counters',
+      };
+      expect(ds.getMetricsTableType('gauges')).toBe('gauge');
+      expect(ds.getMetricsTableType('counters')).toBe('sum');
+      // default-named tables keep working alongside renamed ones
+      expect(ds.getMetricsTableType('otel_metrics_histogram')).toBe('histogram');
+      expect(ds.getMetricsTableType('otel_metrics_exp_histogram')).toBe('expHistogram');
+      expect(ds.getMetricsTableType('otel_metrics_summary')).toBe('summary');
+    });
+
+    it('getMetricsTableType falls back to exporter default names without metrics config', () => {
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.metrics = undefined;
+      expect(ds.getMetricsTableType('otel_metrics_gauge')).toBe('gauge');
+      expect(ds.getMetricsTableType('otel_metrics_sum')).toBe('sum');
+      expect(ds.getMetricsTableType('otel_metrics_histogram')).toBe('histogram');
+      expect(ds.getMetricsTableType('otel_metrics_exp_histogram')).toBe('expHistogram');
+      expect(ds.getMetricsTableType('otel_metrics_summary')).toBe('summary');
+      // configured names take precedence over defaults even when disabled
+      expect(ds.getMetricsTableType('otel_logs')).toBeUndefined();
+      expect(ds.getMetricsTableType('otel_traces')).toBeUndefined();
+    });
+
+    it('getMetricsTableType returns undefined for empty or unknown names', () => {
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.metrics = { otelEnabled: true, gaugeTable: 'gauges' };
+      expect(ds.getMetricsTableType(undefined)).toBeUndefined();
+      expect(ds.getMetricsTableType('')).toBeUndefined();
+      expect(ds.getMetricsTableType('   ')).toBeUndefined();
+      expect(ds.getMetricsTableType('unknown_table')).toBeUndefined();
+    });
+
+    it('getMetricsTables merges configured names with exporter defaults', () => {
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.metrics = { otelEnabled: true, sumTable: 'counters' };
+      expect(ds.getMetricsTables()).toEqual({
+        gauge: 'otel_metrics_gauge',
+        sum: 'counters',
+        histogram: 'otel_metrics_histogram',
+        expHistogram: 'otel_metrics_exp_histogram',
+        summary: 'otel_metrics_summary',
+      });
+    });
+  });
+
   describe('hasTraceTimestampTable', () => {
     it('resolves false when database or table is empty', async () => {
       const ds = cloneDeep(mockDatasource);

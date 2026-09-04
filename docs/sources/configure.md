@@ -230,6 +230,24 @@ When **Use OTel** is disabled, you can manually configure columns for Trace ID, 
 
 When **Configuration mode** is set to **Single source** and **Signal type** is set to **Traces**, these settings define the focused traces source.
 
+### Metrics configuration
+
+Unlike logs and traces, the OpenTelemetry ClickHouse exporter writes metrics to five tables — one per metric type (`otel_metrics_gauge`, `otel_metrics_sum`, `otel_metrics_histogram`, `otel_metrics_exp_histogram`, and `otel_metrics_summary` by default). Because deployments may rename these tables via the exporter's `metrics_tables.<type>.name` option, the plugin treats the table names as configuration rather than a fixed convention. If your tables use the exporter's default names, no configuration is needed.
+
+Enable **Use OTel** in the **Metrics configuration** section to pre-fill the shared columns (time, metric name, description, unit, service name, start time, and attribute columns) whenever a query targets one of the configured metric tables. Queries ride the standard Table and TimeSeries builders; the per-type value columns (`Value`, `Count`, `Sum`, `BucketCounts`, `QuantileValues`, ...) differ between tables and are selected manually from the table schema.
+
+| Setting                      | Description                                                                                                                |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **Use OTel**                 | When enabled, pre-fills the shared metric column mappings when a query targets a metric table.                              |
+| **OTel schema version**      | The exporter schema version your metric tables were created with.                                                           |
+| **Gauge table**              | Name of the table storing gauge metrics. Defaults to `otel_metrics_gauge`.                                                  |
+| **Sum table**                | Name of the table storing sum metrics. Defaults to `otel_metrics_sum`.                                                      |
+| **Histogram table**          | Name of the table storing histogram metrics. Defaults to `otel_metrics_histogram`.                                          |
+| **Exponential histogram table** | Name of the table storing exponential histogram metrics. Defaults to `otel_metrics_exp_histogram`.                        |
+| **Summary table**            | Name of the table storing summary metrics. Defaults to `otel_metrics_summary`.                                              |
+
+When **Use OTel** is disabled, metric queries behave like any other Table or TimeSeries query: pick columns from the table schema without any pre-filled mapping.
+
 ### OTel schema versions
 
 The plugin ships built-in column maps for the OpenTelemetry ClickHouse exporter's default schemas. Pick the version that matches the exporter that wrote your data:
@@ -238,7 +256,7 @@ The plugin ships built-in column maps for the OpenTelemetry ClickHouse exporter'
 - **`1.3.0`**: `opentelemetry-collector-contrib` clickhouseexporter `v0.151.0` and later. The `otel_logs` table partitions and orders directly on `Timestamp`. The `TimestampTime` column was removed in [PR #47720](https://github.com/open-telemetry/opentelemetry-collector-contrib/pull/47720), so the **Filter Time column** is left blank.
 - **`1.2.9`**: `opentelemetry-collector-contrib` clickhouseexporter `v0.150.x` and earlier. The `otel_logs` table includes a `TimestampTime DateTime` column used for partition-based filtering.
 
-The trace tables (`otel_traces`, `otel_traces_trace_id_ts`) and metric tables are unchanged across these versions; only the `otel_logs` schema changed. Detection therefore only applies to logs, and traces always use the selected version's map.
+The trace tables (`otel_traces`, `otel_traces_trace_id_ts`) and the five metric tables are unchanged across these versions; only the `otel_logs` schema changed. Detection therefore only applies to logs. Metrics use the same shared column map for every schema version, since the metric tables' column names have been stable across the versions covered here.
 
 If queries fail with an `Unknown identifier 'TimestampTime'` error after upgrading the exporter, leave the version on `auto (latest)` and rebuild the query, or pin the schema version to `1.3.0`.
 

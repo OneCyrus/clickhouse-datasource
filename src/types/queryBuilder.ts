@@ -182,6 +182,19 @@ export enum ColumnHint {
   TraceInstrumentationLibraryName = 'instrumentation_library_name',
   TraceInstrumentationLibraryVersion = 'instrumentation_library_version',
   TraceState = 'trace_state',
+
+  /**
+   * Metrics — columns shared by all five OTel metrics tables (gauge, sum,
+   * histogram, exp_histogram, summary). Value columns (Value, Count, Sum,
+   * BucketCounts, ...) differ per table type and stay unmapped; users select
+   * them from the table schema.
+   */
+  MetricName = 'metric_name',
+  MetricDescription = 'metric_description',
+  MetricUnit = 'metric_unit',
+  MetricServiceName = 'metric_service_name',
+  MetricStartTime = 'metric_start_time',
+  MetricAttributes = 'metric_attributes',
 }
 
 /**
