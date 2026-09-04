@@ -1,6 +1,6 @@
 import { ConfigSubSection } from 'components/experimental/ConfigSection';
 import allLabels from './labelsV2';
-import React, { ChangeEvent, useMemo, useState } from 'react';
+import React, { ChangeEvent, useMemo, useRef, useState } from 'react';
 import {
   DataSourcePluginOptionsEditorProps,
   onUpdateDatasourceJsonDataOption,
@@ -11,6 +11,7 @@ import {
   CHConfig,
   CHCustomSetting,
   CHLogsConfig,
+  CHMetricsConfig,
   CHSecureConfig,
   CHTracesConfig,
   defaultCHAdditionalSettingsConfig,
@@ -20,8 +21,10 @@ import { DefaultDatabaseTableConfig } from 'components/configEditor/DefaultDatab
 import { LogsConfig } from 'components/configEditor/LogsConfig';
 import { QuerySettingsConfig } from 'components/configEditor/QuerySettingsConfig';
 import { TracesConfig } from 'components/configEditor/TracesConfig';
+import { MetricsConfig } from 'components/configEditor/MetricsConfig';
 import { config } from '@grafana/runtime';
-import { TimeUnit } from 'types/queryBuilder';
+import { AggregateType, TimeUnit } from 'types/queryBuilder';
+import { OtelMetricType } from 'otel';
 import { useConfigDefaults } from 'views/CHConfigEditorHooks';
 import { isVersionGtOrEq as versionGte } from 'utils/version';
 import {
@@ -44,6 +47,7 @@ import {
   trackClickhouseConfigV2DefaultTableInput,
   trackClickhouseConfigV2EnableRowLimitToggle,
   trackClickhouseConfigV2LogsConfig,
+  trackClickhouseConfigV2MetricsConfig,
   trackClickhouseConfigV2QuerySettings,
   trackClickhouseConfigV2TracesConfig,
 } from './tracking';
@@ -61,6 +65,12 @@ export const AdditionalSettingsSection = (props: Props) => {
     (jsonData.configMode || (jsonData.signalType ? 'single-table' : 'classic')) === 'single-table';
 
   useConfigDefaults(options, onOptionsChange);
+
+  // Keep a ref to the latest options so sequential updates in the same event
+  // handler (e.g. changing the metric type also updates the default table) are
+  // based on the most recent state instead of a stale closure.
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   const [customSettings, setCustomSettings] = useState(jsonData.customSettings || []);
 
@@ -99,6 +109,33 @@ export const AdditionalSettingsSection = (props: Props) => {
   const onUpdateTracesConfig = (key: keyof CHTracesConfig, value: string | boolean) => {
     trackClickhouseConfigV2TracesConfig({ [key]: value });
     onTracesConfigChange(key, value);
+  };
+
+  const onMetricsConfigChange = (
+    key: keyof CHMetricsConfig,
+    value: string | boolean | AggregateType | OtelMetricType | undefined
+  ) => {
+    const current = optionsRef.current;
+    const next = {
+      ...current,
+      jsonData: {
+        ...current.jsonData,
+        metrics: {
+          ...(current.jsonData.metrics || {}),
+          [key]: value,
+        },
+      },
+    };
+    optionsRef.current = next;
+    onOptionsChange(next);
+  };
+
+  const onUpdateMetricsConfig = (
+    key: keyof CHMetricsConfig,
+    value: string | boolean | AggregateType | OtelMetricType | undefined
+  ) => {
+    trackClickhouseConfigV2MetricsConfig({ [key]: value });
+    onMetricsConfigChange(key, value);
   };
 
   const onAliasTableConfigChange = (aliasTables: AliasTableEntry[]) => {
@@ -141,7 +178,8 @@ export const AdditionalSettingsSection = (props: Props) => {
             !!jsonData.validateSql ||
             jsonData.enableMapKeysDiscovery === false ||
             !isEqual(logs, defaultLogs) ||
-            !isEqual(traces, defaultTraces)
+            !isEqual(traces, defaultTraces) ||
+            !!jsonData.metrics
           );
         })()) ||
       (jsonData.aliasTables?.length ?? 0) > 0 ||
@@ -276,6 +314,17 @@ export const AdditionalSettingsSection = (props: Props) => {
               onTraceTimestampTableSuffixChange={(c) => onUpdateTracesConfig('traceTimestampTableSuffix', c)}
             />
             <Divider />
+            <MetricsConfig
+              metricsConfig={jsonData.metrics}
+              onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
+              onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
+              onOtelEnabledChange={(enabled) => onUpdateMetricsConfig('otelEnabled', enabled)}
+              onOtelVersionChange={(version) => onUpdateMetricsConfig('otelVersion', version)}
+              onOtelMetricTypeChange={(type) => onUpdateMetricsConfig('otelMetricType', type)}
+              onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
+              onValueColumnChange={(column) => onUpdateMetricsConfig('valueColumn', column)}
+              onAggregationChange={(aggregation) => onUpdateMetricsConfig('aggregation', aggregation)}
+            />
           </>
         )}
         <AliasTableConfig aliasTables={jsonData.aliasTables} onAliasTablesChange={onAliasTableConfigChange} />

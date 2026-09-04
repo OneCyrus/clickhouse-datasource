@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   DataSourcePluginOptionsEditorProps,
   onUpdateDatasourceJsonDataOption,
@@ -8,11 +8,22 @@ import { Box, CollapsableSection, Divider, Field, RadioButtonGroup, Text } from 
 import { LogsConfig } from 'components/configEditor/LogsConfig';
 import { QuerySettingsConfig } from 'components/configEditor/QuerySettingsConfig';
 import { TracesConfig } from 'components/configEditor/TracesConfig';
-import { CHConfig, CHLogsConfig, CHSecureConfig, CHTracesConfig, ConfigMode, SignalType } from 'types/config';
-import { TimeUnit } from 'types/queryBuilder';
+import { MetricsConfig } from 'components/configEditor/MetricsConfig';
+import {
+  CHConfig,
+  CHLogsConfig,
+  CHMetricsConfig,
+  CHSecureConfig,
+  CHTracesConfig,
+  ConfigMode,
+  SignalType,
+} from 'types/config';
+import { AggregateType, TimeUnit } from 'types/queryBuilder';
+import { OtelMetricType } from 'otel';
 import { CONFIG_SECTION_HEADERS, CONTAINER_MIN_WIDTH } from './constants';
 import {
   trackClickhouseConfigV2LogsConfig,
+  trackClickhouseConfigV2MetricsConfig,
   trackClickhouseConfigV2QuerySettings,
   trackClickhouseConfigV2TracesConfig,
 } from './tracking';
@@ -25,6 +36,12 @@ export const ConfigurationModeSection = (props: Props) => {
   const configMode = jsonData.configMode || (jsonData.signalType ? 'single-table' : 'classic');
   const isSingleTableMode = configMode === 'single-table';
   const selectedSignalType = isSingleTableMode ? jsonData.signalType || 'logs' : undefined;
+
+  // Keep a ref to the latest options so sequential updates in the same event
+  // handler (e.g. changing the metric type also updates the default table) are
+  // based on the most recent state instead of a stale closure.
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   const onLogsConfigChange = (key: keyof CHLogsConfig, value: string | boolean | string[]) => {
     onOptionsChange({
@@ -61,6 +78,33 @@ export const ConfigurationModeSection = (props: Props) => {
   const onUpdateTracesConfig = (key: keyof CHTracesConfig, value: string | boolean | TimeUnit) => {
     trackClickhouseConfigV2TracesConfig({ [key]: value });
     onTracesConfigChange(key, value);
+  };
+
+  const onMetricsConfigChange = (
+    key: keyof CHMetricsConfig,
+    value: string | boolean | AggregateType | OtelMetricType | undefined
+  ) => {
+    const current = optionsRef.current;
+    const next = {
+      ...current,
+      jsonData: {
+        ...current.jsonData,
+        metrics: {
+          ...(current.jsonData.metrics || {}),
+          [key]: value,
+        },
+      },
+    };
+    optionsRef.current = next;
+    onOptionsChange(next);
+  };
+
+  const onUpdateMetricsConfig = (
+    key: keyof CHMetricsConfig,
+    value: string | boolean | AggregateType | OtelMetricType | undefined
+  ) => {
+    trackClickhouseConfigV2MetricsConfig({ [key]: value });
+    onMetricsConfigChange(key, value);
   };
 
   return (
@@ -104,6 +148,7 @@ export const ConfigurationModeSection = (props: Props) => {
               options={[
                 { label: 'Logs', value: 'logs', description: 'Log search with severity, message, and attributes' },
                 { label: 'Traces', value: 'traces', description: 'Distributed tracing with spans and service maps' },
+                { label: 'Metrics', value: 'metrics', description: 'Time-series metrics with dimensions and filters' },
               ]}
               value={selectedSignalType}
               onChange={(v) => {
@@ -176,6 +221,23 @@ export const ConfigurationModeSection = (props: Props) => {
               onLinksColumnPrefixChange={(c) => onUpdateTracesConfig('traceLinksColumnPrefix', c)}
               onShowTraceLinksChange={(v) => onUpdateTracesConfig('showTraceLinks', v)}
               onTraceTimestampTableSuffixChange={(v) => onUpdateTracesConfig('traceTimestampTableSuffix', v)}
+            />
+          </>
+        )}
+        {selectedSignalType === 'metrics' && (
+          <>
+            <Divider />
+            <MetricsConfig
+              variant="single-table"
+              metricsConfig={jsonData.metrics}
+              onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
+              onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
+              onOtelEnabledChange={(enabled) => onUpdateMetricsConfig('otelEnabled', enabled)}
+              onOtelVersionChange={(version) => onUpdateMetricsConfig('otelVersion', version)}
+              onOtelMetricTypeChange={(type) => onUpdateMetricsConfig('otelMetricType', type)}
+              onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
+              onValueColumnChange={(column) => onUpdateMetricsConfig('valueColumn', column)}
+              onAggregationChange={(aggregation) => onUpdateMetricsConfig('aggregation', aggregation)}
             />
           </>
         )}

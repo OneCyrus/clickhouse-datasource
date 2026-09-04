@@ -1,4 +1,4 @@
-import React, { ChangeEvent, useEffect, useMemo, useState } from 'react';
+import React, { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DataSourcePluginOptionsEditorProps,
   onUpdateDatasourceJsonDataOption,
@@ -23,6 +23,7 @@ import {
   CHCustomSetting,
   CHSecureConfig,
   CHLogsConfig,
+  CHMetricsConfig,
   Protocol,
   CHTracesConfig,
   AliasTableEntry,
@@ -33,16 +34,18 @@ import { isVersionGtOrEq as versionGte } from 'utils/version';
 import { ConfigSection, ConfigSubSection, DataSourceDescription } from 'components/experimental/ConfigSection';
 import { config } from '@grafana/runtime';
 import { Divider } from 'components/Divider';
-import { TimeUnit } from 'types/queryBuilder';
+import { AggregateType, TimeUnit } from 'types/queryBuilder';
 import { DefaultDatabaseTableConfig } from 'components/configEditor/DefaultDatabaseTableConfig';
 import { QuerySettingsConfig } from 'components/configEditor/QuerySettingsConfig';
 import { LogsConfig } from 'components/configEditor/LogsConfig';
 import { TracesConfig } from 'components/configEditor/TracesConfig';
+import { MetricsConfig } from 'components/configEditor/MetricsConfig';
 import { HttpHeadersConfig } from 'components/configEditor/HttpHeadersConfig';
 import allLabels from '../labels';
 import { createValidationAPI, onHttpHeadersChange, useConfigDefaults } from './CHConfigEditorHooks';
 import { AliasTableConfig } from '../components/configEditor/AliasTableConfig';
 import * as trackingV1 from './trackingV1';
+import { OtelMetricType } from 'otel';
 
 export interface ConfigEditorProps extends DataSourcePluginOptionsEditorProps<CHConfig, CHSecureConfig> {}
 
@@ -69,6 +72,12 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
   ];
 
   useConfigDefaults(options, onOptionsChange);
+
+  // Keep a ref to the latest options so sequential updates in the same event
+  // handler (e.g. changing the metric type also updates the default table) are
+  // based on the most recent state instead of a stale closure.
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   // Register a validator for required fields. The validator runs when
   // validation.validate() is called by Grafana before saving — if it returns
@@ -241,6 +250,31 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
       },
     });
   };
+  const onMetricsConfigChange = (
+    key: keyof CHMetricsConfig,
+    value: string | boolean | AggregateType | OtelMetricType | undefined
+  ) => {
+    const current = optionsRef.current;
+    const next = {
+      ...current,
+      jsonData: {
+        ...current.jsonData,
+        metrics: {
+          ...(current.jsonData.metrics || {}),
+          [key]: value,
+        },
+      },
+    };
+    optionsRef.current = next;
+    onOptionsChange(next);
+  };
+  const onUpdateMetricsConfig = (
+    key: keyof CHMetricsConfig,
+    value: string | boolean | AggregateType | OtelMetricType | undefined
+  ) => {
+    trackingV1.trackClickhouseConfigV1MetricsConfig({ [key]: value });
+    onMetricsConfigChange(key, value);
+  };
   const onAliasTableConfigChange = (aliasTables: AliasTableEntry[]) => {
     // track events when both a target table and alias table has a value
     if (aliasTables.length > 0 && aliasTables[0].targetTable && aliasTables[0].aliasTable) {
@@ -267,7 +301,8 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
     options.jsonData.enableSecureSocksProxy ||
     options.jsonData.customSettings ||
     options.jsonData.logs ||
-    options.jsonData.traces
+    options.jsonData.traces ||
+    options.jsonData.metrics
   );
   const configMode = jsonData.configMode || (jsonData.signalType ? 'single-table' : 'classic');
   const isSingleTableMode = configMode === 'single-table';
@@ -576,6 +611,7 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
               options={[
                 { label: 'Logs', value: 'logs', description: 'Log search with severity, message, and attributes' },
                 { label: 'Traces', value: 'traces', description: 'Distributed tracing with spans and service maps' },
+                { label: 'Metrics', value: 'metrics', description: 'Time-series metrics with dimensions and filters' },
               ]}
               value={selectedSignalType}
               onChange={(v) => {
@@ -650,6 +686,23 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
                 onLinksColumnPrefixChange={(c) => onTracesConfigChange('traceLinksColumnPrefix', c)}
                 onShowTraceLinksChange={(v) => onTracesConfigChange('showTraceLinks', v)}
                 onTraceTimestampTableSuffixChange={(v) => onTracesConfigChange('traceTimestampTableSuffix', v)}
+              />
+            </>
+          )}
+          {selectedSignalType === 'metrics' && (
+            <>
+              <Divider />
+              <MetricsConfig
+                variant="single-table"
+                metricsConfig={jsonData.metrics}
+                onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
+                onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
+                onOtelEnabledChange={(enabled) => onUpdateMetricsConfig('otelEnabled', enabled)}
+                onOtelVersionChange={(version) => onUpdateMetricsConfig('otelVersion', version)}
+                onOtelMetricTypeChange={(type) => onUpdateMetricsConfig('otelMetricType', type)}
+                onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
+                onValueColumnChange={(column) => onUpdateMetricsConfig('valueColumn', column)}
+                onAggregationChange={(aggregation) => onUpdateMetricsConfig('aggregation', aggregation)}
               />
             </>
           )}
@@ -894,6 +947,19 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = (props) => {
                 trackingV1.trackClickhouseConfigV1TracesConfig({ traceTimestampTableSuffix: c });
                 onTracesConfigChange('traceTimestampTableSuffix', c);
               }}
+            />
+
+            <Divider />
+            <MetricsConfig
+              metricsConfig={jsonData.metrics}
+              onDefaultDatabaseChange={(db) => onUpdateMetricsConfig('defaultDatabase', db)}
+              onDefaultTableChange={(table) => onUpdateMetricsConfig('defaultTable', table)}
+              onOtelEnabledChange={(enabled) => onUpdateMetricsConfig('otelEnabled', enabled)}
+              onOtelVersionChange={(version) => onUpdateMetricsConfig('otelVersion', version)}
+              onOtelMetricTypeChange={(type) => onUpdateMetricsConfig('otelMetricType', type)}
+              onTimeColumnChange={(column) => onUpdateMetricsConfig('timeColumn', column)}
+              onValueColumnChange={(column) => onUpdateMetricsConfig('valueColumn', column)}
+              onAggregationChange={(aggregation) => onUpdateMetricsConfig('aggregation', aggregation)}
             />
 
             <Divider />

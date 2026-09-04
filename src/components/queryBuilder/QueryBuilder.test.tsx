@@ -3,7 +3,14 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { getCompactFilterColumns, QueryBuilder } from './QueryBuilder';
 import { getDefaultCompactMode } from './CompactModeBar';
 import { Datasource } from 'data/CHDatasource';
-import { BuilderMode, ColumnHint, FilterOperator, OrderByDirection, QueryType, TimeUnit } from 'types/queryBuilder';
+import {
+  BuilderMode,
+  ColumnHint,
+  FilterOperator,
+  OrderByDirection,
+  QueryType,
+  TimeUnit,
+} from 'types/queryBuilder';
 import { setColumnByHint } from 'hooks/useBuilderOptionsState';
 import { CoreApp } from '@grafana/data';
 
@@ -16,7 +23,9 @@ jest.mock('./views/LogsQueryBuilder', () => ({
   ),
 }));
 jest.mock('./views/TimeSeriesQueryBuilder', () => ({
-  TimeSeriesQueryBuilder: () => <div data-testid="time-series-component" />,
+  TimeSeriesQueryBuilder: ({ compact }: { compact?: boolean }) => (
+    <div data-testid="time-series-component" data-compact={compact ? 'true' : 'false'} />
+  ),
 }));
 jest.mock('./views/TraceQueryBuilder', () => ({
   TraceQueryBuilder: ({ builderOptions }: any) => (
@@ -43,6 +52,9 @@ describe('QueryBuilder', () => {
   mockDs.getDefaultTable = jest.fn((_db?: string) => '');
   mockDs.getDefaultTraceDatabase = jest.fn((_db?: string) => '');
   mockDs.getDefaultTraceTable = jest.fn((_db?: string) => '');
+  mockDs.getDefaultMetricsDatabase = jest.fn((_db?: string) => '');
+  mockDs.getDefaultMetricsTable = jest.fn((_db?: string) => '');
+  mockDs.getDefaultMetricsTimeColumn = jest.fn((_db?: string) => '');
   mockDs.getDefaultTraceDurationUnit = jest.fn((_db?: string) => 'ms' as TimeUnit);
   mockDs.getTraceOtelVersion = jest.fn((_db?: string) => '');
   mockDs.getDefaultTraceFlattenNested = jest.fn((_db?: string) => false);
@@ -81,6 +93,123 @@ describe('QueryBuilder', () => {
   it('maps configured signal types to compact modes', () => {
     expect(getDefaultCompactMode('logs')).toBe('otel-logs');
     expect(getDefaultCompactMode('traces')).toBe('otel-traces');
+    expect(getDefaultCompactMode('metrics')).toBe('otel-metrics');
+  });
+
+  it('renders the metrics compact editor with the time-series builder and filter bar', () => {
+    const signalTypeSpy = jest.spyOn(mockDs, 'getSignalType').mockReturnValue('metrics');
+    const singleTableSpy = jest.spyOn(mockDs, 'isSingleTableMode').mockReturnValue(true);
+
+    render(
+      <QueryBuilder
+        app={CoreApp.PanelEditor}
+        builderOptions={{
+          queryType: QueryType.TimeSeries,
+          mode: BuilderMode.Trend,
+          database: 'metrics',
+          table: 'otel_metrics',
+          columns: [{ name: 'Timestamp', hint: ColumnHint.Time }],
+          filters: [],
+        }}
+        builderOptionsDispatch={() => {}}
+        datasource={mockDs}
+        generatedSql=""
+      />
+    );
+
+    expect(screen.getByTestId('time-series-component')).toHaveAttribute('data-compact', 'true');
+    expect(screen.getByTestId('compact-filter-bar')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Order by' })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Search logs')).not.toBeInTheDocument();
+    signalTypeSpy.mockRestore();
+    singleTableSpy.mockRestore();
+  });
+
+  it('does not persist metrics defaults before a time column is available', async () => {
+    const compactDs = {
+      ...mockDs,
+      uid: 'metrics-without-time-column',
+      getSignalType: jest.fn(() => 'metrics'),
+      getConfigMode: jest.fn(() => 'single-table'),
+      isSingleTableMode: jest.fn(() => true),
+      getDefaultMetricsDatabase: jest.fn(() => 'metrics'),
+      getDefaultMetricsTable: jest.fn(() => 'metrics'),
+      getDefaultMetricsTimeColumn: jest.fn(() => ''),
+      fetchColumns: jest.fn(() => Promise.resolve([])),
+    } as unknown as Datasource;
+    const onQueryChange = jest.fn();
+
+    render(
+      <QueryBuilder
+        app={CoreApp.PanelEditor}
+        builderOptions={{
+          queryType: QueryType.Table,
+          mode: BuilderMode.List,
+          database: '',
+          table: '',
+          columns: [],
+          filters: [],
+        }}
+        builderOptionsDispatch={jest.fn()}
+        datasource={compactDs}
+        generatedSql=""
+        onQueryChange={onQueryChange}
+      />
+    );
+
+    await waitFor(() => expect(compactDs.fetchColumns).toHaveBeenCalled());
+    expect(onQueryChange).not.toHaveBeenCalled();
+  });
+
+  it('initializes metrics defaults from the table schema', async () => {
+    const compactDs = {
+      ...mockDs,
+      uid: 'metrics-with-schema',
+      getSignalType: jest.fn(() => 'metrics'),
+      getConfigMode: jest.fn(() => 'single-table'),
+      isSingleTableMode: jest.fn(() => true),
+      getDefaultMetricsDatabase: jest.fn(() => 'metrics'),
+      getDefaultMetricsTable: jest.fn(() => 'metrics'),
+      getDefaultMetricsTimeColumn: jest.fn(() => ''),
+      fetchColumns: jest.fn(() =>
+        Promise.resolve([
+          { name: 'timestamp', type: 'DateTime', picklistValues: [] },
+          { name: 'value', type: 'Float64', picklistValues: [] },
+        ])
+      ),
+    } as unknown as Datasource;
+    const onQueryChange = jest.fn();
+
+    render(
+      <QueryBuilder
+        app={CoreApp.PanelEditor}
+        builderOptions={{
+          queryType: QueryType.Table,
+          mode: BuilderMode.List,
+          database: '',
+          table: '',
+          columns: [],
+          filters: [],
+        }}
+        builderOptionsDispatch={jest.fn()}
+        datasource={compactDs}
+        generatedSql=""
+        onQueryChange={onQueryChange}
+      />
+    );
+
+    await waitFor(() =>
+      expect(onQueryChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: BuilderMode.Aggregate,
+          columns: [
+            { name: 'timestamp', type: 'DateTime', hint: ColumnHint.Time },
+            { name: 'value', type: 'Float64' },
+          ],
+          aggregates: [],
+        })
+      )
+    );
   });
 
   it('renders correctly', async () => {

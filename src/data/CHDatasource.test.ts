@@ -557,6 +557,27 @@ describe('ClickHouseDatasource', () => {
       );
     });
 
+    it('should Fetch Tags From the single-table metrics source when no default database is set', async () => {
+      jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => '$clickhouse_adhoc_query');
+      const frame = arrayToDataFrame([{ name: 'foo', type: 'string', table: 'otel_metrics' }]);
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.defaultDatabase = undefined;
+      ds.settings.jsonData.defaultTable = undefined;
+      ds.settings.jsonData.configMode = 'single-table';
+      ds.settings.jsonData.signalType = 'metrics';
+      ds.settings.jsonData.metrics = { defaultDatabase: 'otel', defaultTable: 'otel_metrics' };
+      const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((_request) => of({ data: [frame] }));
+
+      await ds.getTagKeys();
+      const expected = {
+        rawSql: "SELECT name, type, table FROM system.columns WHERE database IN ('otel') AND table = 'otel_metrics'",
+      };
+
+      expect(spyOnQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ targets: expect.arrayContaining([expect.objectContaining(expected)]) })
+      );
+    });
+
     it('coerces an unset single-table logs database to the literal default', async () => {
       jest.spyOn(templateSrvMock, 'replace').mockImplementation(() => '$clickhouse_adhoc_query');
       const frame = arrayToDataFrame([{ name: 'foo', type: 'string', table: 'otel_logs' }]);
@@ -1123,6 +1144,21 @@ describe('ClickHouseDatasource', () => {
       await ds.fetchUniqueMapKeys('SpanAttributes', 'otel', 'otel_traces');
       const sql = spy.mock.calls[0][0].targets[0].rawSql!;
       expect(sql).toContain(' WHERE "Timestamp" >= now() - INTERVAL 6 HOUR');
+    });
+
+    it('bounds the probe to the configured metrics time column when target matches the metrics table', async () => {
+      const ds = cloneDeep(mockDatasource);
+      ds.settings.jsonData.defaultDatabase = undefined;
+      ds.settings.jsonData.metrics = {
+        defaultTable: 'otel_metrics',
+        timeColumn: 'TimeUnix',
+      };
+      const frame = arrayToDataFrame([{ keys: 'http.method' }]);
+      const spy = jest.spyOn(ds, 'query').mockImplementation(() => of({ data: [frame] }));
+
+      await ds.fetchUniqueMapKeys('Attributes', 'default', 'otel_metrics');
+      const sql = spy.mock.calls[0][0].targets[0].rawSql!;
+      expect(sql).toContain(' WHERE "TimeUnix" >= now() - INTERVAL 6 HOUR');
     });
 
     it('omits the predicate when the target db/table does not match either OTel config', async () => {

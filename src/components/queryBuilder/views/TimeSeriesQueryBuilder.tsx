@@ -32,6 +32,7 @@ interface TimeSeriesQueryBuilderProps {
   datasource: Datasource;
   builderOptions: QueryBuilderOptions;
   builderOptionsDispatch: React.Dispatch<BuilderOptionsReducerAction>;
+  compact?: boolean;
 }
 
 interface TimeSeriesQueryBuilderState {
@@ -46,7 +47,7 @@ interface TimeSeriesQueryBuilderState {
 }
 
 export const TimeSeriesQueryBuilder = (props: TimeSeriesQueryBuilderProps) => {
-  const { datasource, builderOptions, builderOptionsDispatch } = props;
+  const { datasource, builderOptions, builderOptionsDispatch, compact = false } = props;
   const isNewQuery = useIsNewQuery(builderOptions);
   const allColumns = useColumns(datasource, builderOptions.database, builderOptions.table);
   const labels = allLabels.components.TimeSeriesQueryBuilder;
@@ -93,34 +94,40 @@ export const TimeSeriesQueryBuilder = (props: TimeSeriesQueryBuilderProps) => {
 
   return (
     <div>
-      <ModeSwitch
-        labelA={labels.simpleQueryModeLabel}
-        labelB={labels.aggregateQueryModeLabel}
-        value={builderState.isAggregateMode}
-        onChange={onOptionChange('isAggregateMode')}
-        label={labels.builderModeLabel}
-        tooltip={labels.builderModeTooltip}
-      />
+      {!compact && (
+        <ModeSwitch
+          labelA={labels.simpleQueryModeLabel}
+          labelB={labels.aggregateQueryModeLabel}
+          value={builderState.isAggregateMode}
+          onChange={onOptionChange('isAggregateMode')}
+          label={labels.builderModeLabel}
+          tooltip={labels.builderModeTooltip}
+        />
+      )}
 
-      <ColumnRolesHelp
-        text={labels.columnsHelp.text}
-        linkText={labels.columnsHelp.linkText}
-        href={labels.columnsHelp.href}
-        testIdWrapper={allSelectors.QueryBuilder.TimeSeriesQueryBuilder.columnRolesHelp}
-        testIdLink={allSelectors.QueryBuilder.TimeSeriesQueryBuilder.columnRolesHelpLink}
-      />
+      {!compact && (
+        <ColumnRolesHelp
+          text={labels.columnsHelp.text}
+          linkText={labels.columnsHelp.linkText}
+          href={labels.columnsHelp.href}
+          testIdWrapper={allSelectors.QueryBuilder.TimeSeriesQueryBuilder.columnRolesHelp}
+          testIdLink={allSelectors.QueryBuilder.TimeSeriesQueryBuilder.columnRolesHelpLink}
+        />
+      )}
 
-      <ColumnSelect
-        allColumns={allColumns}
-        selectedColumn={builderState.timeColumn}
-        invalid={!builderState.timeColumn}
-        onColumnChange={onOptionChange('timeColumn')}
-        columnFilterFn={columnFilterDateTime}
-        columnHint={ColumnHint.Time}
-        label={labels.timeColumn.label}
-        tooltip={labels.timeColumn.tooltip}
-        clearable={false}
-      />
+      {!compact && (
+        <ColumnSelect
+          allColumns={allColumns}
+          selectedColumn={builderState.timeColumn}
+          invalid={!builderState.timeColumn}
+          onColumnChange={onOptionChange('timeColumn')}
+          columnFilterFn={columnFilterDateTime}
+          columnHint={ColumnHint.Time}
+          label={labels.timeColumn.label}
+          tooltip={labels.timeColumn.tooltip}
+          clearable={false}
+        />
+      )}
 
       {builderState.isAggregateMode ? (
         <>
@@ -136,27 +143,33 @@ export const TimeSeriesQueryBuilder = (props: TimeSeriesQueryBuilderProps) => {
           />
         </>
       ) : (
-        <ColumnsEditor
-          allColumns={allColumns}
-          selectedColumns={builderState.selectedColumns}
-          onSelectedColumnsChange={onOptionChange('selectedColumns')}
-        />
+        !compact && (
+          <ColumnsEditor
+            allColumns={allColumns}
+            selectedColumns={builderState.selectedColumns}
+            onSelectedColumnsChange={onOptionChange('selectedColumns')}
+          />
+        )
       )}
 
-      <OrderByEditor
-        orderByOptions={getOrderByOptions(builderOptions, allColumns)}
-        orderBy={builderState.orderBy}
-        onOrderByChange={onOptionChange('orderBy')}
-      />
-      <LimitEditor limit={builderState.limit} onLimitChange={onOptionChange('limit')} />
-      <FiltersEditor
-        filters={builderState.filters}
-        onFiltersChange={onOptionChange('filters')}
-        allColumns={allColumns}
-        datasource={datasource}
-        database={builderOptions.database}
-        table={builderOptions.table}
-      />
+      {!compact && (
+        <>
+          <OrderByEditor
+            orderByOptions={getOrderByOptions(builderOptions, allColumns)}
+            orderBy={builderState.orderBy}
+            onOrderByChange={onOptionChange('orderBy')}
+          />
+          <LimitEditor limit={builderState.limit} onLimitChange={onOptionChange('limit')} />
+          <FiltersEditor
+            filters={builderState.filters}
+            onFiltersChange={onOptionChange('filters')}
+            allColumns={allColumns}
+            datasource={datasource}
+            database={builderOptions.database}
+            table={builderOptions.table}
+          />
+        </>
+      )}
     </div>
   );
 };
