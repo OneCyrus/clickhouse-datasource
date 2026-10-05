@@ -3,9 +3,18 @@ import {
   buildCompactQueryDefaults,
   isCompactQueryTypeMismatch,
   isDefaultCompactQuery,
+  normalizeCompactMetricsOptions,
   shouldBuildCompactQueryDefaults,
 } from './compactQueryDefaults';
-import { BuilderMode, ColumnHint, OrderByDirection, QueryBuilderOptions, QueryType } from 'types/queryBuilder';
+import {
+  AggregateType,
+  BuilderMode,
+  ColumnHint,
+  FilterOperator,
+  OrderByDirection,
+  QueryBuilderOptions,
+  QueryType,
+} from 'types/queryBuilder';
 import { SignalType } from 'types/config';
 import otel from 'otel';
 
@@ -126,6 +135,16 @@ describe('buildCompactQueryDefaults', () => {
     return mockDs;
   };
 
+  const createMetricsDatasource = (timeColumn = 'Timestamp'): Datasource => {
+    const mockDs = {} as Datasource;
+    mockDs.getDefaultMetricsDatabase = jest.fn(() => 'metrics');
+    mockDs.getDefaultMetricsTable = jest.fn(() => 'otel_metrics');
+    mockDs.getDefaultMetricsTimeColumn = jest.fn(() => timeColumn);
+    mockDs.getDefaultDatabase = jest.fn(() => 'default');
+    mockDs.getDefaultTable = jest.fn(() => '');
+    return mockDs;
+  };
+
   // otel_logs table created by clickhouseexporter before v0.151.0.
   const preV151ColumnNames = [
     'Timestamp',
@@ -182,5 +201,92 @@ describe('buildCompactQueryDefaults', () => {
 
     expect(options.meta?.otelEnabled).toBe(true);
     expect(options.meta?.otelVersion).toBe('latest');
+  });
+
+  it('builds time-series defaults from the configured metrics source', () => {
+    const options = buildCompactQueryDefaults(createMetricsDatasource(), 'metrics');
+
+    expect(options).toMatchObject({
+      database: 'metrics',
+      table: 'otel_metrics',
+      queryType: QueryType.TimeSeries,
+      mode: BuilderMode.Aggregate,
+      columns: [{ name: 'Timestamp', hint: ColumnHint.Time }],
+    });
+    expect(options.filters).toEqual([
+      expect.objectContaining({
+        hint: ColumnHint.Time,
+        operator: FilterOperator.WithInGrafanaTimeRange,
+      }),
+    ]);
+  });
+
+  it('infers a time column and numeric value series from the metrics schema', () => {
+    const options = buildCompactQueryDefaults(
+      createMetricsDatasource(''),
+      'metrics',
+      '',
+      [],
+      [
+        { name: 'Timestamp', type: 'DateTime64(3)', picklistValues: [] },
+        { name: 'service', type: 'String', picklistValues: [] },
+        { name: 'value', type: 'Float64', picklistValues: [] },
+      ]
+    );
+
+    expect(options.mode).toBe(BuilderMode.Aggregate);
+    expect(options.columns).toEqual([
+      { name: 'Timestamp', type: 'DateTime64(3)', hint: ColumnHint.Time },
+      { name: 'value', type: 'Float64' },
+    ]);
+    expect(options.aggregates).toEqual([]);
+  });
+
+  it('uses configured value column for simple mode', () => {
+    const datasource = createMetricsDatasource();
+    datasource.getDefaultMetricsValueColumn = jest.fn(() => 'request_count');
+
+    const options = buildCompactQueryDefaults(datasource, 'metrics');
+
+    expect(options.mode).toBe(BuilderMode.Aggregate);
+    expect(options.columns).toContainEqual({ name: 'request_count' });
+    expect(options.aggregates).toEqual([]);
+  });
+
+  it('unwraps nested ClickHouse numeric types when selecting a value column', () => {
+    const options = buildCompactQueryDefaults(
+      createMetricsDatasource(''),
+      'metrics',
+      '',
+      [],
+      [
+        { name: 'Timestamp', type: 'DateTime', picklistValues: [] },
+        { name: 'value', type: 'LowCardinality(Nullable(Float64))', picklistValues: [] },
+      ]
+    );
+
+    expect(options.mode).toBe(BuilderMode.Aggregate);
+    expect(options.columns).toContainEqual({ name: 'value', type: 'LowCardinality(Nullable(Float64))' });
+    expect(options.aggregates).toEqual([]);
+  });
+
+  it('normalizes saved aggregate metrics queries to simple mode', () => {
+    const options = normalizeCompactMetricsOptions({
+      database: 'metrics',
+      table: 'otel_metrics',
+      queryType: QueryType.TimeSeries,
+      mode: BuilderMode.Trend,
+      columns: [{ name: 'Timestamp', hint: ColumnHint.Time }],
+      aggregates: [{ aggregateType: AggregateType.Average, column: 'value' }],
+      groupBy: ['service'],
+    });
+
+    expect(options.mode).toBe(BuilderMode.Aggregate);
+    expect(options.columns).toEqual([
+      { name: 'Timestamp', hint: ColumnHint.Time },
+      { name: 'value' },
+    ]);
+    expect(options.aggregates).toEqual([]);
+    expect(options.groupBy).toEqual([]);
   });
 });

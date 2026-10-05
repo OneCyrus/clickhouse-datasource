@@ -369,6 +369,56 @@ export default {
           },
         },
       },
+      MetricsConfig: {
+        title: 'Metrics configuration',
+        description: '(Optional) default settings for time-series metric queries',
+        variants: {
+          singleTable: {
+            title: 'Metrics Table & Schema',
+            description: 'Configure the database, table, time column, and default metric series.',
+            database: {
+              label: 'Metrics database',
+              description: 'Database containing the configured metrics table',
+              name: 'defaultDatabase',
+              placeholder: 'default',
+            },
+            table: {
+              label: 'Metrics table',
+              description: 'Specific metrics table queried by this data source',
+              name: 'defaultTable',
+              placeholder: 'table',
+            },
+          },
+        },
+        defaultDatabase: {
+          label: 'Default metrics database',
+          description: 'the default database used by the metrics query builder',
+          name: 'defaultDatabase',
+          placeholder: 'default',
+        },
+        defaultTable: {
+          label: 'Default metrics table',
+          description: 'the default table used by the metrics query builder',
+          name: 'defaultTable',
+          placeholder: 'table',
+        },
+        timeColumn: {
+          label: 'Time column',
+          tooltip: 'Column containing the metric timestamp',
+        },
+        valueColumn: {
+          label: 'Default value column',
+          tooltip: 'Numeric column used as the default metric series',
+        },
+        metricType: {
+          label: 'Metric table type',
+          tooltip: 'Select the OpenTelemetry metric table schema.',
+        },
+        aggregation: {
+          label: 'Default aggregation',
+          tooltip: 'Aggregation used for the default metric series',
+        },
+      },
     },
     EditorTypeSwitcher: {
       label: 'Editor Type',

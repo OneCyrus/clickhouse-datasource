@@ -554,6 +554,10 @@ const generateAggregateTimeSeriesQuery = (_options: QueryBuilderOptions): string
     selectParts.push(`${name}${alias}`);
   });
 
+  if (selectParts.length === 0) {
+    selectParts.push('1');
+  }
+
   const selectPartsSql = selectParts.join(', ');
 
   queryParts.push('SELECT');
@@ -567,12 +571,14 @@ const generateAggregateTimeSeriesQuery = (_options: QueryBuilderOptions): string
     queryParts.push(filterParts);
   }
 
-  queryParts.push('GROUP BY');
-  if ((options.groupBy?.length || 0) > 0) {
-    const groupByTime = timeColumn !== undefined ? `, ${timeColumn.alias}` : '';
-    queryParts.push(`${options.groupBy!.join(', ')}${groupByTime}`);
-  } else if (timeColumn) {
-    queryParts.push(timeColumn.alias!);
+  if ((options.groupBy?.length || 0) > 0 || timeColumn) {
+    queryParts.push('GROUP BY');
+    if ((options.groupBy?.length || 0) > 0) {
+      const groupByTime = timeColumn !== undefined ? `, ${timeColumn.alias}` : '';
+      queryParts.push(`${options.groupBy!.join(', ')}${groupByTime}`);
+    } else if (timeColumn) {
+      queryParts.push(timeColumn.alias!);
+    }
   }
 
   const orderBy = getOrderBy(options);

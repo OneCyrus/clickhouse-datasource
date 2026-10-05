@@ -3,10 +3,35 @@ import otel, {
   defaultTraceTable,
   detectLogsVersion,
   getLatestVersion,
+  getMetricTable,
+  getMetricTypeForTable,
+  metricTables,
   getVersion,
   versions,
 } from 'otel';
-import { ColumnHint } from 'types/queryBuilder';
+import { AggregateType, ColumnHint } from 'types/queryBuilder';
+
+describe('otel metric table mappings', () => {
+  it.each([
+    ['gauge', 'otel_metrics_gauge', 'Value', AggregateType.Average],
+    ['sum', 'otel_metrics_sum', 'Value', AggregateType.Sum],
+    ['histogram', 'otel_metrics_histogram', 'Count', AggregateType.Sum],
+    ['summary', 'otel_metrics_summary', 'Count', AggregateType.Sum],
+    ['exponential_histogram', 'otel_metrics_exponential_histogram', 'Count', AggregateType.Sum],
+  ] as const)('maps %s to its standard table and scalar value', (type, table, valueColumn, aggregation) => {
+    expect(getMetricTable(type)).toMatchObject({ type, table, timeColumn: 'TimeUnix', valueColumn });
+    expect(getMetricTable(type).defaultAggregation).toBe(aggregation);
+  });
+
+  it('defaults an omitted metric type to gauge', () => {
+    expect(getMetricTable()).toBe(metricTables.gauge);
+  });
+
+  it('detects the metric type from a standard table name', () => {
+    expect(getMetricTypeForTable('otel_metrics_histogram')).toBe('histogram');
+    expect(getMetricTypeForTable('custom_metrics')).toBeUndefined();
+  });
+});
 
 describe('otel versions', () => {
   it('exposes 1.2.9, 1.3.0, and a "latest" alias', () => {

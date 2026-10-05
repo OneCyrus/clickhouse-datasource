@@ -31,7 +31,7 @@ import { DataSourceWithBackend, getTemplateSrv, HealthCheckError } from '@grafan
 import { trackClickhouseHealthCheckFailed } from 'tracking';
 import LogsContextPanel from 'components/LogsContextPanel';
 import { cloneDeep, isString } from 'lodash';
-import otel from 'otel';
+import otel, { getMetricTable, getMetricTypeForTable, OtelMetricTableDefinition, OtelMetricType } from 'otel';
 import { createElement as createReactElement, ReactNode } from 'react';
 import { catchError, concatMap, firstValueFrom, Observable, of } from 'rxjs';
 import { CHConfig, ConfigMode, SignalType } from 'types/config';
@@ -967,6 +967,46 @@ export class Datasource
     return this.settings.jsonData.traces?.defaultTable;
   }
 
+  getDefaultMetricsDatabase(): string | undefined {
+    return this.settings.jsonData.metrics?.defaultDatabase;
+  }
+
+  getDefaultMetricsTable(): string | undefined {
+    const metricsConfig = this.settings.jsonData.metrics;
+    return metricsConfig?.defaultTable ||
+      (metricsConfig?.otelEnabled ? getMetricTable(metricsConfig.otelMetricType).table : undefined);
+  }
+
+  getDefaultMetricsType(): OtelMetricType | undefined {
+    const metricsConfig = this.settings.jsonData.metrics;
+    return metricsConfig?.otelMetricType || getMetricTypeForTable(metricsConfig?.defaultTable);
+  }
+
+  getDefaultMetricsTableDefinition(): OtelMetricTableDefinition | undefined {
+    const metricsConfig = this.settings.jsonData.metrics;
+    return metricsConfig?.otelEnabled ? getMetricTable(this.getDefaultMetricsType()) : undefined;
+  }
+
+  getDefaultMetricsTimeColumn(): string | undefined {
+    const metricsConfig = this.settings.jsonData.metrics;
+    if (metricsConfig?.otelEnabled) {
+      return this.getDefaultMetricsTableDefinition()?.timeColumn || 'TimeUnix';
+    }
+    return this.settings.jsonData.metrics?.timeColumn;
+  }
+
+  getDefaultMetricsValueColumn(): string | undefined {
+    const metricsConfig = this.settings.jsonData.metrics;
+    if (metricsConfig?.otelEnabled) {
+      return this.getDefaultMetricsTableDefinition()?.valueColumn || 'Value';
+    }
+    return this.settings.jsonData.metrics?.valueColumn;
+  }
+
+  getDefaultMetricsAggregation(): AggregateType | undefined {
+    return this.settings.jsonData.metrics?.aggregation;
+  }
+
   getDefaultTraceColumns(): Map<ColumnHint, string> {
     const result = new Map<ColumnHint, string>();
     const traceConfig = this.settings.jsonData.traces;
@@ -1153,7 +1193,7 @@ export class Datasource
   }
 
   /**
-   * When the (db, table) matches the configured OTel logs or traces table,
+   * When the (db, table) matches a configured signal table,
    * returns a time-column name suitable for bounding the Map-key probe.
    * Returns undefined for free-form tables where the plugin can't know which
    * column is the time column — those continue to use the bare LIMIT probe.
@@ -1177,6 +1217,11 @@ export class Datasource
         return t;
       }
     }
+    const metricsDb = this.getDefaultMetricsDatabase() || this.getDefaultDatabase();
+    const metricsTable = this.getDefaultMetricsTable() || this.getDefaultTable();
+    if (metricsDb === db && metricsTable === table) {
+      return this.getDefaultMetricsTimeColumn();
+    }
     return undefined;
   }
 
@@ -1186,7 +1231,7 @@ export class Datasource
    * Samples rows to get a unique set of keys for the map. May not include ALL
    * keys for a given dataset.
    *
-   * When the target matches the configured OTel logs/traces table, the probe
+   * When the target matches a configured logs, traces, or metrics table, the probe
    * is bounded to the last 6 hours via the known time column — on a
    * partitioned-by-day MergeTree this prunes to a handful of parts and avoids
    * full-column scans (see #1843). For free-form tables the time column is
@@ -1636,9 +1681,19 @@ export class Datasource
    */
   private getDefaultAdhocSource(): string | undefined {
     if (!this.settings.jsonData.defaultDatabase && this.isSingleTableMode()) {
-      const isTraces = this.getSignalType() === 'traces';
-      const signalDb = isTraces ? this.getDefaultTraceDatabase() : this.getDefaultLogsDatabase();
-      const signalTable = isTraces ? this.getDefaultTraceTable() : this.getDefaultLogsTable();
+      const signalType = this.getSignalType();
+      const signalDb =
+        signalType === 'traces'
+          ? this.getDefaultTraceDatabase()
+          : signalType === 'metrics'
+            ? this.getDefaultMetricsDatabase()
+            : this.getDefaultLogsDatabase();
+      const signalTable =
+        signalType === 'traces'
+          ? this.getDefaultTraceTable()
+          : signalType === 'metrics'
+            ? this.getDefaultMetricsTable()
+            : this.getDefaultLogsTable();
       const table = signalTable || this.getDefaultTable();
       if (table) {
         return `${signalDb || this.getDefaultDatabase()}.${table}`;

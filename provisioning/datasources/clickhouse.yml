@@ -9,6 +9,8 @@ deleteDatasources:
     orgId: 1
   - name: ClickHouse Single Traces
     orgId: 1
+  - name: ClickHouse Single Metrics Gauge
+    orgId: 1
 
 datasources:
   - name: ClickHouse
@@ -89,5 +91,27 @@ datasources:
         traceLinksColumnPrefix: 'Links'
         traceTimestampTableSuffix: '_trace_id_ts'
         otelEnabled: false
+    secureJsonData:
+      # password: ""
+  - name: ClickHouse Single Metrics Gauge
+    uid: clickhouse-e2e-single-metrics-gauge
+    type: grafana-clickhouse-datasource
+    access: proxy
+    url: clickhouse-server
+    orgId: 1
+    jsonData:
+      host: clickhouse-server
+      database: 'e2e_test'
+      username: 'default'
+      port: 9000
+      protocol: native
+      configMode: single-table
+      signalType: metrics
+      metrics:
+        defaultDatabase: 'e2e_test'
+        defaultTable: 'otel_metrics_gauge'
+        timeColumn: 'TimeUnix'
+        valueColumn: 'Value'
+        aggregation: avg
     secureJsonData:
       # password: ""

@@ -33,6 +33,7 @@ import allLabels from 'labels';
 import {
   buildCompactQueryDefaults,
   isCompactQueryTypeMismatch,
+  normalizeCompactMetricsOptions,
   shouldBuildCompactQueryDefaults,
 } from './compactQueryDefaults';
 import { useDefaultLogColumnsByName } from './views/logsQueryBuilderHooks';
@@ -213,18 +214,38 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
     if (lastInitializationKey.current === initializationKey) {
       return;
     }
-    lastInitializationKey.current = initializationKey;
 
-    const nextOptions = buildCompactQueryDefaults(datasource, signalType, builderOptions.table, tableColumnNames);
+    const nextOptions = buildCompactQueryDefaults(
+      datasource,
+      signalType,
+      builderOptions.table,
+      tableColumnNames,
+      allColumns
+    );
+    if (signalType === 'metrics' && !getColumnByHint(nextOptions, ColumnHint.Time)) {
+      return;
+    }
+
+    lastInitializationKey.current = initializationKey;
     if (!isEqual(builderOptions, nextOptions)) {
       builderOptionsDispatch(setAllOptions(nextOptions));
       onQueryChangeRef.current?.(nextOptions);
     }
-  }, [builderOptions, builderOptionsDispatch, datasource, needsInitialization, signalType, tableColumnNames]);
+  }, [
+    allColumns,
+    builderOptions,
+    builderOptionsDispatch,
+    datasource,
+    needsInitialization,
+    signalType,
+    tableColumnNames,
+  ]);
 
   const activeOptions = needsInitialization
-    ? buildCompactQueryDefaults(datasource, signalType, builderOptions.table, tableColumnNames)
-    : builderOptions;
+    ? buildCompactQueryDefaults(datasource, signalType, builderOptions.table, tableColumnNames, allColumns)
+    : signalType === 'metrics'
+      ? normalizeCompactMetricsOptions(builderOptions)
+      : builderOptions;
   const filterColumns = useMemo(() => getCompactFilterColumns(allColumns, activeOptions), [allColumns, activeOptions]);
 
   // Compact defaults take columns from datasource config only, so a non-OTel
@@ -266,6 +287,29 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
       shouldRunQuery
     );
   };
+
+  if (signalType === 'metrics') {
+    return (
+      <div data-testid="query-editor-section-builder">
+        <TimeSeriesQueryBuilder
+          datasource={datasource}
+          builderOptions={activeOptions}
+          builderOptionsDispatch={builderOptionsDispatch}
+          compact
+        />
+        <CompactFilterBar
+          datasource={datasource}
+          database={activeOptions.database}
+          table={activeOptions.table}
+          filters={activeOptions.filters || []}
+          allColumns={filterColumns}
+          selectedColumns={activeOptions.columns || []}
+          onFiltersChange={(filters: Filter[]) => mergeActiveOptions({ filters }, true)}
+        />
+        <SqlPreview sql={generatedSql} compact onEditAsSql={() => onEditAsSql?.(activeOptions)} />
+      </div>
+    );
+  }
 
   return (
     <div data-testid="query-editor-section-builder">
