@@ -33,7 +33,7 @@ jobs:
 
       - name: Build backend
         run: |
-          go build -buildvcs=false -o dist/gpx_clickhouse_linux_amd64 ./pkg
+          CGO_ENABLED=0 go build -buildvcs=false -o dist/gpx_clickhouse_linux_amd64 ./pkg
           chmod +x dist/gpx_clickhouse_linux_amd64
 
       - name: Package
