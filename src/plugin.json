@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
   "type": "datasource",
-  "name": "ClickHouse",
-  "id": "grafana-clickhouse-datasource",
+  "name": "ClickHouse (OneCyrus)",
+  "id": "onecyrus-clickhouse-datasource",
   "metrics": true,
   "backend": true,
   "logs": true,
@@ -56,7 +56,7 @@
   "info": {
     "description": "ClickHouse datasource plugin for Grafana",
     "author": {
-      "name": "Grafana Labs"
+      "name": "OneCyrus"
     },
     "keywords": ["Simple"],
     "logos": {
@@ -65,12 +65,12 @@
     },
     "links": [
       {
-        "name": "Website",
-        "url": "https://github.com/grafana/clickhouse-datasource"
+        "name": "Source",
+        "url": "https://github.com/OneCyrus/clickhouse-datasource"
       },
       {
         "name": "License",
-        "url": "https://github.com/grafana/clickhouse-datasource/blob/master/LICENSE"
+        "url": "https://github.com/OneCyrus/clickhouse-datasource/blob/main/LICENSE"
       }
     ],
     "screenshots": [],

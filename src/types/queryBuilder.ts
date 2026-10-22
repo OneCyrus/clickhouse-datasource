@@ -189,6 +189,11 @@ export enum ColumnHint {
   TraceInstrumentationLibraryName = 'instrumentation_library_name',
   TraceInstrumentationLibraryVersion = 'instrumentation_library_version',
   TraceState = 'trace_state',
+
+  MetricName = 'metric_name',
+  MetricValue = 'metric_value',
+  MetricServiceName = 'metric_service_name',
+  MetricAttributes = 'metric_attributes',
 }
 
 /**

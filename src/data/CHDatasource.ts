@@ -1179,6 +1179,46 @@ export class Datasource
     return this.settings.jsonData.traces?.traceTimestampTableSuffix || otel.traceTimestampTableSuffix;
   }
 
+  getDefaultMetricsDatabase(): string | undefined {
+    return this.settings.jsonData.metrics?.defaultDatabase;
+  }
+
+  getDefaultMetricsTable(): string | undefined {
+    return this.settings.jsonData.metrics?.defaultTable;
+  }
+
+  getDefaultMetricsColumns(): Map<ColumnHint, string> {
+    const result = new Map<ColumnHint, string>();
+    const metricsConfig = this.settings.jsonData.metrics;
+    if (!metricsConfig) {
+      return otel.getLatestVersion().metricsColumnMap;
+    }
+
+    if (metricsConfig.otelEnabled !== false) {
+      const otelConfig = otel.getVersion(metricsConfig.otelVersion || 'latest') || otel.getLatestVersion();
+      return otelConfig.metricsColumnMap;
+    }
+
+    metricsConfig.timeColumn && result.set(ColumnHint.Time, metricsConfig.timeColumn);
+    metricsConfig.metricNameColumn && result.set(ColumnHint.MetricName, metricsConfig.metricNameColumn);
+    metricsConfig.valueColumn && result.set(ColumnHint.MetricValue, metricsConfig.valueColumn);
+    metricsConfig.serviceNameColumn && result.set(ColumnHint.MetricServiceName, metricsConfig.serviceNameColumn);
+    metricsConfig.attributesColumn && result.set(ColumnHint.MetricAttributes, metricsConfig.attributesColumn);
+
+    return result;
+  }
+
+  /**
+   * Get configured OTEL version for metrics. Returns undefined when versioning is disabled/unset.
+   */
+  getMetricsOtelVersion(): string | undefined {
+    const metricsConfig = this.settings.jsonData.metrics;
+    if (!metricsConfig || metricsConfig.otelEnabled === false) {
+      return undefined;
+    }
+    return metricsConfig.otelVersion || 'latest';
+  }
+
   /**
    * Resolves whether the `<table>_trace_id_ts` companion is usable for the
    * trace-ID lookup optimization: it must exist AND expose the Start/End/TraceId

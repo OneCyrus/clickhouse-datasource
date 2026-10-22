@@ -2,6 +2,7 @@ import { ColumnHint, TimeUnit } from 'types/queryBuilder';
 
 export const defaultLogsTable = 'otel_logs';
 export const defaultTraceTable = 'otel_traces';
+export const defaultMetricsTable = 'otel_metrics_gauge';
 
 export const traceTimestampTableSuffix = '_trace_id_ts';
 
@@ -18,6 +19,8 @@ export interface OtelVersion {
   flattenNested: boolean;
   traceEventsColumnPrefix: string;
   traceLinksColumnPrefix: string;
+  metricsTable: string;
+  metricsColumnMap: Map<ColumnHint, string>;
 }
 
 const otel129: OtelVersion = {
@@ -56,6 +59,19 @@ const otel129: OtelVersion = {
   traceDurationUnit: TimeUnit.Nanoseconds,
   traceEventsColumnPrefix: 'Events',
   traceLinksColumnPrefix: 'Links',
+  metricsTable: defaultMetricsTable,
+  // OTel ClickHouse exporter metric tables (gauge/sum/histogram/
+  // exponential_histogram/summary) share these columns. Histogram variants
+  // carry the measured value in Count/Sum instead of Value, so the value
+  // column stays configurable per data source.
+  metricsColumnMap: new Map<ColumnHint, string>([
+    [ColumnHint.Time, 'TimeUnix'],
+    [ColumnHint.MetricName, 'MetricName'],
+    [ColumnHint.MetricValue, 'Value'],
+    [ColumnHint.MetricServiceName, 'ServiceName'],
+    [ColumnHint.MetricAttributes, 'Attributes'],
+    [ColumnHint.ResourceAttributes, 'ResourceAttributes'],
+  ]),
 };
 
 // otel130 tracks the otel_logs schema produced by opentelemetry-collector-contrib's
@@ -114,6 +130,7 @@ export const getVersion = (version: string | undefined): OtelVersion | undefined
 
 export default {
   traceTimestampTableSuffix,
+  defaultMetricsTable,
   versions,
   detectLogsVersion,
   getLatestVersion,

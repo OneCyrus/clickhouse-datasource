@@ -76,3 +76,18 @@ export const getDefaultTraceOrderBy = (): OrderBy[] => [
   { name: '', hint: ColumnHint.Time, dir: OrderByDirection.DESC, default: true },
   { name: '', hint: ColumnHint.TraceDurationTime, dir: OrderByDirection.DESC, default: true },
 ];
+
+export const getDefaultMetricsFilters = (): Filter[] => [
+  {
+    type: 'datetime',
+    operator: FilterOperator.WithInGrafanaTimeRange,
+    filterType: 'custom',
+    key: '',
+    hint: ColumnHint.Time,
+    condition: 'AND',
+  } as DateFilterWithoutValue,
+];
+
+export const getDefaultMetricsOrderBy = (): OrderBy[] => [
+  { name: '', hint: ColumnHint.Time, dir: OrderByDirection.ASC, default: true },
+];

@@ -1,0 +1,51 @@
+name: Build plugin artifact
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build frontend
+        run: |
+          npm ci --include=dev --no-audit --no-fund
+          npm version "${{ steps.ver.outputs.version }}" --no-git-tag-version --allow-same-version
+          npm run build
+
+      - name: Build backend
+        run: |
+          go build -buildvcs=false -o dist/gpx_clickhouse ./pkg
+          chmod +x dist/gpx_clickhouse
+
+      - name: Package
+        run: |
+          mkdir -p out/onecyrus-clickhouse-datasource
+          cp -r dist/. out/onecyrus-clickhouse-datasource/
+          cd out
+          zip -qr "../onecyrus-clickhouse-datasource-${{ steps.ver.outputs.version }}-linux-amd64.zip" onecyrus-clickhouse-datasource
+          cd ..
+          ls -lh onecyrus-clickhouse-datasource-*.zip
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: onecyrus-clickhouse-datasource-*-linux-amd64.zip
+          generate_release_notes: true

@@ -1,8 +1,8 @@
 import { DataSourceJsonData, KeyValue } from '@grafana/data';
-import otel, { defaultLogsTable, defaultTraceTable } from 'otel';
+import otel, { defaultLogsTable, defaultMetricsTable, defaultTraceTable } from 'otel';
 import { TimeUnit } from './queryBuilder';
 
-export type SignalType = 'logs' | 'traces';
+export type SignalType = 'logs' | 'traces' | 'metrics';
 
 /**
  * Configuration mode controls the datasource UI layout:
@@ -42,6 +42,7 @@ export interface CHConfig extends DataSourceJsonData {
 
   logs?: CHLogsConfig;
   traces?: CHTracesConfig;
+  metrics?: CHMetricsConfig;
 
   aliasTables?: AliasTableEntry[];
 
@@ -169,6 +170,20 @@ export interface CHTracesConfig {
   traceTimestampTableSuffix?: string;
 }
 
+export interface CHMetricsConfig {
+  defaultDatabase?: string;
+  defaultTable?: string;
+
+  otelEnabled?: boolean;
+  otelVersion?: string;
+
+  timeColumn?: string;
+  metricNameColumn?: string;
+  valueColumn?: string;
+  serviceNameColumn?: string;
+  attributesColumn?: string;
+}
+
 export interface AliasTableEntry {
   targetDatabase: string;
   targetTable: string;
@@ -192,5 +207,10 @@ export const defaultCHAdditionalSettingsConfig: Partial<CHConfig> = {
     defaultTable: defaultTraceTable,
     otelVersion: otel.getLatestVersion().version,
     durationUnit: TimeUnit.Nanoseconds,
+  },
+  metrics: {
+    defaultTable: defaultMetricsTable,
+    otelEnabled: true,
+    otelVersion: otel.getLatestVersion().version,
   },
 };

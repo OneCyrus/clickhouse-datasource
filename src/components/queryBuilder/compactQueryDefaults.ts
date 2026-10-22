@@ -16,6 +16,8 @@ import otel from 'otel';
 import {
   getDefaultLogsFilters,
   getDefaultLogsOrderBy,
+  getDefaultMetricsFilters,
+  getDefaultMetricsOrderBy,
   getDefaultTraceFilters,
   getDefaultTraceOrderBy,
 } from './defaultQueryOptions';
@@ -48,7 +50,10 @@ export const appendAdditionalLogColumns = (
 };
 
 export const getCompactQueryType = (signalType: SignalType): QueryType => {
-  return signalType === 'logs' ? QueryType.Logs : QueryType.Traces;
+  if (signalType === 'logs') {
+    return QueryType.Logs;
+  }
+  return signalType === 'traces' ? QueryType.Traces : QueryType.TimeSeries;
 };
 
 export const isDefaultCompactQuery = (builderOptions: QueryBuilderOptions): boolean => {
@@ -78,6 +83,13 @@ export const getSingleTableLocation = (
     return {
       database: datasource.getDefaultLogsDatabase() || datasource.getDefaultDatabase(),
       table: datasource.getDefaultLogsTable() || datasource.getDefaultTable() || '',
+    };
+  }
+
+  if (signalType === 'metrics') {
+    return {
+      database: datasource.getDefaultMetricsDatabase() || datasource.getDefaultDatabase(),
+      table: datasource.getDefaultMetricsTable() || datasource.getDefaultTable() || '',
     };
   }
 
@@ -135,7 +147,10 @@ export const isQueryFromOtherSingleTableSource = (
   datasource: Datasource,
   signalType: SignalType
 ): boolean => {
-  const isCompactShaped = builderOptions.queryType === QueryType.Logs || builderOptions.queryType === QueryType.Traces;
+  const isCompactShaped =
+    builderOptions.queryType === QueryType.Logs ||
+    builderOptions.queryType === QueryType.Traces ||
+    (signalType === 'metrics' && builderOptions.queryType === QueryType.TimeSeries);
   const owner = builderOptions.meta?.datasourceUid;
   const { database, table } = getSingleTableLocation(datasource, signalType);
   if (
@@ -259,9 +274,13 @@ export function buildCompactQueryDefaults(
   fallbackTable = '',
   allColumns: readonly TableColumn[] = []
 ): QueryBuilderOptions {
-  return signalType === 'logs'
-    ? buildCompactLogsDefaults(datasource, fallbackTable, allColumns)
-    : buildCompactTracesDefaults(datasource, fallbackTable);
+  if (signalType === 'logs') {
+    return buildCompactLogsDefaults(datasource, fallbackTable, allColumns);
+  }
+  if (signalType === 'traces') {
+    return buildCompactTracesDefaults(datasource, fallbackTable);
+  }
+  return buildCompactMetricsDefaults(datasource, fallbackTable);
 }
 
 const buildCompactLogsDefaults = (
@@ -289,8 +308,7 @@ const buildCompactLogsDefaults = (
   };
 };
 
-const buildCompactTracesDefaults = (datasource: Datasource, fallbackTable: string): QueryBuilderOptions => {
-  const location = getSingleTableLocation(datasource, 'traces');
+const buildCompactTracesDefaults = (datasource: Datasource, fallbackTable: string): QueryBuilderOptions => {  const location = getSingleTableLocation(datasource, 'traces');
   const otelVersion = datasource.getTraceOtelVersion();
 
   return {
@@ -319,6 +337,26 @@ const buildCompactTracesDefaults = (datasource: Datasource, fallbackTable: strin
 // #1900). This mirrors useOtelColumns in logsQueryBuilderHooks. Pinned
 // versions are honoured as-is, and without fetched columns the static latest
 // map from the datasource remains the fallback.
+const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: string): QueryBuilderOptions => {
+  const location = getSingleTableLocation(datasource, 'metrics');
+  const otelVersion = datasource.getMetricsOtelVersion();
+
+  return {
+    database: location.database,
+    table: location.table || fallbackTable,
+    queryType: QueryType.TimeSeries,
+    mode: BuilderMode.Trend,
+    columns: getDefaultColumns(datasource.getDefaultMetricsColumns()),
+    filters: getDefaultMetricsFilters(),
+    orderBy: getDefaultMetricsOrderBy(),
+    limit: 1000,
+    meta: {
+      otelEnabled: Boolean(otelVersion),
+      otelVersion,
+    },
+  };
+};
+
 const getLogsDefaultColumnMap = (
   datasource: Datasource,
   tableColumnNames: readonly string[]
