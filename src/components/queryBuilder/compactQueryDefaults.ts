@@ -2,6 +2,7 @@ import { CoreApp } from '@grafana/data';
 import { isEqual } from 'lodash';
 import { Datasource } from 'data/CHDatasource';
 import {
+  AggregateType,
   BuilderMode,
   ColumnHint,
   QueryBuilderOptions,
@@ -340,6 +341,9 @@ const buildCompactTracesDefaults = (datasource: Datasource, fallbackTable: strin
 const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: string): QueryBuilderOptions => {
   const location = getSingleTableLocation(datasource, 'metrics');
   const otelVersion = datasource.getMetricsOtelVersion();
+  const metricsColumns = datasource.getDefaultMetricsColumns();
+  const valueColumn = metricsColumns.get(ColumnHint.MetricValue) || 'Value';
+  const nameColumn = metricsColumns.get(ColumnHint.MetricName) || 'MetricName';
 
   return {
     database: location.database,
@@ -347,6 +351,9 @@ const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: stri
     queryType: QueryType.TimeSeries,
     mode: BuilderMode.Trend,
     columns: getMetricsDefaultColumns(datasource),
+    // A time series needs a value to plot, and one line per metric name.
+    aggregates: [{ aggregateType: AggregateType.Average, column: valueColumn, alias: valueColumn }],
+    groupBy: [nameColumn],
     filters: getDefaultMetricsFilters(),
     orderBy: getDefaultMetricsOrderBy(),
     limit: 1000,
