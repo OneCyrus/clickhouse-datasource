@@ -346,7 +346,7 @@ const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: stri
     table: location.table || fallbackTable,
     queryType: QueryType.TimeSeries,
     mode: BuilderMode.Trend,
-    columns: getDefaultColumns(datasource.getDefaultMetricsColumns()),
+    columns: getMetricsDefaultColumns(datasource),
     filters: getDefaultMetricsFilters(),
     orderBy: getDefaultMetricsOrderBy(),
     limit: 1000,
@@ -355,6 +355,20 @@ const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: stri
       otelVersion,
     },
   };
+};
+
+const getMetricsDefaultColumns = (datasource: Datasource): SelectedColumn[] => {
+  const columns = getDefaultColumns(datasource.getDefaultMetricsColumns());
+  if (!columns.some((c) => c.hint === ColumnHint.MetricValue)) {
+    columns.push({ name: 'Value', hint: ColumnHint.MetricValue });
+  }
+  if (!columns.some((c) => c.hint === ColumnHint.MetricName)) {
+    columns.push({ name: 'MetricName', hint: ColumnHint.MetricName });
+  }
+  if (!columns.some((c) => c.hint === ColumnHint.Time)) {
+    columns.unshift({ name: 'TimeUnix', hint: ColumnHint.Time });
+  }
+  return columns;
 };
 
 const getLogsDefaultColumnMap = (
