@@ -47,8 +47,24 @@ import { SignalType } from 'types/config';
 import useColumns from 'hooks/useColumns';
 import { CompactModeBar, getDefaultCompactMode } from './CompactModeBar';
 import { CompactFilterBar } from './CompactFilterBar';
-import { MetricPicker } from './MetricPicker';
+import { FilterPicker, FilterPickerWhere } from './FilterPicker';
 import { TablePicker } from './TablePicker';
+
+const POD_COLUMN = 'ResourceAttributes';
+const POD_KEY = '***';
+
+const resolveValueColumn = (_options: unknown, columns: readonly TableColumn[]): string => {
+  const names = columns.map((column) => column.name);
+  if (!names.length) {
+    return 'Value';
+  }
+  for (const candidate of ['Value', 'Sum', 'Count']) {
+    if (names.includes(candidate)) {
+      return candidate;
+    }
+  }
+  return 'Value';
+};
 import { CompactAdvanced } from './CompactAdvanced';
 import { MinIntervalEditor } from 'components/MinIntervalEditor';
 
@@ -378,45 +394,66 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
 
   const metricNameColumn = getColumnByHint(activeOptions, ColumnHint.MetricName)?.name || 'MetricName';
   const serviceNameColumn = getColumnByHint(activeOptions, ColumnHint.MetricServiceName)?.name || 'ServiceName';
-  const serviceFilterValue = (activeOptions.filters || []).find(
-    (filter) => filter.key === serviceNameColumn && filter.type === 'string'
-  )?.value as string | undefined;
-  const onServiceChange = (service: string | undefined) => {
-    const filters = (activeOptions.filters || []).filter((filter) => filter.key !== serviceNameColumn);
-    if (service) {
-      filters.push({
-        type: 'string',
-        operator: FilterOperator.Equals,
-        filterType: 'custom',
-        key: serviceNameColumn,
-        condition: 'AND',
-        value: service,
-      } as StringFilter);
-    }
-    mergeActiveOptions({ filters }, true);
-  };
-  const metricFilterValue = (activeOptions.filters || []).find(
-    (filter) => filter.key === metricNameColumn && filter.type === 'string'
-  )?.value as string | undefined;
-
   const timeColumn = getColumnByHint(activeOptions, ColumnHint.Time)?.name || 'TimeUnix';
-  const valueColumn = getColumnByHint(activeOptions, ColumnHint.MetricValue)?.name || 'Value';
+  const valueColumn = getColumnByHint(activeOptions, ColumnHint.MetricValue)?.name || resolveValueColumn(activeOptions, allColumns);
 
-  // With a metric selected: one line, aliased with the metric name. Without
-  // one: every metric in the table, one line per MetricName (bounded by the
-  // row limit). The query shape has to change with the selection, otherwise
-  // the SQL keeps a stale alias or averages unrelated metrics together.
-  const onMetricChange = async (name: string | undefined) => {
-    const filters = (activeOptions.filters || []).filter((filter) => filter.key !== metricNameColumn);
+  const stringFilter = (column: string, value: string, mapKey?: string): StringFilter =>
+    ({
+      type: 'string',
+      operator: FilterOperator.Equals,
+      filterType: 'custom',
+      key: column,
+      condition: 'AND',
+      value,
+      ...(mapKey ? { mapKey } : {}),
+    }) as StringFilter;
+
+  const filterValue = (column: string, mapKey?: string): string | undefined =>
+    (activeOptions.filters || []).find(
+      (filter) => filter.key === column && filter.type === 'string' && (mapKey ? filter.mapKey === mapKey : !filter.mapKey)
+    )?.value as string | undefined;
+
+  const withoutFilter = (column: string, mapKey?: string): Filter[] =>
+    (activeOptions.filters || []).filter(
+      (filter) => !(filter.key === column && (mapKey ? filter.mapKey === mapKey : !filter.mapKey))
+    );
+
+  const metricFilterValue = filterValue(metricNameColumn);
+  const serviceFilterValue = filterValue(serviceNameColumn);
+  const podFilterValue = filterValue(POD_COLUMN, POD_KEY);
+
+  const cascadingWhere = (): FilterPickerWhere[] => {
+    const where: FilterPickerWhere[] = [];
+    if (metricFilterValue) {
+      where.push({ column: metricNameColumn, value: metricFilterValue });
+    }
+    if (serviceFilterValue) {
+      where.push({ column: serviceNameColumn, value: serviceFilterValue });
+    }
+    return where;
+  };
+
+  // Switching tables changes the schema (summary has Sum/Count, not Value), so
+  // the query is rebuilt from that table's defaults rather than carrying a
+  // column that may not exist.
+  const onTableChange = (table: string | undefined) => {
+    if (!table || table === activeOptions.table) {
+      return;
+    }
+    const fresh = buildCompactQueryDefaults(datasource, signalType, table);
+    const next = { ...fresh, table, meta: { ...fresh.meta, datasourceUid: datasource.uid } };
+    builderOptionsDispatch(setAllOptions(next));
+    onQueryChangeRef.current?.(next);
+    onRunQueryRef.current?.();
+  };
+
+  const onMetricChange = (name: string | undefined) => {
+    const filters = withoutFilter(metricNameColumn).filter(
+      (filter) => !(filter.key === POD_COLUMN && filter.mapKey === POD_KEY)
+    );
+
     if (name) {
-      filters.push({
-        type: 'string',
-        operator: FilterOperator.Equals,
-        filterType: 'custom',
-        key: metricNameColumn,
-        condition: 'AND',
-        value: name,
-      } as StringFilter);
+      filters.push(stringFilter(metricNameColumn, name));
       mergeActiveOptions(
         {
           filters,
@@ -430,22 +467,8 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
       return;
     }
 
-    // No metric selected: show the busiest metrics only, so the chart stays
-    // readable and the row budget is not spent on long-tail series.
-    const topNames = await datasource
-      .fetchTopMetricNames(activeOptions.database, activeOptions.table, 10)
-      .catch(() => [] as string[]);
-    if (topNames.length > 0) {
-      filters.push({
-        type: 'string',
-        operator: FilterOperator.In,
-        filterType: 'custom',
-        key: metricNameColumn,
-        condition: 'AND',
-        value: topNames,
-      } as unknown as StringFilter);
-    }
-
+    const database = activeOptions.database;
+    const table = activeOptions.table;
     mergeActiveOptions(
       {
         filters,
@@ -459,6 +482,45 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
       },
       true
     );
+
+    datasource
+      .fetchTopMetricNames(database, table, 10)
+      .then((names) => {
+        if (!names.length || table !== activeOptions.table) {
+          return;
+        }
+        const withNames = [
+          ...filters,
+          {
+            type: 'string',
+            operator: FilterOperator.In,
+            filterType: 'custom',
+            key: metricNameColumn,
+            condition: 'AND',
+            value: names,
+          } as unknown as StringFilter,
+        ];
+        mergeActiveOptions({ filters: withNames }, true);
+      })
+      .catch(() => undefined);
+  };
+
+  const onServiceChange = (service: string | undefined) => {
+    const filters = withoutFilter(serviceNameColumn).filter(
+      (filter) => !(filter.key === POD_COLUMN && filter.mapKey === POD_KEY)
+    );
+    if (service) {
+      filters.push(stringFilter(serviceNameColumn, service));
+    }
+    mergeActiveOptions({ filters }, true);
+  };
+
+  const onPodChange = (pod: string | undefined) => {
+    const filters = withoutFilter(POD_COLUMN, POD_KEY);
+    if (pod) {
+      filters.push(stringFilter(POD_COLUMN, pod, POD_KEY));
+    }
+    mergeActiveOptions({ filters }, true);
   };
 
   return (
@@ -474,17 +536,19 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
             datasource={datasource}
             database={activeOptions.database}
             value={activeOptions.table}
-            onChange={(table) => table && mergeActiveOptions({ table }, true)}
+            onChange={onTableChange}
           />
-          <MetricPicker
+          <FilterPicker
             datasource={datasource}
             database={activeOptions.database}
             table={activeOptions.table}
             column={metricNameColumn}
+            label="Metric"
+            placeholder="All metrics"
             value={metricFilterValue}
             onChange={onMetricChange}
           />
-          <MetricPicker
+          <FilterPicker
             datasource={datasource}
             database={activeOptions.database}
             table={activeOptions.table}
@@ -492,7 +556,20 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
             label="Service"
             placeholder="All services"
             value={serviceFilterValue}
+            where={metricFilterValue ? [{ column: metricNameColumn, value: metricFilterValue }] : []}
             onChange={onServiceChange}
+          />
+          <FilterPicker
+            datasource={datasource}
+            database={activeOptions.database}
+            table={activeOptions.table}
+            column={POD_COLUMN}
+            mapKey={POD_KEY}
+            label="Instance"
+            placeholder="All instances"
+            value={podFilterValue}
+            where={cascadingWhere()}
+            onChange={onPodChange}
           />
         </div>
       )}

@@ -344,7 +344,12 @@ const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: stri
   const location = getSingleTableLocation(datasource, 'metrics');
   const otelVersion = datasource.getMetricsOtelVersion();
   const metricsColumns = datasource.getDefaultMetricsColumns();
-  const valueColumn = metricsColumns.get(ColumnHint.MetricValue) || 'Value';
+  const configuredValue = metricsColumns.get(ColumnHint.MetricValue) || 'Value';
+  const columnNames = allColumns.map((column) => column.name);
+  const valueColumn =
+    columnNames.length === 0 || columnNames.includes(configuredValue)
+      ? configuredValue
+      : ['Value', 'Sum', 'Count'].find((candidate) => columnNames.includes(candidate)) || configuredValue;
   const nameColumn = metricsColumns.get(ColumnHint.MetricName) || 'MetricName';
   const serviceColumn = metricsColumns.get(ColumnHint.MetricServiceName) || 'ServiceName';
   const timeColumn = metricsColumns.get(ColumnHint.Time) || 'TimeUnix';
