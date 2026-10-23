@@ -1,14 +1,20 @@
 name: Build plugin artifact
 
+# Produces the installable Grafana plugin zip.
+# - push to `onecyrus` -> snapshot artifact (Actions artifact only)
+# - tag v*             -> GitHub release with the zip + checksums
 on:
   push:
+    branches: [onecyrus]
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build:
+    name: Build linux-amd64 plugin
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +29,14 @@ jobs:
 
       - name: Resolve version
         id: ver
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(node -p "require('./package.json').version")-onecyrus.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building ${VERSION}"
 
       - name: Build frontend
         run: |
@@ -38,14 +51,32 @@ jobs:
 
       - name: Package
         run: |
+          set -eu
+          test -f dist/plugin.json
+          test -x dist/gpx_clickhouse_linux_amd64
           mkdir -p out/onecyrus-clickhouse-datasource
           cp -r dist/. out/onecyrus-clickhouse-datasource/
           cd out
-          zip -qr "../onecyrus-clickhouse-datasource-${{ steps.ver.outputs.version }}-linux-amd64.zip" onecyrus-clickhouse-datasource
+          ZIP="onecyrus-clickhouse-datasource-${{ steps.ver.outputs.version }}-linux-amd64.zip"
+          zip -qr "../${ZIP}" onecyrus-clickhouse-datasource
           cd ..
-          ls -lh onecyrus-clickhouse-datasource-*.zip
+          sha256sum "${ZIP}" > "${ZIP}.sha256"
+          ls -lh onecyrus-clickhouse-datasource-*
 
-      - uses: softprops/action-gh-release@v2
+      - name: Upload snapshot artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: onecyrus-clickhouse-datasource-*-linux-amd64.zip
+          name: onecyrus-clickhouse-datasource-${{ steps.ver.outputs.version }}
+          path: |
+            onecyrus-clickhouse-datasource-*.zip
+            onecyrus-clickhouse-datasource-*.zip.sha256
+          retention-days: 30
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            onecyrus-clickhouse-datasource-*.zip
+            onecyrus-clickhouse-datasource-*.zip.sha256
           generate_release_notes: true
