@@ -363,6 +363,9 @@ const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: stri
     ],
     aggregates: [{ aggregateType: AggregateType.Average, column: valueColumn, alias: valueColumn }],
     groupBy: [serviceColumn],
+    // One row per service per bucket: a 1000-row cap truncates a 1h window
+    // with ~36 services to a few minutes, so keep headroom for the range.
+    limit: 10000,
     filters: [
       ...getDefaultMetricsFilters(),
       {
@@ -375,7 +378,6 @@ const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: stri
       } as StringFilter,
     ],
     orderBy: getDefaultMetricsOrderBy(),
-    limit: 1000,
     meta: {
       otelEnabled: Boolean(otelVersion),
       otelVersion,
