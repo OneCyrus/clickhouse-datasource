@@ -354,7 +354,10 @@ const buildCompactMetricsDefaults = (
   // gauge/sum carry Value, histogram/exponential_histogram/summary carry Sum and
   // Count. When the schema is not available yet, derive it from the table name
   // so a table switch does not emit `avg(Value)` against a table without it.
-  const tableName = location.table || fallbackTable;
+  // The compact editor passes the query's own table as fallbackTable, which is
+  // the effective table after a switch; the data source default only applies to
+  // a query that has no table yet.
+  const tableName = fallbackTable || location.table || '';
   const knownValueColumn = /histogram|summary/.test(tableName) ? 'Sum' : configuredValue;
   const valueColumn =
     columnNames.length === 0
@@ -369,7 +372,7 @@ const buildCompactMetricsDefaults = (
 
   return {
     database: location.database,
-    table: location.table || fallbackTable,
+    table: tableName,
     queryType: QueryType.TimeSeries,
     mode: BuilderMode.Trend,
     // A single line for the selected metric keeps the first view readable
