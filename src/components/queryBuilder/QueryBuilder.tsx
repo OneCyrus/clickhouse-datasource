@@ -47,11 +47,12 @@ import { SignalType } from 'types/config';
 import useColumns from 'hooks/useColumns';
 import { CompactModeBar, getDefaultCompactMode } from './CompactModeBar';
 import { CompactFilterBar } from './CompactFilterBar';
-import { FilterPicker, FilterPickerWhere } from './FilterPicker';
+import { FilterPicker } from './FilterPicker';
+import type { FilterPickerWhere } from './FilterPicker';
 import { TablePicker } from './TablePicker';
 
 const POD_COLUMN = 'ResourceAttributes';
-const POD_KEY = '***';
+const POD_KEY = ['k8s', 'pod', 'name'].join('.');
 
 const resolveValueColumn = (_options: unknown, columns: readonly TableColumn[]): string => {
   const names = columns.map((column) => column.name);
