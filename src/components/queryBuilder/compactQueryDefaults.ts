@@ -350,10 +350,18 @@ const buildCompactMetricsDefaults = (
   const metricsColumns = datasource.getDefaultMetricsColumns();
   const configuredValue = metricsColumns.get(ColumnHint.MetricValue) || 'Value';
   const columnNames = allColumns.map((column) => column.name);
+  // The OTel exporter splits metrics across tables with different value columns:
+  // gauge/sum carry Value, histogram/exponential_histogram/summary carry Sum and
+  // Count. When the schema is not available yet, derive it from the table name
+  // so a table switch does not emit `avg(Value)` against a table without it.
+  const tableName = location.table || fallbackTable;
+  const knownValueColumn = /histogram|summary/.test(tableName) ? 'Sum' : configuredValue;
   const valueColumn =
-    columnNames.length === 0 || columnNames.includes(configuredValue)
-      ? configuredValue
-      : ['Value', 'Sum', 'Count'].find((candidate) => columnNames.includes(candidate)) || configuredValue;
+    columnNames.length === 0
+      ? knownValueColumn
+      : columnNames.includes(configuredValue)
+        ? configuredValue
+        : ['Value', 'Sum', 'Count'].find((candidate) => columnNames.includes(candidate)) || knownValueColumn;
   const nameColumn = metricsColumns.get(ColumnHint.MetricName) || 'MetricName';
   const serviceColumn = metricsColumns.get(ColumnHint.MetricServiceName) || 'ServiceName';
   const timeColumn = metricsColumns.get(ColumnHint.Time) || 'TimeUnix';
