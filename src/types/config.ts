@@ -174,6 +174,9 @@ export interface CHMetricsConfig {
   defaultDatabase?: string;
   defaultTable?: string;
 
+  /** Metric plotted when a query is created. */
+  defaultMetricName?: string;
+
   otelEnabled?: boolean;
   otelVersion?: string;
 

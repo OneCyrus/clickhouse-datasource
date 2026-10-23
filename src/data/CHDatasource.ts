@@ -1187,6 +1187,10 @@ export class Datasource
     return this.settings.jsonData.metrics?.defaultTable;
   }
 
+  getDefaultMetricName(): string {
+    return this.settings.jsonData.metrics?.defaultMetricName || 'container.cpu.usage';
+  }
+
   getDefaultMetricsColumns(): Map<ColumnHint, string> {
     const result = new Map<ColumnHint, string>();
     const metricsConfig = this.settings.jsonData.metrics;

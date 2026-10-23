@@ -5,9 +5,11 @@ import {
   AggregateType,
   BuilderMode,
   ColumnHint,
+  FilterOperator,
   QueryBuilderOptions,
   QueryType,
   SelectedColumn,
+  StringFilter,
   TableColumn,
 } from 'types/queryBuilder';
 import { SignalType } from 'types/config';
@@ -344,17 +346,34 @@ const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: stri
   const metricsColumns = datasource.getDefaultMetricsColumns();
   const valueColumn = metricsColumns.get(ColumnHint.MetricValue) || 'Value';
   const nameColumn = metricsColumns.get(ColumnHint.MetricName) || 'MetricName';
+  const serviceColumn = metricsColumns.get(ColumnHint.MetricServiceName) || 'ServiceName';
+  const timeColumn = metricsColumns.get(ColumnHint.Time) || 'TimeUnix';
+  const metricName = datasource.getDefaultMetricName();
 
   return {
     database: location.database,
     table: location.table || fallbackTable,
     queryType: QueryType.TimeSeries,
     mode: BuilderMode.Trend,
-    columns: getMetricsDefaultColumns(datasource),
-    // A time series needs a value to plot, and one line per metric name.
+    // One line per service for the selected metric; the metric filter keeps
+    // the axis comparable instead of mixing every metric in the table.
+    columns: [
+      { name: timeColumn, hint: ColumnHint.Time },
+      { name: serviceColumn, hint: ColumnHint.MetricServiceName },
+    ],
     aggregates: [{ aggregateType: AggregateType.Average, column: valueColumn, alias: valueColumn }],
-    groupBy: [nameColumn],
-    filters: getDefaultMetricsFilters(),
+    groupBy: [serviceColumn],
+    filters: [
+      ...getDefaultMetricsFilters(),
+      {
+        type: 'string',
+        operator: FilterOperator.Equals,
+        filterType: 'custom',
+        key: nameColumn,
+        condition: 'AND',
+        value: metricName,
+      } as StringFilter,
+    ],
     orderBy: getDefaultMetricsOrderBy(),
     limit: 1000,
     meta: {

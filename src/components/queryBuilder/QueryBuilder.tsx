@@ -6,6 +6,7 @@ import {
   QueryType,
   QueryBuilderOptions,
   ColumnHint,
+  FilterOperator,
   StringFilter,
   TableColumn,
 } from 'types/queryBuilder';
@@ -45,6 +46,7 @@ import { SignalType } from 'types/config';
 import useColumns from 'hooks/useColumns';
 import { CompactModeBar, getDefaultCompactMode } from './CompactModeBar';
 import { CompactFilterBar } from './CompactFilterBar';
+import { MetricPicker } from './MetricPicker';
 import { CompactAdvanced } from './CompactAdvanced';
 import { MinIntervalEditor } from 'components/MinIntervalEditor';
 
@@ -372,6 +374,26 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
     );
   };
 
+  const metricNameColumn = getColumnByHint(activeOptions, ColumnHint.MetricName) || 'MetricName';
+  const metricFilterValue = (activeOptions.filters || []).find(
+    (filter) => filter.key === metricNameColumn && filter.type === 'string'
+  )?.value as string | undefined;
+
+  const onMetricChange = (name: string | undefined) => {
+    const filters = (activeOptions.filters || []).filter((filter) => filter.key !== metricNameColumn);
+    if (name) {
+      filters.push({
+        type: 'string',
+        operator: FilterOperator.Equals,
+        filterType: 'custom',
+        key: metricNameColumn,
+        condition: 'AND',
+        value: name,
+      } as StringFilter);
+    }
+    mergeActiveOptions({ filters }, true);
+  };
+
   return (
     <div data-testid="query-editor-section-builder">
       <CompactModeBar
@@ -379,6 +401,16 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
         searchText={activeOptions.meta?.logMessageLike || ''}
         onSearchChange={(logMessageLike) => mergeActiveOptions({ meta: { logMessageLike } }, true)}
       />
+      {signalType === 'metrics' && (
+        <MetricPicker
+          datasource={datasource}
+          database={activeOptions.database}
+          table={activeOptions.table}
+          column={metricNameColumn}
+          value={metricFilterValue}
+          onChange={onMetricChange}
+        />
+      )}
       <CompactFilterBar
         datasource={datasource}
         database={activeOptions.database}
