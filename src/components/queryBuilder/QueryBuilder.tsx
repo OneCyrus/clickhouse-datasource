@@ -51,6 +51,19 @@ import { FilterPicker } from './FilterPicker';
 import type { FilterPickerWhere } from './FilterPicker';
 import { TablePicker } from './TablePicker';
 
+const resolveValueColumn = (columns: readonly TableColumn[]): string => {
+  const names = columns.map((column) => column.name);
+  if (!names.length) {
+    return 'Value';
+  }
+  for (const candidate of ['Value', 'Sum', 'Count']) {
+    if (names.includes(candidate)) {
+      return candidate;
+    }
+  }
+  return 'Value';
+};
+
 const POD_COLUMN = 'ResourceAttributes';
 const POD_KEY = ['k8s', 'pod', 'name'].join('.');
 
@@ -252,6 +265,10 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
   const allColumns = useColumns(datasource, locationOptions.database, locationOptions.table);
   const tableColumnNames = useMemo(() => allColumns.map((column) => column.name), [allColumns]);
 
+  // The numeric column a table actually has: the summary table carries Sum and
+  // Count, not Value, so the defaults must be rebuilt when this changes.
+  const resolvedValueColumn = signalType === 'metrics' ? resolveValueColumn(allColumns) : 'Value';
+
   useEffect(() => {
     onQueryChangeRef.current = onQueryChange;
     onRunQueryRef.current = onRunQuery;
@@ -300,7 +317,7 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
     // with the full column set when the schema loads. Waiting for the schema here
     // instead would deadlock when the fetch fails or the table is empty, since
     // useColumns swallows errors and keeps returning [], and the gate would never lift.
-    const initializationKey = `${datasource.uid}:${signalType}:${builderOptions.table}:${tableColumnNames.length > 0}`;
+    const initializationKey = `${datasource.uid}:${signalType}:${builderOptions.table}:${tableColumnNames.length > 0}:${resolvedValueColumn}`;
     if (lastInitializationKey.current === initializationKey) {
       return;
     }
@@ -429,6 +446,7 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
     if (!table || table === activeOptions.table) {
       return;
     }
+    lastInitializationKey.current = undefined;
     const fresh = buildCompactQueryDefaults(datasource, signalType, table);
     const next = { ...fresh, table, meta: { ...fresh.meta, datasourceUid: datasource.uid } };
     builderOptionsDispatch(setAllOptions(next));
