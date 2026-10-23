@@ -406,7 +406,7 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
   // one: every metric in the table, one line per MetricName (bounded by the
   // row limit). The query shape has to change with the selection, otherwise
   // the SQL keeps a stale alias or averages unrelated metrics together.
-  const onMetricChange = (name: string | undefined) => {
+  const onMetricChange = async (name: string | undefined) => {
     const filters = (activeOptions.filters || []).filter((filter) => filter.key !== metricNameColumn);
     if (name) {
       filters.push({
@@ -428,6 +428,22 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
         true
       );
       return;
+    }
+
+    // No metric selected: show the busiest metrics only, so the chart stays
+    // readable and the row budget is not spent on long-tail series.
+    const topNames = await datasource
+      .fetchTopMetricNames(activeOptions.database, activeOptions.table, 10)
+      .catch(() => [] as string[]);
+    if (topNames.length > 0) {
+      filters.push({
+        type: 'string',
+        operator: FilterOperator.In,
+        filterType: 'custom',
+        key: metricNameColumn,
+        condition: 'AND',
+        value: topNames,
+      } as unknown as StringFilter);
     }
 
     mergeActiveOptions(

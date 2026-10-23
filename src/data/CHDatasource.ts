@@ -1434,6 +1434,16 @@ export class Datasource
     return this.fetchData(rawSql);
   }
 
+  /**
+   * The busiest metric names in a table, used as the default series set when no
+   * metric is selected.
+   */
+  async fetchTopMetricNames(db: string, table: string, limit = 10): Promise<string[]> {
+    const rawSql = `SELECT MetricName FROM ${escapeIdentifier(db)}.${escapeIdentifier(table)} GROUP BY MetricName ORDER BY count() DESC LIMIT ${limit}`;
+    const values = await this.fetchData(rawSql);
+    return values.map((v) => String(v));
+  }
+
   async fetchDistinctValues(column: string, db: string, table: string): Promise<Array<string | number | boolean>> {
     const escapedColumn = escapeIdentifier(column);
     const rawSql = `SELECT DISTINCT ${escapedColumn} FROM ${escapeIdentifier(db)}.${escapeIdentifier(table)} WHERE ${escapedColumn} IS NOT NULL LIMIT 1000`;

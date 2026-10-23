@@ -320,7 +320,9 @@ export interface StringFilter extends CommonFilterProps {
     | FilterOperator.Like
     | FilterOperator.NotLike
     | FilterOperator.ILike
-    | FilterOperator.NotILike;
+    | FilterOperator.NotILike
+    | FilterOperator.In
+    | FilterOperator.NotIn;
   value: string;
 }
 
