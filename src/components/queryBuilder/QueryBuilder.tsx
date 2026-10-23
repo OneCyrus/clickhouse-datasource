@@ -375,6 +375,24 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
   };
 
   const metricNameColumn = getColumnByHint(activeOptions, ColumnHint.MetricName) || 'MetricName';
+  const serviceNameColumn = getColumnByHint(activeOptions, ColumnHint.MetricServiceName) || 'ServiceName';
+  const serviceFilterValue = (activeOptions.filters || []).find(
+    (filter) => filter.key === serviceNameColumn && filter.type === 'string'
+  )?.value as string | undefined;
+  const onServiceChange = (service: string | undefined) => {
+    const filters = (activeOptions.filters || []).filter((filter) => filter.key !== serviceNameColumn);
+    if (service) {
+      filters.push({
+        type: 'string',
+        operator: FilterOperator.Equals,
+        filterType: 'custom',
+        key: serviceNameColumn,
+        condition: 'AND',
+        value: service,
+      } as StringFilter);
+    }
+    mergeActiveOptions({ filters }, true);
+  };
   const metricFilterValue = (activeOptions.filters || []).find(
     (filter) => filter.key === metricNameColumn && filter.type === 'string'
   )?.value as string | undefined;
@@ -402,14 +420,26 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
         onSearchChange={(logMessageLike) => mergeActiveOptions({ meta: { logMessageLike } }, true)}
       />
       {signalType === 'metrics' && (
-        <MetricPicker
-          datasource={datasource}
-          database={activeOptions.database}
-          table={activeOptions.table}
-          column={metricNameColumn}
-          value={metricFilterValue}
-          onChange={onMetricChange}
-        />
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <MetricPicker
+            datasource={datasource}
+            database={activeOptions.database}
+            table={activeOptions.table}
+            column={metricNameColumn}
+            value={metricFilterValue}
+            onChange={onMetricChange}
+          />
+          <MetricPicker
+            datasource={datasource}
+            database={activeOptions.database}
+            table={activeOptions.table}
+            column={serviceNameColumn}
+            label="Service"
+            placeholder="All services"
+            value={serviceFilterValue}
+            onChange={onServiceChange}
+          />
+        </div>
       )}
       <CompactFilterBar
         datasource={datasource}

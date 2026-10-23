@@ -8,6 +8,8 @@ interface MetricPickerProps {
   table: string;
   column: string;
   value?: string;
+  label?: string;
+  placeholder?: string;
   onChange: (metricName: string | undefined) => void;
 }
 
@@ -20,6 +22,8 @@ interface MetricPickerProps {
  */
 export const MetricPicker = (props: MetricPickerProps) => {
   const { datasource, database, table, column, value, onChange } = props;
+  const label = props.label || 'Metric';
+  const placeholder = props.placeholder || 'Select a metric';
   const [names, setNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -55,14 +59,14 @@ export const MetricPicker = (props: MetricPickerProps) => {
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }} data-testid="metric-picker">
-      <span style={{ minWidth: 48, opacity: 0.8 }}>Metric</span>
+      <span style={{ minWidth: 56, opacity: 0.8 }}>{label}</span>
       <Select
-        inputId="metric-picker"
-        aria-label="Metric"
+        inputId={`metric-picker-${column}`}
+        aria-label={label}
         width={48}
         isLoading={loading}
         isClearable
-        placeholder="Select a metric"
+        placeholder={placeholder}
         options={options}
         value={value ? { label: value, value } : null}
         onChange={(option) => onChange(option?.value)}
