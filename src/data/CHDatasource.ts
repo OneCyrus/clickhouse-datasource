@@ -27,6 +27,7 @@ import {
   TimeRange,
   ToggleFilterAction,
   TypedVariableModel,
+  FieldType,
 } from '@grafana/data';
 import { DataSourceWithBackend, getTemplateSrv, HealthCheckError } from '@grafana/runtime';
 import { trackClickhouseHealthCheckFailed } from 'tracking';
@@ -225,6 +226,26 @@ function filterMatchesColumn(f: Filter, resolved: ResolvedColumn): boolean {
   return isStringType(f.type) && sameColumn;
 }
 
+
+const OTEL_UNIT_MAP: Record<string, string> = {
+  By: 'bytes',
+  'By/s': 'Bps',
+  s: 's',
+  ms: 'ms',
+  us: 'µs',
+  ns: 'ns',
+  '%': 'percent',
+  '1': 'none',
+  '{cpu}': 'none',
+};
+
+const mapOtelUnit = (unit?: string): string | undefined => {
+  if (!unit) {
+    return undefined;
+  }
+  return OTEL_UNIT_MAP[unit] ?? (unit.startsWith('{') ? 'none' : undefined);
+};
+
 export class Datasource
   extends DataSourceWithBackend<CHQuery, CHConfig>
   implements
@@ -237,6 +258,7 @@ export class Datasource
   settings: DataSourceInstanceSettings<CHConfig>;
   adHocFilter: AdHocFilter;
   skipAdHocFilter = false; // don't apply adhoc filters to the query
+  private metricUnitCache = new Map<string, { unit?: string; at: number }>();
   adHocFiltersStatus = AdHocFilterStatus.none; // ad hoc filters only work with CH 22.7+
   adHocCHVerReq = { major: 22, minor: 7 };
 
@@ -1750,6 +1772,7 @@ export class Datasource
         concatMap(async (res: DataQueryResponse) => {
           let transformed = await transformQueryResponseWithTraceAndLogLinks(this, request, res);
           transformed = foldDiscoveredLogFieldsIntoLabels(this, request, transformed);
+          transformed = await this.applyMetricUnit(request, transformed);
           if (hasLogsVolumeTargets) {
             return { ...transformed, data: splitLogsVolumeFrames(transformed.data, Datasource.logVolumePrefix) };
           }
@@ -1766,6 +1789,59 @@ export class Datasource
           return of<DataQueryResponse>({ data: [], state: LoadingState.Error, error, errors: [error] });
         })
       );
+  }
+
+  /**
+   * Puts the OTel metric unit on the value fields so the axis is labelled with
+   * bytes, seconds, percent, ... Only applies to a single metric selection: in
+   * the all-metrics view each series has its own unit.
+   */
+  private async applyMetricUnit(request: DataQueryRequest<CHQuery>, res: DataQueryResponse): Promise<DataQueryResponse> {
+    try {
+      if (this.settings.jsonData.signalType !== 'metrics') {
+        return res;
+      }
+      const target = request.targets?.[0] as CHBuilderQuery | undefined;
+      const options = target?.builderOptions;
+      if (!options?.table) {
+        return res;
+      }
+      const metricFilter = (options.filters || []).find(
+        (filter) =>
+          filter.type === 'string' && !filter.mapKey && typeof filter.value === 'string' && filter.value && filter.key
+      );
+      if (!metricFilter || !/metricname/i.test(metricFilter.key)) {
+        return res;
+      }
+      const unit = await this.getMetricUnit(options.database || 'default', options.table, String(metricFilter.value));
+      const grafanaUnit = mapOtelUnit(unit);
+      if (!grafanaUnit) {
+        return res;
+      }
+      for (const frame of res.data || []) {
+        for (const field of frame.fields || []) {
+          if (field.type === FieldType.number) {
+            field.config = { ...field.config, unit: field.config?.unit || grafanaUnit };
+          }
+        }
+      }
+    } catch {
+      // A missing unit must never break the panel.
+    }
+    return res;
+  }
+
+  private async getMetricUnit(db: string, table: string, metric: string): Promise<string | undefined> {
+    const key = `${db}.${table}.${metric}`;
+    const hit = this.metricUnitCache.get(key);
+    if (hit && Date.now() - hit.at < 300_000) {
+      return hit.unit;
+    }
+    const rawSql = `SELECT any(MetricUnit) AS unit FROM ${escapeIdentifier(db)}.${escapeIdentifier(table)} WHERE MetricName = '${escapeCHStringLiteral(metric)}' LIMIT 1`;
+    const values = await this.fetchData(rawSql);
+    const unit = values.length ? String(values[0]) : undefined;
+    this.metricUnitCache.set(key, { unit, at: Date.now() });
+    return unit;
   }
 
   private runQuery(request: Partial<CHQuery>, options?: any): Promise<DataFrame> {
