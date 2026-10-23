@@ -54,18 +54,6 @@ import { TablePicker } from './TablePicker';
 const POD_COLUMN = 'ResourceAttributes';
 const POD_KEY = ['k8s', 'pod', 'name'].join('.');
 
-const resolveValueColumn = (_options: unknown, columns: readonly TableColumn[]): string => {
-  const names = columns.map((column) => column.name);
-  if (!names.length) {
-    return 'Value';
-  }
-  for (const candidate of ['Value', 'Sum', 'Count']) {
-    if (names.includes(candidate)) {
-      return candidate;
-    }
-  }
-  return 'Value';
-};
 import { CompactAdvanced } from './CompactAdvanced';
 import { MinIntervalEditor } from 'components/MinIntervalEditor';
 
@@ -396,7 +384,7 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
   const metricNameColumn = getColumnByHint(activeOptions, ColumnHint.MetricName)?.name || 'MetricName';
   const serviceNameColumn = getColumnByHint(activeOptions, ColumnHint.MetricServiceName)?.name || 'ServiceName';
   const timeColumn = getColumnByHint(activeOptions, ColumnHint.Time)?.name || 'TimeUnix';
-  const valueColumn = getColumnByHint(activeOptions, ColumnHint.MetricValue)?.name || resolveValueColumn(activeOptions, allColumns);
+  const valueColumn = getColumnByHint(activeOptions, ColumnHint.MetricValue)?.name || 'Value';
 
   const stringFilter = (column: string, value: string, mapKey?: string): StringFilter =>
     ({
