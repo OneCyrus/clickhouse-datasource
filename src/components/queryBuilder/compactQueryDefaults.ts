@@ -283,7 +283,7 @@ export function buildCompactQueryDefaults(
   if (signalType === 'traces') {
     return buildCompactTracesDefaults(datasource, fallbackTable);
   }
-  return buildCompactMetricsDefaults(datasource, fallbackTable);
+  return buildCompactMetricsDefaults(datasource, fallbackTable, allColumns);
 }
 
 const buildCompactLogsDefaults = (
@@ -340,7 +340,11 @@ const buildCompactTracesDefaults = (datasource: Datasource, fallbackTable: strin
 // #1900). This mirrors useOtelColumns in logsQueryBuilderHooks. Pinned
 // versions are honoured as-is, and without fetched columns the static latest
 // map from the datasource remains the fallback.
-const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: string): QueryBuilderOptions => {
+const buildCompactMetricsDefaults = (
+  datasource: Datasource,
+  fallbackTable: string,
+  allColumns: readonly TableColumn[] = []
+): QueryBuilderOptions => {
   const location = getSingleTableLocation(datasource, 'metrics');
   const otelVersion = datasource.getMetricsOtelVersion();
   const metricsColumns = datasource.getDefaultMetricsColumns();
