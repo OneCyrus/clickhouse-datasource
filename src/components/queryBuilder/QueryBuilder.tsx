@@ -6,6 +6,7 @@ import {
   QueryType,
   QueryBuilderOptions,
   ColumnHint,
+  AggregateType,
   FilterOperator,
   StringFilter,
   TableColumn,
@@ -47,6 +48,7 @@ import useColumns from 'hooks/useColumns';
 import { CompactModeBar, getDefaultCompactMode } from './CompactModeBar';
 import { CompactFilterBar } from './CompactFilterBar';
 import { MetricPicker } from './MetricPicker';
+import { TablePicker } from './TablePicker';
 import { CompactAdvanced } from './CompactAdvanced';
 import { MinIntervalEditor } from 'components/MinIntervalEditor';
 
@@ -397,6 +399,13 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
     (filter) => filter.key === metricNameColumn && filter.type === 'string'
   )?.value as string | undefined;
 
+  const timeColumn = getColumnByHint(activeOptions, ColumnHint.Time) || 'TimeUnix';
+  const valueColumn = getColumnByHint(activeOptions, ColumnHint.MetricValue) || 'Value';
+
+  // With a metric selected: one line, aliased with the metric name. Without
+  // one: every metric in the table, one line per MetricName (bounded by the
+  // row limit). The query shape has to change with the selection, otherwise
+  // the SQL keeps a stale alias or averages unrelated metrics together.
   const onMetricChange = (name: string | undefined) => {
     const filters = (activeOptions.filters || []).filter((filter) => filter.key !== metricNameColumn);
     if (name) {
@@ -408,8 +417,32 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
         condition: 'AND',
         value: name,
       } as StringFilter);
+      mergeActiveOptions(
+        {
+          filters,
+          columns: [{ name: timeColumn, hint: ColumnHint.Time }],
+          aggregates: [{ aggregateType: AggregateType.Average, column: valueColumn, alias: `"${name}"` }],
+          groupBy: [],
+          limit: 10000,
+        },
+        true
+      );
+      return;
     }
-    mergeActiveOptions({ filters }, true);
+
+    mergeActiveOptions(
+      {
+        filters,
+        columns: [
+          { name: timeColumn, hint: ColumnHint.Time },
+          { name: metricNameColumn, hint: ColumnHint.MetricName },
+        ],
+        aggregates: [{ aggregateType: AggregateType.Average, column: valueColumn, alias: 'Value' }],
+        groupBy: [metricNameColumn],
+        limit: 20000,
+      },
+      true
+    );
   };
 
   return (
@@ -421,6 +454,12 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
       />
       {signalType === 'metrics' && (
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <TablePicker
+            datasource={datasource}
+            database={activeOptions.database}
+            value={activeOptions.table}
+            onChange={(table) => table && mergeActiveOptions({ table }, true)}
+          />
           <MetricPicker
             datasource={datasource}
             database={activeOptions.database}
