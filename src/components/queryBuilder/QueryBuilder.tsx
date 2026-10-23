@@ -376,8 +376,8 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
     );
   };
 
-  const metricNameColumn = getColumnByHint(activeOptions, ColumnHint.MetricName) || 'MetricName';
-  const serviceNameColumn = getColumnByHint(activeOptions, ColumnHint.MetricServiceName) || 'ServiceName';
+  const metricNameColumn = getColumnByHint(activeOptions, ColumnHint.MetricName)?.name || 'MetricName';
+  const serviceNameColumn = getColumnByHint(activeOptions, ColumnHint.MetricServiceName)?.name || 'ServiceName';
   const serviceFilterValue = (activeOptions.filters || []).find(
     (filter) => filter.key === serviceNameColumn && filter.type === 'string'
   )?.value as string | undefined;
@@ -399,8 +399,8 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
     (filter) => filter.key === metricNameColumn && filter.type === 'string'
   )?.value as string | undefined;
 
-  const timeColumn = getColumnByHint(activeOptions, ColumnHint.Time) || 'TimeUnix';
-  const valueColumn = getColumnByHint(activeOptions, ColumnHint.MetricValue) || 'Value';
+  const timeColumn = getColumnByHint(activeOptions, ColumnHint.Time)?.name || 'TimeUnix';
+  const valueColumn = getColumnByHint(activeOptions, ColumnHint.MetricValue)?.name || 'Value';
 
   // With a metric selected: one line, aliased with the metric name. Without
   // one: every metric in the table, one line per MetricName (bounded by the
