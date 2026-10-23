@@ -359,7 +359,7 @@ const buildCompactMetricsDefaults = (datasource: Datasource, fallbackTable: stri
     // (36 services on one axis is noise). Narrow it with a ServiceName filter
     // or the label filters in the query editor.
     columns: [{ name: timeColumn, hint: ColumnHint.Time }],
-    aggregates: [{ aggregateType: AggregateType.Average, column: valueColumn, alias: metricName }],
+    aggregates: [{ aggregateType: AggregateType.Average, column: valueColumn, alias: valueColumn }],
     // One row per service per bucket: a 1000-row cap truncates a 1h window
     // with ~36 services to a few minutes, so keep headroom for the range.
     limit: 10000,
