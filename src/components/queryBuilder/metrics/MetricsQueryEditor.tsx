@@ -264,7 +264,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     };
     const table = tables.value[type] ?? datasource.getConfiguredMetricTables()[type];
     const features: MetricTableFeatures = await datasource.getMetricTableFeatures(database, table).catch(() => ({}));
-    const { jsonAttributes = false, seriesId = false } = features;
+    const jsonAttributes = Boolean(features.jsonAttributes);
     const [labels, reportedQuantiles, metricHealth] = await Promise.all([
       metric?.name
         ? datasource.fetchMetricLabelKeys(database, table, name, jsonAttributes).catch(() => [])
@@ -296,7 +296,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
       table,
       queryType: QueryType.TimeSeries,
       filters,
-      metric: { ...nextMetric, groupBy, jsonAttributes, seriesId, minStep },
+      metric: { ...nextMetric, groupBy, jsonAttributes, minStep },
     });
   };
 

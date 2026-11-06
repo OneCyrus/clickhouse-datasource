@@ -36,7 +36,7 @@ const createDatasource = (): Datasource => {
         { name: 'system.cpu.utilization', type: MetricType.Gauge, unit: '1', description: 'CPU', isMonotonic: false },
       ])
     ),
-    getMetricTableFeatures: jest.fn(() => Promise.resolve({ jsonAttributes: false, seriesId: true })),
+    getMetricTableFeatures: jest.fn(() => Promise.resolve({ jsonAttributes: false })),
     fetchMetricLabelKeys: jest.fn(() => Promise.resolve([{ source: 'attribute', key: 'http.route' }])),
     fetchMetricLabelValues: jest.fn(() => Promise.resolve(['/a', '/b'])),
     fetchSummaryQuantiles: jest.fn(() => Promise.resolve([])),
@@ -106,7 +106,6 @@ describe('MetricsQueryEditor', () => {
       fn: MetricFunction.Rate,
       aggregation: MetricSeriesAggregation.Sum,
       jsonAttributes: false,
-      seriesId: true,
       minStep: 20,
     });
     expect(datasource.getMetricTableFeatures).toHaveBeenCalledWith('otel', 'otel_metrics_sum');

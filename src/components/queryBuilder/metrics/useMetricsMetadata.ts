@@ -88,7 +88,7 @@ const noHealth: MetricHealth = { sharedSeries: 0, series: 0 };
 
 /** Export interval and shared series of the picked metric over the last 15 minutes. */
 export const useMetricHealth = (datasource: Datasource, database: string, table: string, metric?: MetricQuery) => {
-  const features = { jsonAttributes: metric?.jsonAttributes, seriesId: metric?.seriesId };
+  const features = { jsonAttributes: metric?.jsonAttributes };
   return useAsync(
     metric?.name && table ? `${database}.${table}:${metric.type}:${metric.name}:${JSON.stringify(features)}` : '',
     noHealth,

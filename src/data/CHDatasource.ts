@@ -1326,7 +1326,7 @@ export class Datasource
         range: (getTemplateSrv() as any).timeRange,
       } as DataQueryRequest<CHQuery>)
     );
-    const error = response.error || response.errors?.[0];
+    const error = response.errors?.[0];
     if (error) {
       throw new Error(error.message || 'Query failed');
     }
@@ -1381,7 +1381,7 @@ export class Datasource
     }));
   }
 
-  /** The optional features of a metric table: JSON attributes, a SeriesId column. */
+  /** The optional features of a metric table, such as JSON attribute columns. */
   async getMetricTableFeatures(database: string, table: string): Promise<MetricTableFeatures> {
     return getMetricTableFeatures(await this.getColumnsCached(database, table));
   }

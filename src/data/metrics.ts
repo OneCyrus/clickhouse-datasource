@@ -180,37 +180,20 @@ export const getMetricLabelAliases = (labels: readonly MetricLabel[]): string[] 
 export interface MetricTableFeatures {
   /** Attribute columns use the ClickHouse JSON type instead of Map (exporter option `json`). */
   jsonAttributes?: boolean;
-  /** The table has a `SeriesId` column, see seriesIdColumnSql. */
-  seriesId?: boolean;
 }
-
-/** Name of the optional series identity column, see seriesIdColumnSql. */
-export const seriesIdColumn = 'SeriesId';
-
-/**
- * The column to add to the exporter's tables for fast queries on large tables. Identifying the
- * series of each row otherwise means reading and hashing its attribute maps, which is most of the
- * cost of a query. Computed once at insert and stored compactly (sorted hashes compress well).
- */
-export const seriesIdColumnSql = `${seriesIdColumn} UInt64 MATERIALIZED cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) CODEC(ZSTD(1))`;
 
 /** Detects the table features from its column names and types. */
 export const getMetricTableFeatures = (
   columns: ReadonlyArray<{ name: string; type: string }>
 ): MetricTableFeatures => ({
   jsonAttributes: columns.some((c) => c.name === 'Attributes' && c.type.startsWith('JSON')),
-  seriesId: columns.some((c) => c.name === seriesIdColumn),
 });
 
 /**
- * Identifies a series: one combination of resource, scope and data point attributes. Uses the
- * SeriesId column when the table has one, else hashes the attributes (toString lets JSON columns
- * be hashed too).
+ * Identifies a series: one combination of resource, scope and data point attributes. Hashing
+ * keeps window partitions cheap, and toString lets JSON columns be hashed too.
  */
 const getSeriesKeyExpression = (features: MetricTableFeatures = {}): string => {
-  if (features.seriesId) {
-    return seriesIdColumn;
-  }
   const wrap = (column: string) => (features.jsonAttributes ? `toString(${column})` : column);
   return `cityHash64(${wrap('ResourceAttributes')}, ScopeName, ${wrap('ScopeAttributes')}, ${wrap('Attributes')})`;
 };
@@ -319,7 +302,6 @@ export const buildMetricQuery = (
     aggregation: keepAggregation ? previous.aggregation : getDefaultSeriesAggregation(entry.type, fn),
     groupBy: previous?.groupBy || [],
     jsonAttributes: previous?.jsonAttributes,
-    seriesId: previous?.seriesId,
     legend: undefined,
   };
 };

@@ -363,22 +363,11 @@ describe('generateMetricsQuery', () => {
     expect(sql).toContain('max(__q0) AS "http.server.request.duration p90"');
   });
 
-  it('uses the SeriesId column when the table has one', () => {
-    const sql = generateSql(options(metric({ seriesId: true, jsonAttributes: true })));
-    expect(sql).toContain('SeriesId AS __series');
-    expect(sql).not.toContain('cityHash64');
-    expect(
-      getMetricTableFeatures([
-        { name: 'SeriesId', type: 'UInt64' },
-        { name: 'Attributes', type: 'JSON' },
-      ])
-    ).toEqual({
-      jsonAttributes: true,
-      seriesId: true,
+  it('detects JSON attribute columns', () => {
+    expect(getMetricTableFeatures([{ name: 'Attributes', type: 'JSON' }])).toEqual({ jsonAttributes: true });
+    expect(getMetricTableFeatures([{ name: 'Attributes', type: 'Map(LowCardinality(String), String)' }])).toEqual({
+      jsonAttributes: false,
     });
-    expect(getMetricHealthSql('otel', 'g', 'cpu', MetricType.Gauge, { seriesId: true })).toContain(
-      'SeriesId AS series'
-    );
   });
 
   it('hashes JSON attribute columns as strings', () => {

@@ -120,9 +120,10 @@ toStartOfHour(TimeUnix), ...`) and daily partitions: a metric reads only its own
   between runs. Only these groups go through the window function, so memory grows with series x
   buckets, not raw points (24h at 15 minute resolution: 630 MB -> 100 MB). Results are identical to
   the earlier point-by-point window, except that the first bucket is no longer cut off.
-- Identifying series by hashing the attribute maps is most of the remaining cost. An optional
-  `SeriesId` materialized column, detected automatically, makes queries 2-5x faster and reads 6x
-  less (24h by service: 2.6 s -> 1.4 s at 1 minute, 1.6 s -> 0.3 s at 15 minutes).
+- Identifying series by hashing the attribute maps is most of the remaining cost (24h by service:
+  2.6 s at 1 minute, 1.6 s at 15 minutes). A materialized series id column would cut it 2-5x, but
+  needs a schema change, which is out of scope: the plugin works on the exporter's tables as they
+  are.
 - Editor lookups read at most 6 hours (metric list, label keys and values) or the last 15 minutes
   (export interval and shared series check).
 
