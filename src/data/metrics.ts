@@ -15,6 +15,8 @@
  * testable on its own. The data source runs the discovery queries.
  */
 import {
+  Filter,
+  FilterOperator,
   MetricFunction,
   MetricLabel,
   MetricLabelSource,
@@ -22,6 +24,7 @@ import {
   MetricSeriesAggregation,
   MetricType,
   QueryBuilderOptions,
+  QueryType,
 } from 'types/queryBuilder';
 import { CHMetricsConfig } from 'types/config';
 import { defaultMetricsTables, legacyExponentialHistogramTable } from 'otel';
@@ -136,6 +139,76 @@ export const getMetricLabelExpression = (label: MetricLabel, jsonAttributes = fa
     return `ifNull(${buildJSONPathAccess(column, label.key)}, '')`;
   }
   return `${column}[${quoteString(label.key)}]`;
+};
+
+/** The metric label a builder filter reads, or undefined for a filter on another column. */
+export const getFilterMetricLabel = (filter: Filter): MetricLabel | undefined => {
+  const source = (Object.keys(metricAttributeColumns) as Array<keyof typeof metricAttributeColumns>).find(
+    (s) => metricAttributeColumns[s] === filter.key
+  );
+  if (source) {
+    return filter.mapKey ? { source, key: filter.mapKey } : undefined;
+  }
+  return filter.key && !filter.mapKey ? { source: 'column', key: filter.key } : undefined;
+};
+
+/** The name of the dashboard variable a value refers to: `$name`, `${name}`, `${name:format}` or `[[name]]`. */
+export const getVariableName = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const match = /^\$(\w+)$|^\$\{(\w+)(?::[^}]*)?\}$|^\[\[(\w+)(?::[^\]]*)?\]\]$/.exec(value.trim());
+  return match?.[1] ?? match?.[2] ?? match?.[3];
+};
+
+/**
+ * A label filter whose value is a dashboard variable, as SQL. Variables interpolate unquoted for
+ * a single value and as a list for several, so the value goes through `${name:singlequote}` into
+ * an IN list, which works for one, several or all values. When the variable is set to All, the
+ * filter is dropped with $__conditionalAll instead of listing every value.
+ */
+const getVariableFilterSql = (filter: Filter, label: MetricLabel, jsonAttributes?: boolean): string | undefined => {
+  const isEquality = filter.operator === FilterOperator.Equals || filter.operator === FilterOperator.In;
+  const isInequality = filter.operator === FilterOperator.NotEquals || filter.operator === FilterOperator.NotIn;
+  const values: unknown[] = 'value' in filter ? (Array.isArray(filter.value) ? filter.value : [filter.value]) : [];
+  const variables = values.map(getVariableName);
+  if ((!isEquality && !isInequality) || !variables.some(Boolean)) {
+    return undefined;
+  }
+
+  const expression = getMetricLabelExpression(label, jsonAttributes);
+  const items = values.map((value, i) =>
+    variables[i] ? `\${${variables[i]}:singlequote}` : quoteString(String(value))
+  );
+  const condition = `${expression} ${isEquality ? 'IN' : 'NOT IN'} (${items.join(', ')})`;
+  // $__conditionalAll splits its arguments on top level commas, which a label key could contain.
+  if (values.length === 1 && !/[,()]/.test(label.key)) {
+    return `$__conditionalAll(${condition}, $${variables[0]})`;
+  }
+  return condition;
+};
+
+/**
+ * The label filters of a metrics query as SQL, joined with AND. Filters on dashboard variables
+ * get variable-aware SQL; the rest use the builder's filter SQL.
+ */
+export const getMetricFilterSql = (filters: Filter[] = [], jsonAttributes?: boolean): string => {
+  const conditions: string[] = [];
+  const plain: Filter[] = [];
+  for (const filter of filters) {
+    const label = getFilterMetricLabel(filter);
+    const variableSql = label && getVariableFilterSql(filter, label, jsonAttributes);
+    if (variableSql) {
+      conditions.push(`(${variableSql})`);
+    } else {
+      plain.push(filter);
+    }
+  }
+  const plainSql = getFilters({ database: '', table: '', queryType: QueryType.TimeSeries, filters: plain });
+  if (plainSql) {
+    conditions.unshift(`(${plainSql})`);
+  }
+  return conditions.join(' AND ');
 };
 
 /**
@@ -368,9 +441,9 @@ const buildContext = (options: QueryBuilderOptions, metric: MetricQuery, timeCon
   }));
 
   const conditions = [`MetricName = ${quoteString(metric.name)}`, timeCondition];
-  const filters = getFilters(options);
+  const filters = getMetricFilterSql(options.filters, metric.jsonAttributes);
   if (filters) {
-    conditions.push(`(${filters})`);
+    conditions.push(filters);
   }
 
   return {
@@ -790,4 +863,50 @@ export const getMetricHealthSql = (
     `AND ${metricTimeColumn} >= now() - INTERVAL 15 MINUTE` +
     `) GROUP BY series)`
   );
+};
+
+/* ------------------------------------------------------------------------------------------------
+ * Dashboard variable queries, like Prometheus' label_values().
+ * ---------------------------------------------------------------------------------------------- */
+
+/** All metric names in the last 6 hours of the range, across the given metric tables. */
+export const getMetricNamesVariableSql = (database: string, tables: readonly string[]): string => {
+  if (!tables.length) {
+    return '';
+  }
+  const selects = tables.map(
+    (table) =>
+      `SELECT MetricName AS name FROM ${getTableIdentifier(database, table)} WHERE ${discoveryTimeCondition} GROUP BY name`
+  );
+  return `SELECT DISTINCT name FROM (${selects.join(' UNION ALL ')}) ORDER BY name ASC`;
+};
+
+/**
+ * The values of a label in the last 6 hours of the range, optionally for one metric and narrowed
+ * by label filters. Filters may refer to other variables, which chains variables (pods of the
+ * selected $service).
+ */
+export const getMetricLabelValuesVariableSql = (
+  database: string,
+  tables: readonly string[],
+  label: MetricLabel,
+  options: { metricName?: string; filters?: Filter[]; jsonAttributes?: boolean } = {}
+): string => {
+  if (!tables.length || !label.key) {
+    return '';
+  }
+  const conditions = [discoveryTimeCondition];
+  if (options.metricName) {
+    conditions.unshift(`MetricName = ${quoteString(options.metricName)}`);
+  }
+  const filters = getMetricFilterSql(options.filters, options.jsonAttributes);
+  if (filters) {
+    conditions.push(filters);
+  }
+  const expression = `toString(${getMetricLabelExpression(label, options.jsonAttributes)})`;
+  const selects = tables.map(
+    (table) =>
+      `SELECT DISTINCT ${expression} AS value FROM ${getTableIdentifier(database, table)} WHERE ${conditions.join(' AND ')}`
+  );
+  return `SELECT DISTINCT value FROM (${selects.join(' UNION ALL ')}) WHERE value != '' ORDER BY value ASC LIMIT 10000`;
 };

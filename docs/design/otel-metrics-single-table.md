@@ -127,6 +127,17 @@ toStartOfHour(TimeUnix), ...`) and daily partitions: a metric reads only its own
 - Editor lookups read at most 6 hours (metric list, label keys and values) or the last 15 minutes
   (export interval and shared series check).
 
+### Dashboard variables
+
+- Variable types `Label values` (like `label_values()`, optionally for one metric and with label
+  filters) and `Metric names` generate editable SQL over the metric tables, reading at most the
+  last 6 hours of the range.
+- A label filter whose value is a variable becomes `IN (${var:singlequote})`, which works for one,
+  several or all values, wrapped in `$__conditionalAll` so `All` drops the filter. Filters may chain
+  variables (`ServiceName = $service` in a `pod` variable).
+- Verified in Grafana 13.3 with a chained `$service` / `$pod` dashboard: All, one service, two
+  services and one pod return the expected options and series.
+
 ## Follow-ups
 
 - Verify the generated SQL against a live ClickHouse with exporter data in CI (integration test).

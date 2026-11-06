@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
 import { Button, Combobox, ComboboxOption, MultiCombobox, useStyles2 } from '@grafana/ui';
+import { getTemplateSrv } from '@grafana/runtime';
 import { Datasource } from 'data/CHDatasource';
 import { getMetricLabelId, metricAttributeColumns, parseMetricLabelId } from 'data/metrics';
 import { Filter, FilterOperator, MetricLabel } from 'types/queryBuilder';
@@ -26,6 +27,15 @@ const operatorOptions: Array<ComboboxOption<FilterOperator>> = [
   { label: 'contains', value: FilterOperator.Like, description: 'Contains the text' },
   { label: 'does not contain', value: FilterOperator.NotLike, description: 'Does not contain the text' },
 ];
+
+/** The dashboard's variables as `$name`, offered as filter values. Empty outside a dashboard. */
+const getDashboardVariables = (): string[] => {
+  try {
+    return (getTemplateSrv()?.getVariables() || []).map((v) => `$${v.name}`);
+  } catch {
+    return [];
+  }
+};
 
 const isMultiOperator = (operator: FilterOperator) =>
   operator === FilterOperator.In || operator === FilterOperator.NotIn;
@@ -91,15 +101,24 @@ export const MetricLabelFilterEditor = (props: MetricLabelFilterEditorProps) => 
   const loadValues = useMemo(() => {
     let cached: Promise<string[]> | undefined;
     return async (search: string): Promise<Array<ComboboxOption<string>>> => {
-      if (!label || !metricName || !table) {
+      if (!label) {
         return [];
       }
-      cached ??= datasource.fetchMetricLabelValues(database, table, metricName, label, jsonAttributes).catch(() => []);
+      cached ??=
+        metricName && table
+          ? datasource.fetchMetricLabelValues(database, table, metricName, label, jsonAttributes).catch(() => [])
+          : Promise.resolve([]);
       const needle = search.toLowerCase();
-      return (await cached)
-        .filter((v) => !needle || v.toLowerCase().includes(needle))
+      const matches = (v: string) => !needle || v.toLowerCase().includes(needle);
+      // Dashboard variables come first, so a panel can follow the dashboard's selection.
+      const variables = getDashboardVariables()
+        .filter(matches)
+        .map((v) => ({ label: v, value: v, group: 'Dashboard variables' }));
+      const values = (await cached)
+        .filter(matches)
         .slice(0, 500)
-        .map((v) => ({ label: v, value: v }));
+        .map((v) => ({ label: v, value: v, group: 'Values' }));
+      return [...variables, ...values];
     };
   }, [datasource, database, table, metricName, label, jsonAttributes]);
 
