@@ -159,6 +159,12 @@ describe('metric functions', () => {
     const counter = buildMetricQuery({ name: 'c', type: MetricType.Sum, isMonotonic: true }, previous);
     expect(counter.fn).toBe(MetricFunction.Rate);
     expect(counter.aggregation).toBe(MetricSeriesAggregation.Sum);
+
+    // A different kind of metric gets its own default function, even one the previous used.
+    const rateOfCounter = metric({ type: MetricType.Sum, isMonotonic: true, fn: MetricFunction.Rate });
+    expect(buildMetricQuery({ name: 'h', type: MetricType.Histogram }, rateOfCounter).fn).toBe(MetricFunction.Quantile);
+    const histogramRate = metric({ type: MetricType.Histogram, fn: MetricFunction.Rate });
+    expect(buildMetricQuery({ name: 'h2', type: MetricType.Histogram }, histogramRate).fn).toBe(MetricFunction.Rate);
   });
 
   it('names value columns', () => {

@@ -23,6 +23,7 @@ import {
   getDefaultSeriesAggregation,
   getMetricFunctions,
   getMetricLabelId,
+  metricAttributeColumns,
   MetricCatalogEntry,
   metricColumnLabels,
   metricFunctionLabels,
@@ -83,6 +84,47 @@ const describeMetric = (entry: Pick<MetricCatalogEntry, 'type' | 'unit' | 'descr
   const kind =
     entry.type === MetricType.Sum ? (entry.isMonotonic ? 'Counter' : 'Up-down counter') : metricTypeLabels[entry.type];
   return [kind, entry.unit && `unit ${entry.unit}`, entry.description].filter(Boolean).join(' · ');
+};
+
+const attributeSources: Record<string, MetricLabel['source']> = Object.fromEntries(
+  Object.entries(metricAttributeColumns).map(([source, column]) => [column, source as MetricLabel['source']])
+);
+
+/**
+ * Keeps the group by labels and label filters that apply to a metric with the given attribute
+ * keys. Column labels (ServiceName, ScopeName) exist on every metric and are always kept.
+ */
+export const keepSharedLabels = (
+  groupBy: MetricLabel[],
+  filters: Filter[],
+  metricLabels: readonly MetricLabel[]
+): { groupBy: MetricLabel[]; filters: Filter[] } => {
+  const available = new Set(metricLabels.map(getMetricLabelId));
+  const hasLabel = (label: MetricLabel) => label.source === 'column' || available.has(getMetricLabelId(label));
+  return {
+    groupBy: groupBy.filter(hasLabel),
+    filters: filters.filter((filter) => {
+      const source = attributeSources[filter.key];
+      return !source || !filter.mapKey || hasLabel({ source, key: filter.mapKey });
+    }),
+  };
+};
+
+/**
+ * Summaries only hold the quantiles their client reports (for example 0, 0.25, 0.5, 0.75 and 1 for
+ * Go runtime summaries), so asking for another one charts nothing. Keeps the wanted quantiles the
+ * summary reports, else picks its highest quantile below the maximum.
+ */
+export const pickSummaryQuantiles = (wanted: number[], reported: number[]): number[] => {
+  if (!reported.length) {
+    return wanted;
+  }
+  const kept = wanted.filter((q) => reported.includes(q));
+  if (kept.length) {
+    return kept;
+  }
+  const belowMax = reported.filter((q) => q < 1);
+  return [belowMax.length ? Math.max(...belowMax) : Math.max(...reported)];
 };
 
 const formatQuantile = (q: number) => `p${Math.round(q * 10000) / 100}`;
@@ -209,12 +251,25 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     const table = tables.value[type] ?? datasource.getConfiguredMetricTables()[type];
     const jsonAttributes = await datasource.hasJSONMetricAttributes(database, table).catch(() => false);
     const nextMetric = buildMetricQuery(entry, metric?.name ? metric : undefined);
+    if (type === MetricType.Summary && nextMetric.fn === MetricFunction.Quantile) {
+      const reported = await datasource.fetchSummaryQuantiles(database, table, name).catch(() => []);
+      nextMetric.quantiles = pickSummaryQuantiles(nextMetric.quantiles || [], reported);
+    }
+    // Labels the new metric does not have would group or filter on empty values, so only the ones
+    // it shares with the previous metric are kept. When its labels cannot be listed, all are kept.
+    const labels = metric?.name
+      ? await datasource.fetchMetricLabelKeys(database, table, name, jsonAttributes).catch(() => undefined)
+      : undefined;
+    const { groupBy, filters } = labels
+      ? keepSharedLabels(nextMetric.groupBy, builderOptions.filters || [], labels)
+      : { groupBy: nextMetric.groupBy, filters: builderOptions.filters };
     apply({
       ...builderOptions,
       database,
       table,
       queryType: QueryType.TimeSeries,
-      metric: { ...nextMetric, jsonAttributes },
+      filters,
+      metric: { ...nextMetric, groupBy, jsonAttributes },
     });
   };
 

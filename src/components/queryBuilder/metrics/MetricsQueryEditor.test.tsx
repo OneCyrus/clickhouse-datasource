@@ -11,7 +11,7 @@ import {
   QueryType,
 } from 'types/queryBuilder';
 import { selectors } from 'selectors';
-import { MetricsQueryEditor, parseQuantile } from './MetricsQueryEditor';
+import { keepSharedLabels, MetricsQueryEditor, parseQuantile, pickSummaryQuantiles } from './MetricsQueryEditor';
 import { toMetricLabelFilter, getMetricLabelOptions } from './MetricLabelFilterEditor';
 
 const editorSelectors = selectors.components.QueryBuilder.MetricsEditor;
@@ -224,5 +224,29 @@ describe('metric label helpers', () => {
       'attribute:b',
     ]);
     expect(options[1].group).toBe('Resource attributes');
+  });
+});
+
+describe('keepSharedLabels', () => {
+  it('drops group by labels and filters the new metric does not have', () => {
+    const state = { source: 'attribute' as const, key: 'state' };
+    const device = { source: 'attribute' as const, key: 'device' };
+    const service = { source: 'column' as const, key: 'ServiceName' };
+    const stateFilter = toMetricLabelFilter(state, FilterOperator.Equals, 'user');
+    const deviceFilter = toMetricLabelFilter(device, FilterOperator.Equals, 'lo');
+    const serviceFilter = toMetricLabelFilter(service, FilterOperator.Equals, 'grafana');
+    expect(keepSharedLabels([state, device, service], [stateFilter, deviceFilter, serviceFilter], [device])).toEqual({
+      groupBy: [device, service],
+      filters: [deviceFilter, serviceFilter],
+    });
+  });
+});
+
+describe('pickSummaryQuantiles', () => {
+  it('keeps reported quantiles and falls back to the highest one below the maximum', () => {
+    expect(pickSummaryQuantiles([0.5, 0.95], [0, 0.25, 0.5, 0.75, 1])).toEqual([0.5]);
+    expect(pickSummaryQuantiles([0.95], [0, 0.25, 0.5, 0.75, 1])).toEqual([0.75]);
+    expect(pickSummaryQuantiles([0.95], [1])).toEqual([1]);
+    expect(pickSummaryQuantiles([0.95], [])).toEqual([0.95]);
   });
 });

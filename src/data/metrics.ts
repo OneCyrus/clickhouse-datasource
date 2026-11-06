@@ -263,10 +263,12 @@ export const buildMetricQuery = (
   previous?: MetricQuery
 ): MetricQuery => {
   const functions = getMetricFunctions(entry.type, entry.isMonotonic);
-  // Keep the previous function when it applies to the new metric, so switching between similar
-  // metrics (two latency histograms) does not reset the panel.
-  const fn = previous && functions.includes(previous.fn) ? previous.fn : functions[0];
-  const keepAggregation = previous && previous.fn === fn && previous.type === entry.type;
+  // Keep the previous function when switching between metrics of the same kind (two latency
+  // histograms, two counters), so the panel does not reset. A different kind of metric gets its
+  // own default: a histogram picked after a counter shows quantiles, not a count rate.
+  const sameKind = previous?.type === entry.type && Boolean(previous.isMonotonic) === Boolean(entry.isMonotonic);
+  const fn = sameKind && functions.includes(previous.fn) ? previous.fn : functions[0];
+  const keepAggregation = sameKind && previous.fn === fn;
   return {
     name: entry.name,
     type: entry.type,
