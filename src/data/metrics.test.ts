@@ -18,6 +18,7 @@ import {
   getMetricCatalogSql,
   getMetricFunctions,
   getMetricHealthSql,
+  getMetricTableFeatures,
   getMetricLabelAliases,
   getMetricLabelExpression,
   getMetricLabelId,
@@ -262,23 +263,16 @@ describe('generateMetricsQuery', () => {
       groupBy: [route],
     });
 
-    it('computes per-second rates handling resets and delta temporality', () => {
+    it('computes per-second rates per run and bucket, handling resets and delta temporality', () => {
       const sql = generateSql(options(counter, { table: 'otel_metrics_sum' }));
       expect(sql).toBe(
-        'SELECT __time AS time, __label_0 AS "http.route", sum(__d0 / nullIf(__seconds, 0)) AS "http.server.requests" FROM (' +
-          'SELECT $__timeInterval(TimeUnix) AS __time, __label_0, __series, ' +
-          'sum(if(__is_delta, __v0, if(__prev_reset IS NULL, 0, if(__reset >= __prev_reset, __v0 - __prev_v0, __v0)))) AS __d0, ' +
-          "sum(if(__is_delta AND StartTimeUnix > toDateTime(0) AND StartTimeUnix < TimeUnix, dateDiff('millisecond', StartTimeUnix, TimeUnix), dateDiff('millisecond', __prev_time, TimeUnix)) / 1000) AS __seconds FROM (" +
-          "SELECT TimeUnix, Attributes['http.route'] AS __label_0, cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) AS __series, " +
-          'AggregationTemporality = 1 AS __is_delta, Value AS __reset, ' +
-          'lagInFrame(toNullable(Value)) OVER (PARTITION BY cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) ORDER BY TimeUnix ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS __prev_reset, ' +
-          'StartTimeUnix, ' +
-          'lagInFrame(toNullable(TimeUnix)) OVER (PARTITION BY cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) ORDER BY TimeUnix ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS __prev_time, ' +
-          'toFloat64(Value) AS __v0, ' +
-          'lagInFrame(toNullable(toFloat64(Value))) OVER (PARTITION BY cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) ORDER BY TimeUnix ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS __prev_v0 ' +
-          'FROM "otel"."otel_metrics_sum" WHERE MetricName = \'http.server.requests\' ' +
-          'AND TimeUnix >= subtractSeconds($__fromTime, greatest($__interval_s, 600)) AND TimeUnix <= $__toTime' +
-          ') WHERE TimeUnix >= $__fromTime GROUP BY __time, __label_0, __series' +
+        'SELECT __time AS time, __label_0 AS "http.route", sum(__d0 / nullIf(__seconds, 0)) AS "http.server.requests"' +
+          '' +
+          '' +
+          " FROM (SELECT __time, __label_0, __series, sum(__in0 + if(NOT __is_delta AND __prev0 IS NOT NULL, if(__first0 >= __prev0, __first0 - __prev0, __first0), 0)) AS __d0, sum(__secs + if(NOT __is_delta AND __prev0 IS NOT NULL, dateDiff('millisecond', __prev_t, __first_t) / 1000, 0)) AS __seconds FROM (SELECT *, lagInFrame(toNullable(__last0)) OVER w AS __prev0, lagInFrame(toNullable(__last_t)) OVER w AS __prev_t FROM (SELECT $__timeInterval(TimeUnix) AS __time, Attributes['http.route'] AS __label_0, cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) AS __series, if(AggregationTemporality = 1, toDateTime(0), StartTimeUnix) AS __run, any(AggregationTemporality = 1) AS __is_delta, if(__is_delta, sum(toFloat64(Value)), deltaSumTimestamp(toFloat64(Value), toUnixTimestamp64Nano(toDateTime64(TimeUnix, 9)))) AS __in0, argMin(toFloat64(Value), TimeUnix) AS __first0, argMax(toFloat64(Value), TimeUnix) AS __last0, min(TimeUnix) AS __first_t, max(TimeUnix) AS __last_t, if(__is_delta, sum(if(StartTimeUnix > toDateTime(0) AND StartTimeUnix < TimeUnix, dateDiff('millisecond', StartTimeUnix, TimeUnix), 0) / 1000), dateDiff('millisecond', __first_t, __last_t) / 1000) AS __secs" +
+          ' FROM "otel"."otel_metrics_sum" WHERE MetricName = \'http.server.requests\' AND TimeUnix >= subtractSeconds($__fromTime, greatest($__interval_s, 600)) AND TimeUnix <= $__toTime GROUP BY __time, __label_0, __series, __run)' +
+          ' WINDOW w AS (PARTITION BY __series ORDER BY __first_t ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW))' +
+          ' WHERE __time >= $__timeInterval($__fromTime) GROUP BY __time, __label_0, __series' +
           ') GROUP BY __time, __label_0 ORDER BY time ASC'
       );
     });
@@ -293,30 +287,41 @@ describe('generateMetricsQuery', () => {
       const sql = generateSql(
         options({ ...counter, type: MetricType.Histogram, isMonotonic: undefined }, { table: 'otel_metrics_histogram' })
       );
-      expect(sql).toContain('Count AS __reset');
-      expect(sql).toContain('toFloat64(Count) AS __v0');
+      expect(sql).toContain(
+        'deltaSumTimestamp(toFloat64(Count), toUnixTimestamp64Nano(toDateTime64(TimeUnix, 9)))) AS __in0'
+      );
+      expect(sql).not.toContain('__first1');
     });
 
     it('rates the sum of histograms with resets detected on the count', () => {
       const sql = generateSql(
         options({ ...counter, type: MetricType.Histogram, fn: MetricFunction.SumRate }, { table: 'h' })
       );
-      expect(sql).toContain('Count AS __reset');
-      expect(sql).toContain('toFloat64(Sum) AS __v0');
+      expect(sql).toContain(
+        'deltaSumTimestamp(toFloat64(Sum), toUnixTimestamp64Nano(toDateTime64(TimeUnix, 9)))) AS __in0'
+      );
+      // Resets are detected on the count, tracked as the second value.
+      expect(sql).toContain('argMin(toFloat64(Count), TimeUnix) AS __first1');
+      expect(sql).toContain('if(__first1 >= __prev1, __first0 - __prev0, __first0)');
     });
 
     it('divides summed sums by summed counts for the average value', () => {
       const sql = generateSql(
         options({ ...counter, type: MetricType.ExponentialHistogram, fn: MetricFunction.AvgValue }, { table: 'e' })
       );
-      expect(sql).toContain('toFloat64(Sum) AS __v0');
-      expect(sql).toContain('toFloat64(Count) AS __v1');
+      expect(sql).toContain(
+        'deltaSumTimestamp(toFloat64(Sum), toUnixTimestamp64Nano(toDateTime64(TimeUnix, 9)))) AS __in0'
+      );
+      expect(sql).toContain(
+        'deltaSumTimestamp(toFloat64(Count), toUnixTimestamp64Nano(toDateTime64(TimeUnix, 9)))) AS __in1'
+      );
       expect(sql).toContain('sum(__d0) / nullIf(sum(__d1), 0) AS "http.server.requests"');
     });
 
     it('treats summaries as cumulative', () => {
       const sql = generateSql(options({ ...counter, type: MetricType.Summary }, { table: 's' }));
-      expect(sql).toContain('0 AS __is_delta');
+      expect(sql).toContain('any(0) AS __is_delta');
+      expect(sql).toContain('if(0, toDateTime(0), StartTimeUnix) AS __run');
       expect(sql).not.toContain('AggregationTemporality');
     });
   });
@@ -328,8 +333,10 @@ describe('generateMetricsQuery', () => {
         { table: 'otel_metrics_histogram' }
       )
     );
-    expect(sql).toContain('sumForEach(if(__is_delta, __b,');
-    expect(sql).toContain('any(ExplicitBounds) AS __bounds');
+    expect(sql).toContain("argMax(CAST(BucketCounts, 'Array(Float64)'), TimeUnix) AS __last_b");
+    expect(sql).toContain('lagInFrame(__last_b) OVER w AS __prev_b');
+    expect(sql).toContain('any(__point_bounds) AS __bounds');
+    expect(sql).toContain('GROUP BY __time, __label_0, __series, __run');
     expect(sql).toContain('arrayFirstIndex(c -> c >= 0.5 * __total, __cum) AS __i0');
     expect(sql).toContain('arrayFirstIndex(c -> c >= 0.99 * __total, __cum) AS __i1');
     expect(sql).toContain(`${histogramQuantileExpression(0.5, '__i0')} AS "p50"`);
@@ -356,6 +363,24 @@ describe('generateMetricsQuery', () => {
     expect(sql).toContain('max(__q0) AS "http.server.request.duration p90"');
   });
 
+  it('uses the SeriesId column when the table has one', () => {
+    const sql = generateSql(options(metric({ seriesId: true, jsonAttributes: true })));
+    expect(sql).toContain('SeriesId AS __series');
+    expect(sql).not.toContain('cityHash64');
+    expect(
+      getMetricTableFeatures([
+        { name: 'SeriesId', type: 'UInt64' },
+        { name: 'Attributes', type: 'JSON' },
+      ])
+    ).toEqual({
+      jsonAttributes: true,
+      seriesId: true,
+    });
+    expect(getMetricHealthSql('otel', 'g', 'cpu', MetricType.Gauge, { seriesId: true })).toContain(
+      'SeriesId AS series'
+    );
+  });
+
   it('hashes JSON attribute columns as strings', () => {
     const sql = generateSql(options(metric({ jsonAttributes: true, groupBy: [route] })));
     expect(sql).toContain(
@@ -371,9 +396,9 @@ describe('discovery queries', () => {
     expect(sql).toBe(
       'SELECT name, type, unit, description, monotonic FROM (' +
         "SELECT MetricName AS name, 'gauge' AS type, any(MetricUnit) AS unit, any(MetricDescription) AS description, toUInt8(0) AS monotonic " +
-        'FROM "otel"."g" WHERE TimeUnix >= $__fromTime AND TimeUnix <= $__toTime GROUP BY MetricName UNION ALL ' +
+        'FROM "otel"."g" WHERE TimeUnix >= greatest($__fromTime, subtractHours($__toTime, 6)) AND TimeUnix <= $__toTime GROUP BY MetricName UNION ALL ' +
         "SELECT MetricName AS name, 'sum' AS type, any(MetricUnit) AS unit, any(MetricDescription) AS description, max(toUInt8(IsMonotonic)) AS monotonic " +
-        'FROM "otel"."s" WHERE TimeUnix >= $__fromTime AND TimeUnix <= $__toTime GROUP BY MetricName' +
+        'FROM "otel"."s" WHERE TimeUnix >= greatest($__fromTime, subtractHours($__toTime, 6)) AND TimeUnix <= $__toTime GROUP BY MetricName' +
         ') ORDER BY name ASC, type ASC LIMIT 10000'
     );
     expect(getMetricCatalogSql('otel', {})).toBe('');
@@ -384,14 +409,16 @@ describe('discovery queries', () => {
     expect(sql).toContain("arrayMap(k -> ('attribute', k), groupUniqArrayArray(1000)(mapKeys(Attributes)))");
     expect(sql).toContain("arrayMap(k -> ('resource', k), groupUniqArrayArray(1000)(mapKeys(ResourceAttributes)))");
     expect(sql).toContain("arrayMap(k -> ('scope', k), groupUniqArrayArray(1000)(mapKeys(ScopeAttributes)))");
-    expect(sql).toContain("WHERE MetricName = 'cpu' AND TimeUnix >= $__fromTime");
+    expect(sql).toContain(
+      "WHERE MetricName = 'cpu' AND TimeUnix >= greatest($__fromTime, subtractHours($__toTime, 6))"
+    );
     expect(getMetricLabelKeysSql('otel', 'g', 'cpu', true)).toContain('JSONAllPaths(Attributes)');
   });
 
   it('lists label values', () => {
     expect(getMetricLabelValuesSql('otel', 'g', 'cpu', route)).toBe(
       'SELECT DISTINCT toString(Attributes[\'http.route\']) AS value FROM "otel"."g" ' +
-        "WHERE MetricName = 'cpu' AND TimeUnix >= $__fromTime AND TimeUnix <= $__toTime AND value != '' ORDER BY value ASC LIMIT 1000"
+        "WHERE MetricName = 'cpu' AND TimeUnix >= greatest($__fromTime, subtractHours($__toTime, 6)) AND TimeUnix <= $__toTime AND value != '' ORDER BY value ASC LIMIT 1000"
     );
   });
 

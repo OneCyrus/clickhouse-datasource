@@ -100,6 +100,13 @@ export const metricTimeColumn = 'TimeUnix';
 const timeRangeCondition = `${metricTimeColumn} >= $__fromTime AND ${metricTimeColumn} <= $__toTime`;
 
 /**
+ * The editor's lookups (metric list, label keys and values) read at most the last 6 hours of the
+ * dashboard range, like the plugin's other key discovery probes. On a 30 day range they would
+ * otherwise read every row of every metric table just to fill a drop-down.
+ */
+const discoveryTimeCondition = `${metricTimeColumn} >= greatest($__fromTime, subtractHours($__toTime, 6)) AND ${metricTimeColumn} <= $__toTime`;
+
+/**
  * Counters need the point before each bucket to compute its increase, so rows are read from a
  * little before the time range: at least one interval, and at least 10 minutes to cover common
  * export intervals when the dashboard interval is shorter.
@@ -169,12 +176,42 @@ export const getMetricLabelAliases = (labels: readonly MetricLabel[]): string[] 
   });
 };
 
+/** Optional capabilities of a metric table, detected from its columns. */
+export interface MetricTableFeatures {
+  /** Attribute columns use the ClickHouse JSON type instead of Map (exporter option `json`). */
+  jsonAttributes?: boolean;
+  /** The table has a `SeriesId` column, see seriesIdColumnSql. */
+  seriesId?: boolean;
+}
+
+/** Name of the optional series identity column, see seriesIdColumnSql. */
+export const seriesIdColumn = 'SeriesId';
+
 /**
- * Identifies a series: one combination of resource, scope and data point attributes. Hashing
- * keeps window partitions cheap, and toString lets JSON columns be hashed too.
+ * The column to add to the exporter's tables for fast queries on large tables. Identifying the
+ * series of each row otherwise means reading and hashing its attribute maps, which is most of the
+ * cost of a query. Computed once at insert and stored compactly (sorted hashes compress well).
  */
-const getSeriesKeyExpression = (jsonAttributes = false): string => {
-  const wrap = (column: string) => (jsonAttributes ? `toString(${column})` : column);
+export const seriesIdColumnSql = `${seriesIdColumn} UInt64 MATERIALIZED cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) CODEC(ZSTD(1))`;
+
+/** Detects the table features from its column names and types. */
+export const getMetricTableFeatures = (
+  columns: ReadonlyArray<{ name: string; type: string }>
+): MetricTableFeatures => ({
+  jsonAttributes: columns.some((c) => c.name === 'Attributes' && c.type.startsWith('JSON')),
+  seriesId: columns.some((c) => c.name === seriesIdColumn),
+});
+
+/**
+ * Identifies a series: one combination of resource, scope and data point attributes. Uses the
+ * SeriesId column when the table has one, else hashes the attributes (toString lets JSON columns
+ * be hashed too).
+ */
+const getSeriesKeyExpression = (features: MetricTableFeatures = {}): string => {
+  if (features.seriesId) {
+    return seriesIdColumn;
+  }
+  const wrap = (column: string) => (features.jsonAttributes ? `toString(${column})` : column);
   return `cityHash64(${wrap('ResourceAttributes')}, ScopeName, ${wrap('ScopeAttributes')}, ${wrap('Attributes')})`;
 };
 
@@ -282,6 +319,7 @@ export const buildMetricQuery = (
     aggregation: keepAggregation ? previous.aggregation : getDefaultSeriesAggregation(entry.type, fn),
     groupBy: previous?.groupBy || [],
     jsonAttributes: previous?.jsonAttributes,
+    seriesId: previous?.seriesId,
     legend: undefined,
   };
 };
@@ -357,7 +395,7 @@ const buildContext = (options: QueryBuilderOptions, metric: MetricQuery, timeCon
     table: getTableIdentifier(options.database, options.table),
     where: conditions.join(' AND '),
     labels,
-    seriesKey: getSeriesKeyExpression(metric.jsonAttributes),
+    seriesKey: getSeriesKeyExpression(metric),
     valueAliases: getMetricValueAliases(metric),
   };
 };
@@ -402,34 +440,35 @@ const generateValueQuery = (options: QueryBuilderOptions, metric: MetricQuery): 
 };
 
 /** The time bucket of a point: the dashboard interval, but never shorter than the metric's minStep. */
-export const timeBucketExpression = (metric: MetricQuery): string =>
+export const timeBucketExpression = (metric: MetricQuery, time: string = metricTimeColumn): string =>
   metric.minStep && metric.minStep > 0
-    ? `toStartOfInterval(toDateTime(${metricTimeColumn}), INTERVAL greatest($__interval_s, ${Math.round(metric.minStep)}) second)`
-    : `$__timeInterval(${metricTimeColumn})`;
+    ? `toStartOfInterval(toDateTime(${time}), INTERVAL greatest($__interval_s, ${Math.round(metric.minStep)}) second)`
+    : `$__timeInterval(${time})`;
 
 /** Delta temporality points hold the increase themselves; cumulative ones need the previous point. */
 const hasTemporality = (type: MetricType): boolean => type !== MetricType.Summary && type !== MetricType.Gauge;
 const isDeltaExpression = (type: MetricType): string => (hasTemporality(type) ? 'AggregationTemporality = 1' : '0');
 
 /**
- * Counters: monotonic sums, and the Count and Sum of histograms and summaries.
+ * Counters (monotonic sums, and the Count and Sum of histograms and summaries) are computed per run
+ * of a series and time bucket first, so the work after reading scales with series x buckets, not
+ * with the raw points of the range.
  *
- * Cumulative points are turned into increases with the previous point of the same series
- * (lagInFrame). A drop of the reset column (the value itself, or the Count of a histogram) marks a
- * counter reset, after which the new value is the increase, as in PromQL. Delta points are their
- * own increase. The first point of a series has no previous one, so rows are read from slightly
- * before the time range.
+ * A run is the points sharing one StartTimeUnix: OTel starts a new one when a counter restarts.
+ * Inside a run the increase is exact (deltaSumTimestamp). Between consecutive runs or buckets of a
+ * series, the first value is compared with the previous last value: a drop of the reset column
+ * (the value itself, or the Count of a histogram) is a counter reset, after which the new value is
+ * the increase, as in PromQL. Delta points are their own increase. Rows are read from slightly
+ * before the time range, so the first bucket has a previous value.
+ *
+ * Rates divide by the seconds the increase covers (from the previous point, or a delta point's own
+ * start to end), not by the bucket width, so they stay right when the dashboard interval is shorter
+ * than the export interval.
  */
-/**
- * The seconds an increase covers: the time since the previous point of the series, or for a
- * delta point its own start to end. Rates divide by the summed covered time rather than by the
- * bucket width, so they stay right when the dashboard interval is shorter than the export
- * interval and a bucket holds only some of the points (or one point covering several buckets).
- */
-const coveredSecondsExpression =
-  `if(__is_delta AND StartTimeUnix > toDateTime(0) AND StartTimeUnix < ${metricTimeColumn}, ` +
-  `dateDiff('millisecond', StartTimeUnix, ${metricTimeColumn}), ` +
-  `dateDiff('millisecond', __prev_time, ${metricTimeColumn})) / 1000`;
+const pointOrder = `toUnixTimestamp64Nano(toDateTime64(${metricTimeColumn}, 9))`;
+const runKey = (type: MetricType) => `if(${isDeltaExpression(type)}, toDateTime(0), StartTimeUnix) AS __run`;
+const deltaPointSeconds = `if(StartTimeUnix > toDateTime(0) AND StartTimeUnix < ${metricTimeColumn}, dateDiff('millisecond', StartTimeUnix, ${metricTimeColumn}), 0) / 1000`;
+const runWindow = 'WINDOW w AS (PARTITION BY __series ORDER BY __first_t ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)';
 
 const generateCounterQuery = (
   options: QueryBuilderOptions,
@@ -439,33 +478,45 @@ const generateCounterQuery = (
   combine: (deltas: string[], seconds: string) => string
 ): string => {
   const ctx = buildContext(options, metric, readFromBeforeRangeCondition);
-  const window = `OVER (PARTITION BY ${ctx.seriesKey} ORDER BY ${metricTimeColumn} ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)`;
+  // First and last values are tracked for each value and the reset column (often the value itself).
+  const tracked = values.includes(resetColumn) ? values : [...values, resetColumn];
+  const reset = tracked.indexOf(resetColumn);
 
-  const withPrevious = `SELECT ${join([
-    metricTimeColumn,
+  const perRun = `SELECT ${join([
+    `${timeBucketExpression(metric)} AS __time`,
     ...innerLabels(ctx),
     `${ctx.seriesKey} AS __series`,
-    `${isDeltaExpression(metric.type)} AS __is_delta`,
-    `${resetColumn} AS __reset`,
-    `lagInFrame(toNullable(${resetColumn})) ${window} AS __prev_reset`,
-    'StartTimeUnix',
-    `lagInFrame(toNullable(${metricTimeColumn})) ${window} AS __prev_time`,
-    ...values.flatMap((value, index) => [
-      `toFloat64(${value}) AS __v${index}`,
-      `lagInFrame(toNullable(toFloat64(${value}))) ${window} AS __prev_v${index}`,
+    runKey(metric.type),
+    `any(${isDeltaExpression(metric.type)}) AS __is_delta`,
+    ...values.map(
+      (value, i) =>
+        `if(__is_delta, sum(toFloat64(${value})), deltaSumTimestamp(toFloat64(${value}), ${pointOrder})) AS __in${i}`
+    ),
+    ...tracked.flatMap((value, i) => [
+      `argMin(toFloat64(${value}), ${metricTimeColumn}) AS __first${i}`,
+      `argMax(toFloat64(${value}), ${metricTimeColumn}) AS __last${i}`,
     ]),
-  ])} FROM ${ctx.table} WHERE ${ctx.where}`;
+    `min(${metricTimeColumn}) AS __first_t`,
+    `max(${metricTimeColumn}) AS __last_t`,
+    `if(__is_delta, sum(${deltaPointSeconds}), dateDiff('millisecond', __first_t, __last_t) / 1000) AS __secs`,
+  ])} FROM ${ctx.table} WHERE ${ctx.where} GROUP BY ${join(['__time', ...labelRefs(ctx), '__series', '__run'])}`;
 
+  const withPrevious = `SELECT *, ${join([
+    ...tracked.map((_, i) => `lagInFrame(toNullable(__last${i})) OVER w AS __prev${i}`),
+    'lagInFrame(toNullable(__last_t)) OVER w AS __prev_t',
+  ])} FROM (${perRun}) ${runWindow}`;
+
+  const continued = `NOT __is_delta AND __prev${reset} IS NOT NULL`;
   const perSeries = `SELECT ${join([
-    `${timeBucketExpression(metric)} AS __time`,
+    '__time',
     ...labelRefs(ctx),
     '__series',
     ...values.map(
-      (_, index) =>
-        `sum(if(__is_delta, __v${index}, if(__prev_reset IS NULL, 0, if(__reset >= __prev_reset, __v${index} - __prev_v${index}, __v${index})))) AS __d${index}`
+      (_, i) =>
+        `sum(__in${i} + if(${continued}, if(__first${reset} >= __prev${reset}, __first${i} - __prev${i}, __first${i}), 0)) AS __d${i}`
     ),
-    `sum(${coveredSecondsExpression}) AS __seconds`,
-  ])} FROM (${withPrevious}) WHERE ${metricTimeColumn} >= $__fromTime GROUP BY ${join([
+    `sum(__secs + if(${continued}, dateDiff('millisecond', __prev_t, __first_t) / 1000, 0)) AS __seconds`,
+  ])} FROM (${withPrevious}) WHERE __time >= ${timeBucketExpression(metric, '$__fromTime')} GROUP BY ${join([
     '__time',
     ...labelRefs(ctx),
     '__series',
@@ -475,7 +526,7 @@ const generateCounterQuery = (
     ctx,
     [
       combine(
-        values.map((_, index) => `__d${index}`),
+        values.map((_, i) => `__d${i}`),
         '__seconds'
       ),
     ],
@@ -485,34 +536,44 @@ const generateCounterQuery = (
 
 const generateHistogramQuantileQuery = (options: QueryBuilderOptions, metric: MetricQuery): string => {
   const ctx = buildContext(options, metric, readFromBeforeRangeCondition);
-  const window = `OVER (PARTITION BY ${ctx.seriesKey} ORDER BY ${metricTimeColumn} ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)`;
   const buckets = "CAST(BucketCounts, 'Array(Float64)')";
+  const minus = (a: string, b: string) => `arrayMap((x, i) -> greatest(x - ${b}[i], 0.), ${a}, arrayEnumerate(${a}))`;
 
-  const withPrevious = `SELECT ${join([
-    metricTimeColumn,
-    'ExplicitBounds',
+  const perRun = `SELECT ${join([
+    `${timeBucketExpression(metric)} AS __time`,
     ...innerLabels(ctx),
-    `${isDeltaExpression(metric.type)} AS __is_delta`,
-    'Count AS __reset',
-    `lagInFrame(toNullable(Count)) ${window} AS __prev_reset`,
-    `${buckets} AS __b`,
-    `lagInFrame(${buckets}) ${window} AS __prev_b`,
-  ])} FROM ${ctx.table} WHERE ${ctx.where}`;
+    `${ctx.seriesKey} AS __series`,
+    runKey(metric.type),
+    `any(${isDeltaExpression(metric.type)}) AS __is_delta`,
+    'any(ExplicitBounds) AS __point_bounds',
+    `deltaSumTimestamp(toFloat64(Count), ${pointOrder}) AS __count_in`,
+    `argMin(toFloat64(Count), ${metricTimeColumn}) AS __first_count`,
+    `argMax(toFloat64(Count), ${metricTimeColumn}) AS __last_count`,
+    `argMin(${buckets}, ${metricTimeColumn}) AS __first_b`,
+    `argMax(${buckets}, ${metricTimeColumn}) AS __last_b`,
+    `sumForEach(${buckets}) AS __sum_b`,
+    `min(${metricTimeColumn}) AS __first_t`,
+  ])} FROM ${ctx.table} WHERE ${ctx.where} GROUP BY ${join(['__time', ...labelRefs(ctx), '__series', '__run'])}`;
 
-  // Bucket increases since the previous point. Indexing __prev_b instead of zipping both arrays
-  // keeps a change in the number of buckets from failing the query: it reads as a reset.
-  const bucketDelta =
-    'if(__is_delta, __b, if(__prev_reset IS NULL, arrayMap(x -> 0., __b), ' +
-    'if(__reset >= __prev_reset AND length(__prev_b) = length(__b), ' +
-    'arrayMap((x, i) -> greatest(x - __prev_b[i], 0.), __b, arrayEnumerate(__b)), __b)))';
+  const withPrevious = `SELECT *, lagInFrame(toNullable(__last_count)) OVER w AS __prev_count, lagInFrame(__last_b) OVER w AS __prev_b FROM (${perRun}) ${runWindow}`;
+
+  // Bucket increases of a run plus those since the previous run or bucket of the series. A change in
+  // the number of buckets reads as a reset; indexing instead of zipping keeps it from failing.
+  const inRun = `if(__is_delta, __sum_b, if(__count_in = __last_count - __first_count, ${minus('__last_b', '__first_b')}, __last_b))`;
+  const sincePrevious =
+    `if(__is_delta OR __prev_count IS NULL, arrayMap(x -> 0., __first_b), ` +
+    `if(__first_count >= __prev_count AND length(__prev_b) = length(__first_b), ${minus('__first_b', '__prev_b')}, __first_b))`;
 
   // Buckets of all series in a group add up, which is how histograms aggregate correctly.
   const perGroup = `SELECT ${join([
-    `${timeBucketExpression(metric)} AS __time`,
+    '__time',
     ...labelRefs(ctx),
-    `sumForEach(${bucketDelta}) AS __counts`,
-    'any(ExplicitBounds) AS __bounds',
-  ])} FROM (${withPrevious}) WHERE ${metricTimeColumn} >= $__fromTime GROUP BY ${join(['__time', ...labelRefs(ctx)])}`;
+    `sumForEach(arrayMap((x, i) -> x + (${sincePrevious})[i], ${inRun}, arrayEnumerate(${inRun}))) AS __counts`,
+    'any(__point_bounds) AS __bounds',
+  ])} FROM (${withPrevious}) WHERE __time >= ${timeBucketExpression(metric, '$__fromTime')} GROUP BY ${join([
+    '__time',
+    ...labelRefs(ctx),
+  ])}`;
 
   // Cumulative counts and the index of the bucket holding each quantile, named so the
   // interpolation below stays readable in the SQL editor.
@@ -639,7 +700,7 @@ export interface MetricCatalogEntry {
 }
 
 /**
- * Lists the metrics with data in the dashboard time range, across every metric table. MetricName
+ * Lists the metrics with data in the last 6 hours of the dashboard range, across every metric table. MetricName
  * is the second sorting key of the exporter tables and a LowCardinality column, so this reads
  * little data.
  */
@@ -651,7 +712,7 @@ export const getMetricCatalogSql = (database: string, tables: MetricTables): str
       return (
         `SELECT MetricName AS name, ${quoteString(type)} AS type, any(MetricUnit) AS unit, ` +
         `any(MetricDescription) AS description, ${monotonic} AS monotonic ` +
-        `FROM ${getTableIdentifier(database, tables[type]!)} WHERE ${timeRangeCondition} GROUP BY MetricName`
+        `FROM ${getTableIdentifier(database, tables[type]!)} WHERE ${discoveryTimeCondition} GROUP BY MetricName`
       );
     });
 
@@ -680,7 +741,7 @@ export const getMetricLabelKeysSql = (
   return (
     `SELECT tupleElement(label, 1) AS source, tupleElement(label, 2) AS key FROM (` +
     `SELECT arrayJoin(arrayConcat(${sources.join(', ')})) AS label ` +
-    `FROM ${getTableIdentifier(database, table)} WHERE MetricName = ${quoteString(metricName)} AND ${timeRangeCondition}` +
+    `FROM ${getTableIdentifier(database, table)} WHERE MetricName = ${quoteString(metricName)} AND ${discoveryTimeCondition}` +
     `) ORDER BY source ASC, key ASC`
   );
 };
@@ -696,7 +757,7 @@ export const getMetricLabelValuesSql = (
   const expression = getMetricLabelExpression(label, jsonAttributes);
   return (
     `SELECT DISTINCT toString(${expression}) AS value FROM ${getTableIdentifier(database, table)} ` +
-    `WHERE MetricName = ${quoteString(metricName)} AND ${timeRangeCondition} AND value != '' ` +
+    `WHERE MetricName = ${quoteString(metricName)} AND ${discoveryTimeCondition} AND value != '' ` +
     `ORDER BY value ASC LIMIT 1000`
   );
 };
@@ -704,7 +765,7 @@ export const getMetricLabelValuesSql = (
 /** Lists the quantiles a summary metric reports. */
 export const getSummaryQuantilesSql = (database: string, table: string, metricName: string): string =>
   `SELECT DISTINCT arrayJoin(ValueAtQuantiles.Quantile) AS quantile FROM ${getTableIdentifier(database, table)} ` +
-  `WHERE MetricName = ${quoteString(metricName)} AND ${timeRangeCondition} ORDER BY quantile ASC LIMIT 100`;
+  `WHERE MetricName = ${quoteString(metricName)} AND ${discoveryTimeCondition} ORDER BY quantile ASC LIMIT 100`;
 
 export interface MetricHealth {
   /** Typical seconds between two points of a series, undefined without recent data. */
@@ -732,7 +793,7 @@ export const getMetricHealthSql = (
   table: string,
   metricName: string,
   type: MetricType,
-  jsonAttributes = false
+  features: MetricTableFeatures = {}
 ): string => {
   const window = `OVER (PARTITION BY series ORDER BY ${metricTimeColumn} ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)`;
   const cumulative = type === MetricType.Gauge ? '0' : hasTemporality(type) ? 'AggregationTemporality = 2' : '1';
@@ -740,7 +801,7 @@ export const getMetricHealthSql = (
     `SELECT quantile(0.9)(series_gap) AS export_interval, countIf(odd >= 3 AND odd * 4 >= points) AS shared_series, ` +
     `count() AS series FROM (` +
     `SELECT series, medianIf(gap, gap > 0) AS series_gap, count() AS points, countIf(gap = 0 OR start_changed) AS odd FROM (` +
-    `SELECT ${getSeriesKeyExpression(jsonAttributes)} AS series, ` +
+    `SELECT ${getSeriesKeyExpression(features)} AS series, ` +
     `dateDiff('second', lagInFrame(toNullable(${metricTimeColumn})) ${window}, ${metricTimeColumn}) AS gap, ` +
     `${cumulative} AND gap IS NOT NULL AND StartTimeUnix != lagInFrame(StartTimeUnix) ${window} AS start_changed ` +
     `FROM ${getTableIdentifier(database, table)} WHERE MetricName = ${quoteString(metricName)} ` +

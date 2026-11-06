@@ -107,6 +107,25 @@ restarting instance, two replicas without `service.instance.id`):
   duplicates or out of order). The editor detects them (repeated timestamps, or cumulative start
   times changing every minute) and warns, pointing to `service.instance.id`.
 
+### Performance on large tables
+
+Benchmarked on 51.8M rows in the exporter's schema (2,000 series of one counter plus noise metrics
+over 24 hours):
+
+- `MetricName` and time filters prune well through the sorting key (`ServiceName, MetricName,
+toStartOfHour(TimeUnix), ...`) and daily partitions: a metric reads only its own granules, and a
+  `ServiceName` filter cuts reads by another 20x.
+- Counters and histograms aggregate per series, run (`StartTimeUnix`) and time bucket while
+  reading, with exact increases inside a run (`deltaSumTimestamp`) and value-based reset handling
+  between runs. Only these groups go through the window function, so memory grows with series x
+  buckets, not raw points (24h at 15 minute resolution: 630 MB -> 100 MB). Results are identical to
+  the earlier point-by-point window, except that the first bucket is no longer cut off.
+- Identifying series by hashing the attribute maps is most of the remaining cost. An optional
+  `SeriesId` materialized column, detected automatically, makes queries 2-5x faster and reads 6x
+  less (24h by service: 2.6 s -> 1.4 s at 1 minute, 1.6 s -> 0.3 s at 15 minutes).
+- Editor lookups read at most 6 hours (metric list, label keys and values) or the last 15 minutes
+  (export interval and shared series check).
+
 ## Follow-ups
 
 - Verify the generated SQL against a live ClickHouse with exporter data in CI (integration test).
@@ -114,5 +133,5 @@ restarting instance, two replicas without `service.instance.id`):
 - Heatmap output for histograms (bucket counts per interval).
 - Exemplars: link from points to traces via `Exemplars.TraceId`.
 - Ad hoc filters for metrics dashboards (map `key` to the three attribute maps).
-- Optional query-time pre-aggregation (materialized views or projections per minute) for long
-  ranges on large deployments.
+- Pre-aggregated rollup tables (for example per-minute materialized views) for ranges of weeks or
+  months on large deployments, picked automatically by range.

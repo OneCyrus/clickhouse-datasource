@@ -248,6 +248,22 @@ When **Configuration mode** is set to **Single source** and **Signal type** is s
 
 Leave the table names empty to use the exporter defaults. Tables that don't exist are skipped, and the `otel_metrics_exponential_histogram` table of older exporter versions is found automatically. Both the `Map` and the `JSON` (exporter option `json: true`) attribute column types are supported.
 
+#### Performance on large tables
+
+Metrics queries filter on `MetricName` and the time range, which the exporter's sorting key and daily partitions serve well, and they aggregate per series and time bucket as they read, so memory grows with series × buckets rather than with raw points.
+
+Most of the remaining cost is identifying the series of each row, which means reading and hashing its attribute maps. For large tables, add a `SeriesId` column to each metric table. The editor detects it when you pick a metric and then uses it instead, which made queries 2 to 5 times faster and read about 6 times less data in our tests:
+
+```sql
+ALTER TABLE otel_metrics_sum ADD COLUMN SeriesId UInt64 MATERIALIZED cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) CODEC(ZSTD(1));
+-- Fill it for existing rows (optional, new rows get it on insert):
+ALTER TABLE otel_metrics_sum MATERIALIZE COLUMN SeriesId;
+```
+
+Repeat for the gauge, histogram, exponential histogram, and summary tables. The column takes little space, since sorted hashes compress well. Queries saved before the column existed keep hashing the attributes until you pick their metric again.
+
+The metric list and the label key and value suggestions read at most the last 6 hours of the dashboard time range.
+
 The query editor of a metrics data source is described in [Metrics query mode](/docs/plugins/grafana-clickhouse-datasource/<CLICKHOUSE_PLUGIN_VERSION>/query-editor/#metrics-query-mode).
 
 ### OTel schema versions

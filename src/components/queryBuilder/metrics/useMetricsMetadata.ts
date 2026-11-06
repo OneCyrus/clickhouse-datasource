@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Datasource } from 'data/CHDatasource';
 import { MetricCatalogEntry, MetricHealth, MetricTables } from 'data/metrics';
-import { MetricLabel, MetricType } from 'types/queryBuilder';
+import { MetricLabel, MetricQuery } from 'types/queryBuilder';
 
 interface AsyncState<T> {
   value: T;
@@ -87,16 +87,11 @@ export const useSummaryQuantiles = (
 const noHealth: MetricHealth = { sharedSeries: 0, series: 0 };
 
 /** Export interval and shared series of the picked metric over the last 15 minutes. */
-export const useMetricHealth = (
-  datasource: Datasource,
-  database: string,
-  table: string,
-  metricName: string,
-  type: MetricType,
-  jsonAttributes: boolean | undefined
-) =>
-  useAsync(
-    metricName && table ? `${database}.${table}:${type}:${metricName}:${Boolean(jsonAttributes)}` : '',
+export const useMetricHealth = (datasource: Datasource, database: string, table: string, metric?: MetricQuery) => {
+  const features = { jsonAttributes: metric?.jsonAttributes, seriesId: metric?.seriesId };
+  return useAsync(
+    metric?.name && table ? `${database}.${table}:${metric.type}:${metric.name}:${JSON.stringify(features)}` : '',
     noHealth,
-    () => datasource.fetchMetricHealth(database, table, metricName, type, jsonAttributes)
+    () => datasource.fetchMetricHealth(database, table, metric!.name, metric!.type, features)
   );
+};

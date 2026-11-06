@@ -27,6 +27,7 @@ import {
   metricAttributeColumns,
   MetricCatalogEntry,
   metricColumnLabels,
+  MetricTableFeatures,
   metricFunctionLabels,
   metricTypeLabels,
   parseMetricLabelId,
@@ -197,14 +198,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     metric?.jsonAttributes,
     rangeKey
   );
-  const health = useMetricHealth(
-    datasource,
-    builderOptions.database,
-    builderOptions.table,
-    metric?.name || '',
-    metric?.type ?? MetricType.Gauge,
-    metric?.jsonAttributes
-  );
+  const health = useMetricHealth(datasource, builderOptions.database, builderOptions.table, metric);
   const summaryQuantiles = useSummaryQuantiles(
     datasource,
     builderOptions.database,
@@ -269,7 +263,8 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
       isMonotonic: false,
     };
     const table = tables.value[type] ?? datasource.getConfiguredMetricTables()[type];
-    const jsonAttributes = await datasource.hasJSONMetricAttributes(database, table).catch(() => false);
+    const features: MetricTableFeatures = await datasource.getMetricTableFeatures(database, table).catch(() => ({}));
+    const { jsonAttributes = false, seriesId = false } = features;
     const [labels, reportedQuantiles, metricHealth] = await Promise.all([
       metric?.name
         ? datasource.fetchMetricLabelKeys(database, table, name, jsonAttributes).catch(() => [])
@@ -277,7 +272,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
       type === MetricType.Summary
         ? datasource.fetchSummaryQuantiles(database, table, name).catch(() => [])
         : Promise.resolve([]),
-      datasource.fetchMetricHealth(database, table, name, type, jsonAttributes).catch(() => undefined),
+      datasource.fetchMetricHealth(database, table, name, type, features).catch(() => undefined),
     ]);
     if (pick !== lastPick.current) {
       return;
@@ -301,7 +296,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
       table,
       queryType: QueryType.TimeSeries,
       filters,
-      metric: { ...nextMetric, groupBy, jsonAttributes, minStep },
+      metric: { ...nextMetric, groupBy, jsonAttributes, seriesId, minStep },
     });
   };
 

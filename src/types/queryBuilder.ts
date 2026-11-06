@@ -443,6 +443,11 @@ export interface MetricQuery {
   groupBy: MetricLabel[];
   /** True when the attribute columns use the ClickHouse JSON type instead of Map. */
   jsonAttributes?: boolean;
+  /**
+   * True when the table has the optional `SeriesId` column (a materialized hash of the series
+   * identity). Queries then use it instead of hashing the attribute maps of every row.
+   */
+  seriesId?: boolean;
   /** Overrides the value column name, which defaults to the metric name. */
   legend?: string;
   /**

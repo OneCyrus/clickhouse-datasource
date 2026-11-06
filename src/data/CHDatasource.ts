@@ -62,10 +62,12 @@ import {
   getMetricCatalogSql,
   getMetricHealthSql,
   getMetricLabelKeysSql,
+  getMetricTableFeatures,
   getMetricLabelValuesSql,
   getSummaryQuantilesSql,
   MetricCatalogEntry,
   MetricHealth,
+  MetricTableFeatures,
   MetricTables,
   resolveMetricTables,
 } from './metrics';
@@ -1379,10 +1381,9 @@ export class Datasource
     }));
   }
 
-  /** Whether a metric table stores attributes in JSON columns (the exporter's `json` option). */
-  async hasJSONMetricAttributes(database: string, table: string): Promise<boolean> {
-    const columns = await this.getColumnsCached(database, table);
-    return columns.some((column) => column.name === 'Attributes' && column.type.startsWith('JSON'));
+  /** The optional features of a metric table: JSON attributes, a SeriesId column. */
+  async getMetricTableFeatures(database: string, table: string): Promise<MetricTableFeatures> {
+    return getMetricTableFeatures(await this.getColumnsCached(database, table));
   }
 
   /** The attribute keys a metric has, by source. Empty when key discovery is turned off. */
@@ -1427,13 +1428,11 @@ export class Datasource
     table: string,
     metricName: string,
     type: MetricType,
-    jsonAttributes?: boolean
+    features: MetricTableFeatures = {}
   ): Promise<MetricHealth> {
-    const key = `health:${database}.${table}:${type}:${metricName}:${Boolean(jsonAttributes)}`;
+    const key = `health:${database}.${table}:${type}:${metricName}:${JSON.stringify(features)}`;
     return this.cachedMetricsLookup(key, async () => {
-      const column = await this.fetchMetricsColumns(
-        getMetricHealthSql(database, table, metricName, type, jsonAttributes)
-      );
+      const column = await this.fetchMetricsColumns(getMetricHealthSql(database, table, metricName, type, features));
       const exportInterval = Number(column('export_interval')[0]);
       return {
         exportInterval: Number.isFinite(exportInterval) && exportInterval > 0 ? Math.round(exportInterval) : undefined,
