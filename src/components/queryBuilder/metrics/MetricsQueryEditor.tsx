@@ -459,7 +459,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
                         const quantiles = options
                           .map((option) => parseQuantile(option.value))
                           .filter((q): q is number => q !== undefined);
-                        updateMetric({ quantiles: Array.from(new Set(quantiles)) });
+                        updateMetric({ quantiles: Array.from(new Set(quantiles)).sort((a, b) => a - b) });
                       }}
                       createCustomValue={metric.type === MetricType.Histogram}
                       width="auto"
