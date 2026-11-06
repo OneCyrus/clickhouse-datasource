@@ -15,13 +15,16 @@ import {
 } from 'types/queryBuilder';
 import otel from 'otel';
 import { buildJSONPathAccess } from './jsonPath';
+import { generateMetricsQuery } from './metrics';
 
 /**
  * Generates a SQL string for the given QueryBuilderOptions
  */
 export const generateSql = (options: QueryBuilderOptions): string => {
   const hasTraceIdFilter = options.meta?.isTraceIdMode && options.meta?.traceId;
-  if (options.queryType === QueryType.Traces && hasTraceIdFilter) {
+  if (options.queryType === QueryType.TimeSeries && options.metric) {
+    return generateMetricsQuery(options);
+  } else if (options.queryType === QueryType.Traces && hasTraceIdFilter) {
     return generateTraceIdQuery(options);
   } else if (options.queryType === QueryType.Traces) {
     return generateTraceSearchQuery(options);
@@ -865,7 +868,7 @@ const getLimit = (limit?: number | undefined): string => {
 /**
  * Returns the filters in the WHERE clause, excluding the "WHERE" keyword
  */
-const getFilters = (options: QueryBuilderOptions): string => {
+export const getFilters = (options: QueryBuilderOptions): string => {
   const filters = options.filters || [];
   const builtFilters: string[] = [];
 

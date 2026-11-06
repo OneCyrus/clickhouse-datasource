@@ -43,6 +43,9 @@ import {
   ColumnHint,
   Filter,
   FilterOperator,
+  MetricLabel,
+  MetricLabelSource,
+  MetricType,
   OrderByDirection,
   QueryBuilderOptions,
   StringFilter,
@@ -54,6 +57,16 @@ import {
 } from 'types/queryBuilder';
 import { CHBuilderQuery, CHQuery, EditorType } from 'types/sql';
 import { pluginVersion } from 'utils/version';
+import {
+  getConfiguredMetricTables,
+  getMetricCatalogSql,
+  getMetricLabelKeysSql,
+  getMetricLabelValuesSql,
+  getSummaryQuantilesSql,
+  MetricCatalogEntry,
+  MetricTables,
+  resolveMetricTables,
+} from './metrics';
 import { AdHocFilter } from './adHocFilter';
 import {
   buildLogLevelAggregateExpressions,
@@ -1284,6 +1297,99 @@ export class Datasource
     return traceConfig.traceIdColumn;
   }
 
+  getDefaultMetricsDatabase(): string {
+    return this.settings.jsonData.metrics?.defaultDatabase || this.getDefaultDatabase();
+  }
+
+  /** The configured metric table names, with the exporter defaults for unset ones. */
+  getConfiguredMetricTables(): Record<MetricType, string> {
+    return getConfiguredMetricTables(this.settings.jsonData.metrics);
+  }
+
+  private metricTablesPromise?: Promise<MetricTables>;
+
+  /**
+   * The metric tables that exist, by type. Looked up once per data source instance, since the
+   * exporter creates its tables up front. A failed lookup is retried on the next call.
+   */
+  resolveMetricTables(): Promise<MetricTables> {
+    if (!this.metricTablesPromise) {
+      const database = this.getDefaultMetricsDatabase();
+      this.metricTablesPromise = this.fetchTables(database)
+        .then((tables) => resolveMetricTables(this.getConfiguredMetricTables(), tables.map(String)))
+        .catch((error: unknown) => {
+          this.metricTablesPromise = undefined;
+          throw error;
+        });
+    }
+    return this.metricTablesPromise;
+  }
+
+  /** The metrics with data in the dashboard time range, across every metric table. */
+  async fetchMetricCatalog(): Promise<MetricCatalogEntry[]> {
+    const tables = await this.resolveMetricTables();
+    const rawSql = getMetricCatalogSql(this.getDefaultMetricsDatabase(), tables);
+    if (!rawSql) {
+      return [];
+    }
+
+    const frame = await this.runQuery({ rawSql, format: 1 });
+    const column = (name: string) => frame.fields?.find((f) => f.name === name)?.values ?? [];
+    const names = column('name');
+    const types = column('type');
+    const units = column('unit');
+    const descriptions = column('description');
+    const monotonic = column('monotonic');
+    return names.map((name, index) => ({
+      name: String(name),
+      type: types[index] as MetricType,
+      unit: String(units[index] ?? ''),
+      description: String(descriptions[index] ?? ''),
+      isMonotonic: Boolean(Number(monotonic[index])),
+    }));
+  }
+
+  /** Whether a metric table stores attributes in JSON columns (the exporter's `json` option). */
+  async hasJSONMetricAttributes(database: string, table: string): Promise<boolean> {
+    const columns = await this.getColumnsCached(database, table);
+    return columns.some((column) => column.name === 'Attributes' && column.type.startsWith('JSON'));
+  }
+
+  /** The attribute keys a metric has, by source. */
+  async fetchMetricLabelKeys(
+    database: string,
+    table: string,
+    metricName: string,
+    jsonAttributes?: boolean
+  ): Promise<MetricLabel[]> {
+    if (!this.isMapKeysDiscoveryEnabled()) {
+      return [];
+    }
+    const frame = await this.runQuery({
+      rawSql: getMetricLabelKeysSql(database, table, metricName, jsonAttributes),
+      format: 1,
+    });
+    const sources = frame.fields?.find((f) => f.name === 'source')?.values ?? [];
+    const keys = frame.fields?.find((f) => f.name === 'key')?.values ?? [];
+    return keys.map((key, index) => ({ source: sources[index] as MetricLabelSource, key: String(key) }));
+  }
+
+  async fetchMetricLabelValues(
+    database: string,
+    table: string,
+    metricName: string,
+    label: MetricLabel,
+    jsonAttributes?: boolean
+  ): Promise<string[]> {
+    const values = await this.fetchData(getMetricLabelValuesSql(database, table, metricName, label, jsonAttributes));
+    return values.map(String);
+  }
+
+  async fetchSummaryQuantiles(database: string, table: string, metricName: string): Promise<number[]> {
+    const values = await this.fetchData(getSummaryQuantilesSql(database, table, metricName));
+    return values.map(Number).filter((q) => Number.isFinite(q));
+  }
+
   async fetchDatabases(): Promise<string[]> {
     return this.fetchData('SHOW DATABASES');
   }
@@ -1667,9 +1773,12 @@ export class Datasource
     // an empty statement that ClickHouse rejects with a 400. Skip only that transient case. Every
     // other query type runs as before, so an empty or invalid SQL-editor query still surfaces its
     // error to the user instead of being dropped silently.
-    const isBuilderLogsQuery =
-      query.editorType === EditorType.Builder && (query as CHBuilderQuery).builderOptions?.queryType === QueryType.Logs;
-    if (isBuilderLogsQuery && !(query.rawSql && query.rawSql.trim().length > 0)) {
+    // A metrics builder query likewise has no SQL until a metric is picked.
+    const builderOptions =
+      query.editorType === EditorType.Builder ? (query as CHBuilderQuery).builderOptions : undefined;
+    const isBuilderLogsQuery = builderOptions?.queryType === QueryType.Logs;
+    const isBuilderMetricsQuery = builderOptions?.queryType === QueryType.TimeSeries && Boolean(builderOptions.metric);
+    if ((isBuilderLogsQuery || isBuilderMetricsQuery) && !(query.rawSql && query.rawSql.trim().length > 0)) {
       return false;
     }
 
@@ -1864,6 +1973,10 @@ export class Datasource
    * database that getDefaultDatabase coerces to.
    */
   private getDefaultAdhocSource(): string | undefined {
+    if (!this.settings.jsonData.defaultDatabase && this.isSingleTableMode() && this.getSignalType() === 'metrics') {
+      // Metrics span several tables, so ad hoc keys are discovered across the metrics database.
+      return this.getDefaultMetricsDatabase();
+    }
     if (!this.settings.jsonData.defaultDatabase && this.isSingleTableMode()) {
       const isTraces = this.getSignalType() === 'traces';
       const signalDb = isTraces ? this.getDefaultTraceDatabase() : this.getDefaultLogsDatabase();
