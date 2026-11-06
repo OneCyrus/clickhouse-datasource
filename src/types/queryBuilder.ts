@@ -445,4 +445,10 @@ export interface MetricQuery {
   jsonAttributes?: boolean;
   /** Overrides the value column name, which defaults to the metric name. */
   legend?: string;
+  /**
+   * Smallest time bucket in seconds, set to twice the metric's detected export interval. Buckets
+   * shorter than the export interval would hold only some of the series' points, so sums across
+   * series would jump depending on which instances happened to export in each bucket.
+   */
+  minStep?: number;
 }

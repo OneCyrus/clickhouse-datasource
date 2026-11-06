@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Datasource } from 'data/CHDatasource';
 import { MetricCatalogEntry, MetricTables } from 'data/metrics';
-import { MetricLabel } from 'types/queryBuilder';
+import { MetricLabel, MetricType } from 'types/queryBuilder';
 
 interface AsyncState<T> {
   value: T;
@@ -82,4 +82,22 @@ export const useSummaryQuantiles = (
 ) =>
   useAsync(enabled && metricName && table ? `${database}.${table}:${metricName}` : '', emptyQuantiles, () =>
     datasource.fetchSummaryQuantiles(database, table, metricName)
+  );
+
+const noCollisions = { shared: 0, total: 0 };
+
+/** Series of the picked metric that several writers appear to share. */
+export const useMetricIdentityCollisions = (
+  datasource: Datasource,
+  database: string,
+  table: string,
+  metricName: string,
+  type: MetricType,
+  jsonAttributes: boolean | undefined,
+  rangeKey: string
+) =>
+  useAsync(
+    metricName && table ? `${database}.${table}:${type}:${metricName}:${Boolean(jsonAttributes)}:${rangeKey}` : '',
+    noCollisions,
+    () => datasource.fetchMetricIdentityCollisions(database, table, metricName, type, jsonAttributes)
   );

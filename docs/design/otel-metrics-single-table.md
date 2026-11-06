@@ -91,6 +91,22 @@ generator, filter chips and "Open in SQL editor" behave as for logs and traces. 
 - Queries without a picked metric generate no SQL and are not run.
 - "Open in SQL editor" turns the generated SQL into a starting point for hand-written queries.
 
+### Many instances
+
+Verified with a simulated fleet sent through the Collector (30 instances with known rates, a
+restarting instance, two replicas without `service.instance.id`):
+
+- Series are separated by resource, scope and data point attributes, so per-instance math is right
+  and cross-series aggregation (sum, avg, count) matches the ground truth exactly; restarts are
+  handled as counter resets.
+- Rates divide each increase by the time it covers (time since the previous point, or start to end
+  for delta points), not by the bucket width, so they are right at any dashboard interval.
+- The editor detects each metric's export interval and never buckets finer than twice that
+  (`greatest($__interval_s, <seconds>)`), so every instance has a point in each bucket.
+- Writers sharing one identity cannot be separated reliably (Mimir rejects such samples as
+  duplicates or out of order). The editor detects them (repeated timestamps, or cumulative start
+  times changing every minute) and warns, pointing to `service.instance.id`.
+
 ## Follow-ups
 
 - Verify the generated SQL against a live ClickHouse with exporter data in CI (integration test).

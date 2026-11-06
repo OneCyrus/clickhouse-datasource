@@ -60,6 +60,8 @@ import { pluginVersion } from 'utils/version';
 import {
   getConfiguredMetricTables,
   getMetricCatalogSql,
+  getMetricExportIntervalSql,
+  getMetricIdentityCollisionSql,
   getMetricLabelKeysSql,
   getMetricLabelValuesSql,
   getSummaryQuantilesSql,
@@ -1383,6 +1385,34 @@ export class Datasource
   ): Promise<string[]> {
     const values = await this.fetchData(getMetricLabelValuesSql(database, table, metricName, label, jsonAttributes));
     return values.map(String);
+  }
+
+  /** How many series of a metric look shared by several writers, see getMetricIdentityCollisionSql. */
+  async fetchMetricIdentityCollisions(
+    database: string,
+    table: string,
+    metricName: string,
+    type: MetricType,
+    jsonAttributes?: boolean
+  ): Promise<{ shared: number; total: number }> {
+    const frame = await this.runQuery({
+      rawSql: getMetricIdentityCollisionSql(database, table, metricName, type, jsonAttributes),
+      format: 1,
+    });
+    const value = (name: string) => Number(frame.fields?.find((f) => f.name === name)?.values[0] ?? 0);
+    return { shared: value('shared'), total: value('total') };
+  }
+
+  /** The export interval of a metric in seconds, or undefined when it has too few recent points. */
+  async fetchMetricExportInterval(
+    database: string,
+    table: string,
+    metricName: string,
+    jsonAttributes?: boolean
+  ): Promise<number | undefined> {
+    const values = await this.fetchData(getMetricExportIntervalSql(database, table, metricName, jsonAttributes));
+    const seconds = Number(values[0]);
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
   }
 
   async fetchSummaryQuantiles(database: string, table: string, metricName: string): Promise<number[]> {

@@ -163,6 +163,7 @@ export const Components = {
       addFilterButton: 'query-builder__metrics-editor__add-filter-button',
       filterEditor: 'query-builder__metrics-editor__filter-editor',
       legendInput: 'query-builder__metrics-editor__legend-input',
+      identityWarning: 'query-builder__metrics-editor__identity-warning',
     },
     TimeSeriesQueryBuilder: {
       columnRolesHelp: 'query-builder__time-series-query-builder__column-roles-help',

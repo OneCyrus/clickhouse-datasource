@@ -83,7 +83,13 @@ When a data source is configured in **Single source** mode for **Metrics**, the 
 1. **Filters**: narrow the series by label, with value suggestions for the selected metric.
 1. **Legend**: renames the value, which defaults to the metric name.
 
-Like PromQL, values are computed per series first (a series is one combination of resource, scope, and data point attributes) and then aggregated per group, so a gauge reported every 10 seconds is not counted several times when summed across pods. Use **Open in SQL editor** to start from the generated SQL.
+Like PromQL, values are computed per series first (a series is one combination of resource, scope, and data point attributes) and then aggregated per group, so a gauge reported every 10 seconds is not counted several times when summed across pods. Rates divide each increase by the time it actually covers, so they stay correct at any zoom level.
+
+When you pick a metric, the editor detects how often it's exported and never uses time buckets shorter than twice that interval (shown below the legend), so every instance has a point in each bucket and sums across instances don't jump. The generated SQL shows this as `greatest($__interval_s, <seconds>)`.
+
+OpenTelemetry requires every instance to have a unique identity, usually `service.instance.id`. When several instances send a metric with identical resource attributes, their points mix in one series and rates and averages become wrong. The editor detects this and shows a warning with the number of affected series. Fix it at the source, for example with the Collector's `k8sattributes` or `resourcedetection` processor.
+
+Use **Open in SQL editor** to start from the generated SQL.
 
 ## Build queries
 

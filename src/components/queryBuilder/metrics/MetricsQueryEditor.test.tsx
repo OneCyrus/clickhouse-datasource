@@ -40,6 +40,8 @@ const createDatasource = (): Datasource => {
     fetchMetricLabelKeys: jest.fn(() => Promise.resolve([{ source: 'attribute', key: 'http.route' }])),
     fetchMetricLabelValues: jest.fn(() => Promise.resolve(['/a', '/b'])),
     fetchSummaryQuantiles: jest.fn(() => Promise.resolve([])),
+    fetchMetricIdentityCollisions: jest.fn(() => Promise.resolve({ shared: 0, total: 0 })),
+    fetchMetricExportInterval: jest.fn(() => Promise.resolve(10)),
   } as unknown as Datasource;
   return datasource;
 };
@@ -105,6 +107,7 @@ describe('MetricsQueryEditor', () => {
       fn: MetricFunction.Rate,
       aggregation: MetricSeriesAggregation.Sum,
       jsonAttributes: false,
+      minStep: 20,
     });
     expect(datasource.hasJSONMetricAttributes).toHaveBeenCalledWith('otel', 'otel_metrics_sum');
     expect(onRunQuery).toHaveBeenCalled();

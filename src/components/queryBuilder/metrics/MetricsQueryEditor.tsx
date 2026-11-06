@@ -48,7 +48,13 @@ import { FilterTagBar } from '../FilterTagBar';
 import { SqlPreview } from '../SqlPreview';
 import { MinIntervalEditor } from 'components/MinIntervalEditor';
 import { getMetricLabelOptions, MetricLabelFilterEditor } from './MetricLabelFilterEditor';
-import { useMetricCatalog, useMetricLabelKeys, useMetricTables, useSummaryQuantiles } from './useMetricsMetadata';
+import {
+  useMetricCatalog,
+  useMetricIdentityCollisions,
+  useMetricLabelKeys,
+  useMetricTables,
+  useSummaryQuantiles,
+} from './useMetricsMetadata';
 
 const editorSelectors = selectors.components.QueryBuilder.MetricsEditor;
 
@@ -192,6 +198,15 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     metric?.jsonAttributes,
     rangeKey
   );
+  const collisions = useMetricIdentityCollisions(
+    datasource,
+    builderOptions.database,
+    builderOptions.table,
+    metric?.name || '',
+    metric?.type ?? MetricType.Gauge,
+    metric?.jsonAttributes,
+    rangeKey
+  );
   const summaryQuantiles = useSummaryQuantiles(
     datasource,
     builderOptions.database,
@@ -239,6 +254,33 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     apply({ ...builderOptions, metric: { ...metric, ...changes } }, run);
   };
 
+  // Twice the export interval, so every series has a point in each bucket despite jitter.
+  const detectMinStep = useCallback(
+    async (table: string, name: string, jsonAttributes?: boolean) => {
+      const seconds = await datasource
+        .fetchMetricExportInterval(database, table, name, jsonAttributes)
+        .catch(() => undefined);
+      return seconds ? seconds * 2 : undefined;
+    },
+    [database, datasource]
+  );
+
+  // Queries saved before the export interval was detected get it once their table is known.
+  const needsMinStep = Boolean(metric?.name && expectedTable && metric.minStep === undefined);
+  const minStepRequested = useRef('');
+  useEffect(() => {
+    const key = `${builderOptions.table}:${metric?.name}`;
+    if (!needsMinStep || !metric || minStepRequested.current === key) {
+      return;
+    }
+    minStepRequested.current = key;
+    detectMinStep(builderOptions.table, metric.name, metric.jsonAttributes).then((minStep) => {
+      if (minStep) {
+        apply({ ...builderOptions, metric: { ...metric, minStep } });
+      }
+    });
+  }, [apply, builderOptions, detectMinStep, metric, needsMinStep]);
+
   const onMetricChange = async (value: string) => {
     const { type, name } = parseMetricOptionValue(value);
     const entry = catalog.value.find((e) => e.type === type && e.name === name) ?? {
@@ -263,13 +305,14 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     const { groupBy, filters } = labels
       ? keepSharedLabels(nextMetric.groupBy, builderOptions.filters || [], labels)
       : { groupBy: nextMetric.groupBy, filters: builderOptions.filters };
+    const minStep = await detectMinStep(table, name, jsonAttributes);
     apply({
       ...builderOptions,
       database,
       table,
       queryType: QueryType.TimeSeries,
       filters,
-      metric: { ...nextMetric, groupBy, jsonAttributes },
+      metric: { ...nextMetric, groupBy, jsonAttributes, minStep },
     });
   };
 
@@ -388,6 +431,18 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
               {[currentEntry?.description, metric.unit && `Unit: ${metric.unit}`].filter(Boolean).join(' · ')}
             </Text>
           </div>
+        )}
+        {metric.name && collisions.value.shared > 0 && (
+          <Alert
+            severity="warning"
+            title={`${collisions.value.shared} of ${collisions.value.total} series look shared by several instances`}
+            data-testid={editorSelectors.identityWarning}
+          >
+            These series get points from several writers with identical resource attributes (or from one that restarts
+            constantly), so their values mix and rates, increases and averages are wrong. Give every instance a unique{' '}
+            <code>service.instance.id</code>, for example with the Collector&apos;s k8sattributes or resourcedetection
+            processor.
+          </Alert>
         )}
         {missingTypeTable && (
           <Alert severity="warning" title={`No ${metricTypeLabels[metric.type].toLowerCase()} table`}>
@@ -508,6 +563,11 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
               </InlineField>
               {onMinIntervalChange && (
                 <MinIntervalEditor minInterval={minInterval} onMinIntervalChange={onMinIntervalChange} />
+              )}
+              {metric.minStep && (
+                <Text color="secondary" variant="bodySmall">
+                  {`Resolution at least ${metric.minStep}s: the metric is exported every ${metric.minStep / 2}s`}
+                </Text>
               )}
             </div>
           </>

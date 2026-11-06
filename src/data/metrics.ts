@@ -391,7 +391,7 @@ const generateValueQuery = (options: QueryBuilderOptions, metric: MetricQuery): 
           : 'avg(Value)';
 
   const inner = `SELECT ${join([
-    `$__timeInterval(${metricTimeColumn}) AS __time`,
+    `${timeBucketExpression(metric)} AS __time`,
     ...innerLabels(ctx),
     `${ctx.seriesKey} AS __series`,
     `${perSeries} AS __value`,
@@ -399,6 +399,12 @@ const generateValueQuery = (options: QueryBuilderOptions, metric: MetricQuery): 
 
   return outerQuery(ctx, [seriesAggregationSql(metric.aggregation, '__value')], inner);
 };
+
+/** The time bucket of a point: the dashboard interval, but never shorter than the metric's minStep. */
+export const timeBucketExpression = (metric: MetricQuery): string =>
+  metric.minStep && metric.minStep > 0
+    ? `toStartOfInterval(toDateTime(${metricTimeColumn}), INTERVAL greatest($__interval_s, ${Math.round(metric.minStep)}) second)`
+    : `$__timeInterval(${metricTimeColumn})`;
 
 /** Delta temporality points hold the increase themselves; cumulative ones need the previous point. */
 const hasTemporality = (type: MetricType): boolean => type !== MetricType.Summary && type !== MetricType.Gauge;
@@ -413,12 +419,23 @@ const isDeltaExpression = (type: MetricType): string => (hasTemporality(type) ? 
  * own increase. The first point of a series has no previous one, so rows are read from slightly
  * before the time range.
  */
+/**
+ * The seconds an increase covers: the time since the previous point of the series, or for a
+ * delta point its own start to end. Rates divide by the summed covered time rather than by the
+ * bucket width, so they stay right when the dashboard interval is shorter than the export
+ * interval and a bucket holds only some of the points (or one point covering several buckets).
+ */
+const coveredSecondsExpression =
+  `if(__is_delta AND StartTimeUnix > toDateTime(0) AND StartTimeUnix < ${metricTimeColumn}, ` +
+  `dateDiff('millisecond', StartTimeUnix, ${metricTimeColumn}), ` +
+  `dateDiff('millisecond', __prev_time, ${metricTimeColumn})) / 1000`;
+
 const generateCounterQuery = (
   options: QueryBuilderOptions,
   metric: MetricQuery,
   values: string[],
   resetColumn: string,
-  combine: (deltas: string[]) => string
+  combine: (deltas: string[], seconds: string) => string
 ): string => {
   const ctx = buildContext(options, metric, readFromBeforeRangeCondition);
   const window = `OVER (PARTITION BY ${ctx.seriesKey} ORDER BY ${metricTimeColumn} ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)`;
@@ -430,6 +447,8 @@ const generateCounterQuery = (
     `${isDeltaExpression(metric.type)} AS __is_delta`,
     `${resetColumn} AS __reset`,
     `lagInFrame(toNullable(${resetColumn})) ${window} AS __prev_reset`,
+    'StartTimeUnix',
+    `lagInFrame(toNullable(${metricTimeColumn})) ${window} AS __prev_time`,
     ...values.flatMap((value, index) => [
       `toFloat64(${value}) AS __v${index}`,
       `lagInFrame(toNullable(toFloat64(${value}))) ${window} AS __prev_v${index}`,
@@ -437,20 +456,30 @@ const generateCounterQuery = (
   ])} FROM ${ctx.table} WHERE ${ctx.where}`;
 
   const perSeries = `SELECT ${join([
-    `$__timeInterval(${metricTimeColumn}) AS __time`,
+    `${timeBucketExpression(metric)} AS __time`,
     ...labelRefs(ctx),
     '__series',
     ...values.map(
       (_, index) =>
         `sum(if(__is_delta, __v${index}, if(__prev_reset IS NULL, 0, if(__reset >= __prev_reset, __v${index} - __prev_v${index}, __v${index})))) AS __d${index}`
     ),
+    `sum(${coveredSecondsExpression}) AS __seconds`,
   ])} FROM (${withPrevious}) WHERE ${metricTimeColumn} >= $__fromTime GROUP BY ${join([
     '__time',
     ...labelRefs(ctx),
     '__series',
   ])}`;
 
-  return outerQuery(ctx, [combine(values.map((_, index) => `__d${index}`))], perSeries);
+  return outerQuery(
+    ctx,
+    [
+      combine(
+        values.map((_, index) => `__d${index}`),
+        '__seconds'
+      ),
+    ],
+    perSeries
+  );
 };
 
 const generateHistogramQuantileQuery = (options: QueryBuilderOptions, metric: MetricQuery): string => {
@@ -478,7 +507,7 @@ const generateHistogramQuantileQuery = (options: QueryBuilderOptions, metric: Me
 
   // Buckets of all series in a group add up, which is how histograms aggregate correctly.
   const perGroup = `SELECT ${join([
-    `$__timeInterval(${metricTimeColumn}) AS __time`,
+    `${timeBucketExpression(metric)} AS __time`,
     ...labelRefs(ctx),
     `sumForEach(${bucketDelta}) AS __counts`,
     'any(ExplicitBounds) AS __bounds',
@@ -529,7 +558,7 @@ const generateSummaryQuantileQuery = (options: QueryBuilderOptions, metric: Metr
   const ctx = buildContext(options, metric, timeRangeCondition);
   const quantiles = getQuantiles(metric);
   const inner = `SELECT ${join([
-    `$__timeInterval(${metricTimeColumn}) AS __time`,
+    `${timeBucketExpression(metric)} AS __time`,
     ...innerLabels(ctx),
     `${ctx.seriesKey} AS __series`,
     ...quantiles.map(
@@ -553,7 +582,7 @@ export const generateMetricsQuery = (options: QueryBuilderOptions): string => {
     return '';
   }
 
-  const perSecond = (delta: string) => `${delta} / $__interval_s`;
+  const perSecond = (delta: string, seconds: string) => `${delta} / nullIf(${seconds}, 0)`;
   const aggregate = (expression: string) => seriesAggregationSql(metric.aggregation, expression);
 
   if (metric.type === MetricType.Gauge || (metric.type === MetricType.Sum && !metric.isMonotonic)) {
@@ -563,7 +592,7 @@ export const generateMetricsQuery = (options: QueryBuilderOptions): string => {
   if (metric.type === MetricType.Sum) {
     return metric.fn === MetricFunction.Increase
       ? generateCounterQuery(options, metric, ['Value'], 'Value', ([d]) => aggregate(d))
-      : generateCounterQuery(options, metric, ['Value'], 'Value', ([d]) => aggregate(perSecond(d)));
+      : generateCounterQuery(options, metric, ['Value'], 'Value', ([d], seconds) => aggregate(perSecond(d, seconds)));
   }
 
   // Histograms, exponential histograms and summaries.
@@ -575,18 +604,24 @@ export const generateMetricsQuery = (options: QueryBuilderOptions): string => {
       if (metric.type === MetricType.Summary) {
         return generateSummaryQuantileQuery(options, metric);
       }
-      return generateCounterQuery(options, metric, ['Count'], 'Count', ([d]) => aggregate(perSecond(d)));
+      return generateCounterQuery(options, metric, ['Count'], 'Count', ([d], seconds) =>
+        aggregate(perSecond(d, seconds))
+      );
     case MetricFunction.Increase:
       return generateCounterQuery(options, metric, ['Count'], 'Count', ([d]) => aggregate(d));
     case MetricFunction.SumRate:
-      return generateCounterQuery(options, metric, ['Sum'], 'Count', ([d]) => aggregate(perSecond(d)));
+      return generateCounterQuery(options, metric, ['Sum'], 'Count', ([d], seconds) =>
+        aggregate(perSecond(d, seconds))
+      );
     case MetricFunction.AvgValue:
       return generateCounterQuery(options, metric, ['Sum', 'Count'], 'Count', ([sum, count]) => {
         return `sum(${sum}) / nullIf(sum(${count}), 0)`;
       });
     case MetricFunction.Rate:
     default:
-      return generateCounterQuery(options, metric, ['Count'], 'Count', ([d]) => aggregate(perSecond(d)));
+      return generateCounterQuery(options, metric, ['Count'], 'Count', ([d], seconds) =>
+        aggregate(perSecond(d, seconds))
+      );
   }
 };
 
@@ -669,3 +704,56 @@ export const getMetricLabelValuesSql = (
 export const getSummaryQuantilesSql = (database: string, table: string, metricName: string): string =>
   `SELECT DISTINCT arrayJoin(ValueAtQuantiles.Quantile) AS quantile FROM ${getTableIdentifier(database, table)} ` +
   `WHERE MetricName = ${quoteString(metricName)} AND ${timeRangeCondition} ORDER BY quantile ASC LIMIT 100`;
+
+/**
+ * Finds series that several writers appear to share. OTel requires every producer to have a
+ * unique identity (`service.instance.id`); replicas without one land in the same series, where
+ * their interleaved cumulative values read as constant counter resets and their values mix.
+ * Writers sharing a series send about twice as many points as there are distinct timestamps (a
+ * single writer only rarely repeats a second, for example at a restart), and a cumulative series
+ * keeps its start time except once at a restart. Shared series show either in nearly every
+ * minute, so a series showing it in at least half of its minutes (and at least three) is counted
+ * as shared; occasional restarts or deploys are not. Delta points and gauges carry no stable start time,
+ * so only their timestamps are checked. Returns one row: `shared`, `total`.
+ */
+export const getMetricIdentityCollisionSql = (
+  database: string,
+  table: string,
+  metricName: string,
+  type: MetricType,
+  jsonAttributes = false
+): string => {
+  const starts =
+    type === MetricType.Gauge
+      ? '1'
+      : hasTemporality(type)
+        ? 'uniqExactIf(StartTimeUnix, AggregationTemporality = 2)'
+        : 'uniqExact(StartTimeUnix)';
+  return (
+    `SELECT countIf(mixed_minutes >= 3 AND mixed_minutes * 2 >= minutes) AS shared, count() AS total FROM (` +
+    `SELECT series, countIf(points >= timestamps * 1.5 OR starts > 1) AS mixed_minutes, count() AS minutes FROM (` +
+    `SELECT ${getSeriesKeyExpression(jsonAttributes)} AS series, toStartOfMinute(${metricTimeColumn}) AS minute, ` +
+    `count() AS points, uniqExact(${metricTimeColumn}) AS timestamps, ${starts} AS starts ` +
+    `FROM ${getTableIdentifier(database, table)} WHERE MetricName = ${quoteString(metricName)} AND ${timeRangeCondition} ` +
+    `GROUP BY series, minute) GROUP BY series)`
+  );
+};
+
+/**
+ * The export interval of a metric in seconds: the median time between consecutive points of each
+ * series over the last 15 minutes, taking the slowest series (capped at 10 minutes) so every
+ * instance has a point in each bucket. Restarts and gaps do not move a median.
+ */
+export const getMetricExportIntervalSql = (
+  database: string,
+  table: string,
+  metricName: string,
+  jsonAttributes = false
+): string =>
+  `SELECT least(max(series_gap), 600) AS seconds FROM (SELECT series, median(gap) AS series_gap FROM (` +
+  `SELECT ${getSeriesKeyExpression(jsonAttributes)} AS series, dateDiff('second', ` +
+  `lagInFrame(toNullable(${metricTimeColumn})) OVER (PARTITION BY ${getSeriesKeyExpression(jsonAttributes)} ` +
+  `ORDER BY ${metricTimeColumn} ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), ${metricTimeColumn}) AS gap ` +
+  `FROM ${getTableIdentifier(database, table)} WHERE MetricName = ${quoteString(metricName)} ` +
+  `AND ${metricTimeColumn} >= now() - INTERVAL 15 MINUTE` +
+  `) WHERE gap > 0 GROUP BY series)`;

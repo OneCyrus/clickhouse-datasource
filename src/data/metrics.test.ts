@@ -16,7 +16,9 @@ import {
   getConfiguredMetricTables,
   getDefaultSeriesAggregation,
   getMetricCatalogSql,
+  getMetricExportIntervalSql,
   getMetricFunctions,
+  getMetricIdentityCollisionSql,
   getMetricLabelAliases,
   getMetricLabelExpression,
   getMetricLabelId,
@@ -229,6 +231,14 @@ describe('generateMetricsQuery', () => {
     expect(sql).toContain("AND (( ResourceAttributes['k8s.namespace.name'] = 'prod' ))");
   });
 
+  it('never buckets finer than the minimum step', () => {
+    const sql = generateSql(options(metric({ minStep: 20 })));
+    expect(sql).toContain(
+      'toStartOfInterval(toDateTime(TimeUnix), INTERVAL greatest($__interval_s, 20) second) AS __time'
+    );
+    expect(sql).not.toContain('$__timeInterval');
+  });
+
   it('escapes the metric name', () => {
     expect(generateSql(options(metric({ name: "a'b" })))).toContain("MetricName = 'a\\'b'");
   });
@@ -256,12 +266,15 @@ describe('generateMetricsQuery', () => {
     it('computes per-second rates handling resets and delta temporality', () => {
       const sql = generateSql(options(counter, { table: 'otel_metrics_sum' }));
       expect(sql).toBe(
-        'SELECT __time AS time, __label_0 AS "http.route", sum(__d0 / $__interval_s) AS "http.server.requests" FROM (' +
+        'SELECT __time AS time, __label_0 AS "http.route", sum(__d0 / nullIf(__seconds, 0)) AS "http.server.requests" FROM (' +
           'SELECT $__timeInterval(TimeUnix) AS __time, __label_0, __series, ' +
-          'sum(if(__is_delta, __v0, if(__prev_reset IS NULL, 0, if(__reset >= __prev_reset, __v0 - __prev_v0, __v0)))) AS __d0 FROM (' +
+          'sum(if(__is_delta, __v0, if(__prev_reset IS NULL, 0, if(__reset >= __prev_reset, __v0 - __prev_v0, __v0)))) AS __d0, ' +
+          "sum(if(__is_delta AND StartTimeUnix > toDateTime(0) AND StartTimeUnix < TimeUnix, dateDiff('millisecond', StartTimeUnix, TimeUnix), dateDiff('millisecond', __prev_time, TimeUnix)) / 1000) AS __seconds FROM (" +
           "SELECT TimeUnix, Attributes['http.route'] AS __label_0, cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) AS __series, " +
           'AggregationTemporality = 1 AS __is_delta, Value AS __reset, ' +
           'lagInFrame(toNullable(Value)) OVER (PARTITION BY cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) ORDER BY TimeUnix ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS __prev_reset, ' +
+          'StartTimeUnix, ' +
+          'lagInFrame(toNullable(TimeUnix)) OVER (PARTITION BY cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) ORDER BY TimeUnix ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS __prev_time, ' +
           'toFloat64(Value) AS __v0, ' +
           'lagInFrame(toNullable(toFloat64(Value))) OVER (PARTITION BY cityHash64(ResourceAttributes, ScopeName, ScopeAttributes, Attributes) ORDER BY TimeUnix ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS __prev_v0 ' +
           'FROM "otel"."otel_metrics_sum" WHERE MetricName = \'http.server.requests\' ' +
@@ -274,7 +287,7 @@ describe('generateMetricsQuery', () => {
     it('computes increases', () => {
       const sql = generateSql(options({ ...counter, fn: MetricFunction.Increase }, { table: 'otel_metrics_sum' }));
       expect(sql).toContain('sum(__d0) AS "http.server.requests"');
-      expect(sql).not.toContain('/ $__interval_s');
+      expect(sql).not.toContain('__seconds, 0)');
     });
 
     it('rates the observation count of histograms', () => {
@@ -385,6 +398,25 @@ describe('discovery queries', () => {
 
   it('lists summary quantiles', () => {
     expect(getSummaryQuantilesSql('otel', 's', 'rpc')).toContain('arrayJoin(ValueAtQuantiles.Quantile)');
+  });
+
+  it('finds series shared by several writers', () => {
+    const sql = getMetricIdentityCollisionSql('otel', 's', 'requests', MetricType.Sum);
+    expect(sql).toContain('countIf(points >= timestamps * 1.5 OR starts > 1) AS mixed_minutes, count() AS minutes');
+    expect(sql).toContain('countIf(mixed_minutes >= 3 AND mixed_minutes * 2 >= minutes) AS shared');
+    expect(sql).toContain('uniqExactIf(StartTimeUnix, AggregationTemporality = 2) AS starts');
+    expect(getMetricIdentityCollisionSql('otel', 'g', 'cpu', MetricType.Gauge)).toContain('1 AS starts');
+    expect(getMetricIdentityCollisionSql('otel', 's', 'rpc', MetricType.Summary)).toContain(
+      'uniqExact(StartTimeUnix) AS starts'
+    );
+    expect(sql).toContain("WHERE MetricName = 'requests' AND TimeUnix >= $__fromTime");
+  });
+
+  it('detects the export interval', () => {
+    const sql = getMetricExportIntervalSql('otel', 'g', 'cpu');
+    expect(sql).toContain('SELECT least(max(series_gap), 600) AS seconds');
+    expect(sql).toContain('median(gap) AS series_gap');
+    expect(sql).toContain("WHERE MetricName = 'cpu' AND TimeUnix >= now() - INTERVAL 15 MINUTE");
   });
 
   it('quotes strings', () => {
