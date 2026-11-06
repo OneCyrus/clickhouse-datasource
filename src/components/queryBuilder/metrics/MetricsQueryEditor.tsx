@@ -20,6 +20,7 @@ import { Datasource } from 'data/CHDatasource';
 import {
   buildMetricQuery,
   defaultQuantiles,
+  formatQuantile,
   getDefaultSeriesAggregation,
   getMetricFunctions,
   getMetricLabelId,
@@ -50,7 +51,7 @@ import { MinIntervalEditor } from 'components/MinIntervalEditor';
 import { getMetricLabelOptions, MetricLabelFilterEditor } from './MetricLabelFilterEditor';
 import {
   useMetricCatalog,
-  useMetricIdentityCollisions,
+  useMetricHealth,
   useMetricLabelKeys,
   useMetricTables,
   useSummaryQuantiles,
@@ -133,8 +134,6 @@ export const pickSummaryQuantiles = (wanted: number[], reported: number[]): numb
   return [belowMax.length ? Math.max(...belowMax) : Math.max(...reported)];
 };
 
-const formatQuantile = (q: number) => `p${Math.round(q * 10000) / 100}`;
-
 /** Parses a typed quantile: `0.95`, `95`, `p95` or `p99.9`. */
 export const parseQuantile = (text: string): number | undefined => {
   const trimmed = text.trim().toLowerCase();
@@ -198,14 +197,13 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     metric?.jsonAttributes,
     rangeKey
   );
-  const collisions = useMetricIdentityCollisions(
+  const health = useMetricHealth(
     datasource,
     builderOptions.database,
     builderOptions.table,
     metric?.name || '',
     metric?.type ?? MetricType.Gauge,
-    metric?.jsonAttributes,
-    rangeKey
+    metric?.jsonAttributes
   );
   const summaryQuantiles = useSummaryQuantiles(
     datasource,
@@ -215,17 +213,20 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     metric?.type === MetricType.Summary
   );
 
-  const callbacks = useRef({ onQueryChange, onRunQuery });
+  // The latest options and callbacks, so results of async lookups are applied to what the user sees
+  // when they arrive, not to the options they were requested for.
+  const latest = useRef({ builderOptions, onQueryChange, onRunQuery });
   useEffect(() => {
-    callbacks.current = { onQueryChange, onRunQuery };
-  }, [onQueryChange, onRunQuery]);
+    latest.current = { builderOptions, onQueryChange, onRunQuery };
+  }, [builderOptions, onQueryChange, onRunQuery]);
 
   const apply = useCallback(
     (next: QueryBuilderOptions, run = true) => {
       builderOptionsDispatch(setAllOptions(next));
-      callbacks.current.onQueryChange?.(next);
+      latest.current.builderOptions = next;
+      latest.current.onQueryChange?.(next);
       if (run) {
-        callbacks.current.onRunQuery?.();
+        latest.current.onRunQuery?.();
       }
     },
     [builderOptionsDispatch]
@@ -254,34 +255,11 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     apply({ ...builderOptions, metric: { ...metric, ...changes } }, run);
   };
 
-  // Twice the export interval, so every series has a point in each bucket despite jitter.
-  const detectMinStep = useCallback(
-    async (table: string, name: string, jsonAttributes?: boolean) => {
-      const seconds = await datasource
-        .fetchMetricExportInterval(database, table, name, jsonAttributes)
-        .catch(() => undefined);
-      return seconds ? seconds * 2 : undefined;
-    },
-    [database, datasource]
-  );
-
-  // Queries saved before the export interval was detected get it once their table is known.
-  const needsMinStep = Boolean(metric?.name && expectedTable && metric.minStep === undefined);
-  const minStepRequested = useRef('');
-  useEffect(() => {
-    const key = `${builderOptions.table}:${metric?.name}`;
-    if (!needsMinStep || !metric || minStepRequested.current === key) {
-      return;
-    }
-    minStepRequested.current = key;
-    detectMinStep(builderOptions.table, metric.name, metric.jsonAttributes).then((minStep) => {
-      if (minStep) {
-        apply({ ...builderOptions, metric: { ...metric, minStep } });
-      }
-    });
-  }, [apply, builderOptions, detectMinStep, metric, needsMinStep]);
-
+  // Picking a metric runs a few lookups for it. Only the latest pick is applied, on top of any
+  // edits made while the lookups ran.
+  const lastPick = useRef(0);
   const onMetricChange = async (value: string) => {
+    const pick = ++lastPick.current;
     const { type, name } = parseMetricOptionValue(value);
     const entry = catalog.value.find((e) => e.type === type && e.name === name) ?? {
       type,
@@ -292,22 +270,33 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     };
     const table = tables.value[type] ?? datasource.getConfiguredMetricTables()[type];
     const jsonAttributes = await datasource.hasJSONMetricAttributes(database, table).catch(() => false);
-    const nextMetric = buildMetricQuery(entry, metric?.name ? metric : undefined);
-    if (type === MetricType.Summary && nextMetric.fn === MetricFunction.Quantile) {
-      const reported = await datasource.fetchSummaryQuantiles(database, table, name).catch(() => []);
-      nextMetric.quantiles = pickSummaryQuantiles(nextMetric.quantiles || [], reported);
+    const [labels, reportedQuantiles, metricHealth] = await Promise.all([
+      metric?.name
+        ? datasource.fetchMetricLabelKeys(database, table, name, jsonAttributes).catch(() => [])
+        : Promise.resolve([]),
+      type === MetricType.Summary
+        ? datasource.fetchSummaryQuantiles(database, table, name).catch(() => [])
+        : Promise.resolve([]),
+      datasource.fetchMetricHealth(database, table, name, type, jsonAttributes).catch(() => undefined),
+    ]);
+    if (pick !== lastPick.current) {
+      return;
     }
-    // Labels the new metric does not have would group or filter on empty values, so only the ones
-    // it shares with the previous metric are kept. When its labels cannot be listed, all are kept.
-    const labels = metric?.name
-      ? await datasource.fetchMetricLabelKeys(database, table, name, jsonAttributes).catch(() => undefined)
-      : undefined;
-    const { groupBy, filters } = labels
-      ? keepSharedLabels(nextMetric.groupBy, builderOptions.filters || [], labels)
-      : { groupBy: nextMetric.groupBy, filters: builderOptions.filters };
-    const minStep = await detectMinStep(table, name, jsonAttributes);
+
+    const current = latest.current.builderOptions;
+    const nextMetric = buildMetricQuery(entry, current.metric?.name ? current.metric : undefined);
+    if (nextMetric.fn === MetricFunction.Quantile && type === MetricType.Summary) {
+      nextMetric.quantiles = pickSummaryQuantiles(nextMetric.quantiles || [], reportedQuantiles);
+    }
+    // Labels the new metric does not have would group or filter on empty values. When its labels
+    // could not be listed (none in range, discovery off, or an error), all are kept.
+    const { groupBy, filters } = labels.length
+      ? keepSharedLabels(nextMetric.groupBy, current.filters || [], labels)
+      : { groupBy: nextMetric.groupBy, filters: current.filters };
+    // Twice the export interval, so every series has a point in each bucket despite jitter.
+    const minStep = metricHealth?.exportInterval ? metricHealth.exportInterval * 2 : undefined;
     apply({
-      ...builderOptions,
+      ...current,
       database,
       table,
       queryType: QueryType.TimeSeries,
@@ -432,10 +421,10 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
             </Text>
           </div>
         )}
-        {metric.name && collisions.value.shared > 0 && (
+        {metric.name && health.value.sharedSeries > 0 && (
           <Alert
             severity="warning"
-            title={`${collisions.value.shared} of ${collisions.value.total} series look shared by several instances`}
+            title={`${health.value.sharedSeries} of ${health.value.series} series look shared by several instances`}
             data-testid={editorSelectors.identityWarning}
           >
             These series get points from several writers with identical resource attributes (or from one that restarts

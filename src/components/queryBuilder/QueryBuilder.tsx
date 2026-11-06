@@ -131,8 +131,11 @@ export const QueryBuilder = (props: QueryBuilderProps) => {
 
   // Metrics use their own editor: a metric picker over all metric tables instead of one table's
   // columns. Classic queries authored before the switch to the metrics signal stay in the classic
-  // builder, like logs and traces queries do.
-  if (singleTableMode && signalType === 'metrics' && isMetricsEditorQuery(builderOptions)) {
+  // builder, like logs and traces queries do. A metrics query always opens in the metrics editor,
+  // also on a data source in classic mode (carried over in Explore, or after a mode change), since
+  // the classic builder cannot edit what its SQL does.
+  const isMetricsSource = singleTableMode && signalType === 'metrics';
+  if (builderOptions.metric || (isMetricsSource && isMetricsEditorQuery(builderOptions))) {
     return (
       <MetricsQueryEditor
         datasource={datasource}

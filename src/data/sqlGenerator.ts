@@ -719,6 +719,12 @@ export const getTableIdentifier = (database: string, table: string): string => {
   return `${escapeIdentifier(database)}${sep}${escapeIdentifier(table)}`;
 };
 
+/**
+ * Escapes a string for a single-quoted ClickHouse string literal: backslash and single quote are
+ * the only characters that need escaping.
+ */
+export const escapeCHStringLiteral = (s: string): string => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
 export const escapeIdentifier = (id: string): string => {
   return id ? `"${id.replace(/"/g, '""')}"` : '';
 };

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Datasource } from 'data/CHDatasource';
-import { MetricCatalogEntry, MetricTables } from 'data/metrics';
+import { MetricCatalogEntry, MetricHealth, MetricTables } from 'data/metrics';
 import { MetricLabel, MetricType } from 'types/queryBuilder';
 
 interface AsyncState<T> {
@@ -84,20 +84,19 @@ export const useSummaryQuantiles = (
     datasource.fetchSummaryQuantiles(database, table, metricName)
   );
 
-const noCollisions = { shared: 0, total: 0 };
+const noHealth: MetricHealth = { sharedSeries: 0, series: 0 };
 
-/** Series of the picked metric that several writers appear to share. */
-export const useMetricIdentityCollisions = (
+/** Export interval and shared series of the picked metric over the last 15 minutes. */
+export const useMetricHealth = (
   datasource: Datasource,
   database: string,
   table: string,
   metricName: string,
   type: MetricType,
-  jsonAttributes: boolean | undefined,
-  rangeKey: string
+  jsonAttributes: boolean | undefined
 ) =>
   useAsync(
-    metricName && table ? `${database}.${table}:${type}:${metricName}:${Boolean(jsonAttributes)}:${rangeKey}` : '',
-    noCollisions,
-    () => datasource.fetchMetricIdentityCollisions(database, table, metricName, type, jsonAttributes)
+    metricName && table ? `${database}.${table}:${type}:${metricName}:${Boolean(jsonAttributes)}` : '',
+    noHealth,
+    () => datasource.fetchMetricHealth(database, table, metricName, type, jsonAttributes)
   );

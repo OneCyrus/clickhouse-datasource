@@ -40,8 +40,7 @@ const createDatasource = (): Datasource => {
     fetchMetricLabelKeys: jest.fn(() => Promise.resolve([{ source: 'attribute', key: 'http.route' }])),
     fetchMetricLabelValues: jest.fn(() => Promise.resolve(['/a', '/b'])),
     fetchSummaryQuantiles: jest.fn(() => Promise.resolve([])),
-    fetchMetricIdentityCollisions: jest.fn(() => Promise.resolve({ shared: 0, total: 0 })),
-    fetchMetricExportInterval: jest.fn(() => Promise.resolve(10)),
+    fetchMetricHealth: jest.fn(() => Promise.resolve({ exportInterval: 10, sharedSeries: 0, series: 4 })),
   } as unknown as Datasource;
   return datasource;
 };

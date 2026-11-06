@@ -60,12 +60,12 @@ import { pluginVersion } from 'utils/version';
 import {
   getConfiguredMetricTables,
   getMetricCatalogSql,
-  getMetricExportIntervalSql,
-  getMetricIdentityCollisionSql,
+  getMetricHealthSql,
   getMetricLabelKeysSql,
   getMetricLabelValuesSql,
   getSummaryQuantilesSql,
   MetricCatalogEntry,
+  MetricHealth,
   MetricTables,
   resolveMetricTables,
 } from './metrics';
@@ -86,7 +86,11 @@ import {
   getTableIdentifier,
   isStringType,
   logAliasToColumnHints,
+  escapeCHStringLiteral,
 } from './sqlGenerator';
+
+// Re-exported for existing imports; the implementation lives with the other SQL escaping helpers.
+export { escapeCHStringLiteral };
 import { buildJSONPathAccess, mintJSONAdhocKey, parseJSONAdhocKey } from './jsonPath';
 import { planSqlLogsVolume } from './logsVolumeSql';
 import {
@@ -1308,46 +1312,70 @@ export class Datasource
     return getConfiguredMetricTables(this.settings.jsonData.metrics);
   }
 
-  private metricTablesPromise?: Promise<MetricTables>;
+  /**
+   * Runs a metadata query of the metrics editor as a table. Unlike runQuery, a failed query rejects
+   * instead of resolving with no rows, so the editor shows the error rather than an empty list, and
+   * nothing empty gets cached.
+   */
+  private async fetchMetricsFrame(rawSql: string): Promise<DataFrame> {
+    const response = await firstValueFrom(
+      this.query({
+        targets: [{ rawSql, format: 1, refId: 'metrics-metadata' }],
+        range: (getTemplateSrv() as any).timeRange,
+      } as DataQueryRequest<CHQuery>)
+    );
+    const error = response.error || response.errors?.[0];
+    if (error) {
+      throw new Error(error.message || 'Query failed');
+    }
+    return response.data[0] || { fields: [], length: 0 };
+  }
+
+  /** The values of a metadata query's column, by name. */
+  private async fetchMetricsColumns(rawSql: string): Promise<(name: string) => unknown[]> {
+    const frame = await this.fetchMetricsFrame(rawSql);
+    return (name) => frame.fields.find((f) => f.name === name)?.values ?? [];
+  }
+
+  /** Memoized metadata lookups; a failed lookup is dropped so the next call retries it. */
+  private metricsCache = new Map<string, Promise<unknown>>();
+  private cachedMetricsLookup<T>(key: string, load: () => Promise<T>): Promise<T> {
+    let promise = this.metricsCache.get(key) as Promise<T> | undefined;
+    if (!promise) {
+      promise = load();
+      promise.catch(() => this.metricsCache.delete(key));
+      this.metricsCache.set(key, promise);
+    }
+    return promise;
+  }
 
   /**
    * The metric tables that exist, by type. Looked up once per data source instance, since the
-   * exporter creates its tables up front. A failed lookup is retried on the next call.
+   * exporter creates its tables up front.
    */
   resolveMetricTables(): Promise<MetricTables> {
-    if (!this.metricTablesPromise) {
-      const database = this.getDefaultMetricsDatabase();
-      this.metricTablesPromise = this.fetchTables(database)
-        .then((tables) => resolveMetricTables(this.getConfiguredMetricTables(), tables.map(String)))
-        .catch((error: unknown) => {
-          this.metricTablesPromise = undefined;
-          throw error;
-        });
-    }
-    return this.metricTablesPromise;
+    const database = this.getDefaultMetricsDatabase();
+    return this.cachedMetricsLookup(`tables:${database}`, async () => {
+      const column = await this.fetchMetricsColumns(`SHOW TABLES FROM ${escapeIdentifier(database)}`);
+      const tables = column('name').map(String);
+      return resolveMetricTables(this.getConfiguredMetricTables(), tables);
+    });
   }
 
   /** The metrics with data in the dashboard time range, across every metric table. */
   async fetchMetricCatalog(): Promise<MetricCatalogEntry[]> {
-    const tables = await this.resolveMetricTables();
-    const rawSql = getMetricCatalogSql(this.getDefaultMetricsDatabase(), tables);
+    const rawSql = getMetricCatalogSql(this.getDefaultMetricsDatabase(), await this.resolveMetricTables());
     if (!rawSql) {
       return [];
     }
-
-    const frame = await this.runQuery({ rawSql, format: 1 });
-    const column = (name: string) => frame.fields?.find((f) => f.name === name)?.values ?? [];
-    const names = column('name');
-    const types = column('type');
-    const units = column('unit');
-    const descriptions = column('description');
-    const monotonic = column('monotonic');
-    return names.map((name, index) => ({
+    const column = await this.fetchMetricsColumns(rawSql);
+    const [types, units, descriptions, monotonic] = ['type', 'unit', 'description', 'monotonic'].map(column);
+    return column('name').map((name, i) => ({
       name: String(name),
-      type: types[index] as MetricType,
-      unit: String(units[index] ?? ''),
-      description: String(descriptions[index] ?? ''),
-      isMonotonic: Boolean(Number(monotonic[index])),
+      type: types[i] as MetricType,
+      unit: String(units[i] ?? ''),
+      description: String(descriptions[i] ?? ''),
+      isMonotonic: Boolean(Number(monotonic[i])),
     }));
   }
 
@@ -1357,7 +1385,7 @@ export class Datasource
     return columns.some((column) => column.name === 'Attributes' && column.type.startsWith('JSON'));
   }
 
-  /** The attribute keys a metric has, by source. */
+  /** The attribute keys a metric has, by source. Empty when key discovery is turned off. */
   async fetchMetricLabelKeys(
     database: string,
     table: string,
@@ -1367,13 +1395,9 @@ export class Datasource
     if (!this.isMapKeysDiscoveryEnabled()) {
       return [];
     }
-    const frame = await this.runQuery({
-      rawSql: getMetricLabelKeysSql(database, table, metricName, jsonAttributes),
-      format: 1,
-    });
-    const sources = frame.fields?.find((f) => f.name === 'source')?.values ?? [];
-    const keys = frame.fields?.find((f) => f.name === 'key')?.values ?? [];
-    return keys.map((key, index) => ({ source: sources[index] as MetricLabelSource, key: String(key) }));
+    const column = await this.fetchMetricsColumns(getMetricLabelKeysSql(database, table, metricName, jsonAttributes));
+    const sources = column('source');
+    return column('key').map((key, i) => ({ source: sources[i] as MetricLabelSource, key: String(key) }));
   }
 
   async fetchMetricLabelValues(
@@ -1383,41 +1407,40 @@ export class Datasource
     label: MetricLabel,
     jsonAttributes?: boolean
   ): Promise<string[]> {
-    const values = await this.fetchData(getMetricLabelValuesSql(database, table, metricName, label, jsonAttributes));
-    return values.map(String);
+    const column = await this.fetchMetricsColumns(
+      getMetricLabelValuesSql(database, table, metricName, label, jsonAttributes)
+    );
+    return column('value').map(String);
   }
 
-  /** How many series of a metric look shared by several writers, see getMetricIdentityCollisionSql. */
-  async fetchMetricIdentityCollisions(
+  async fetchSummaryQuantiles(database: string, table: string, metricName: string): Promise<number[]> {
+    const column = await this.fetchMetricsColumns(getSummaryQuantilesSql(database, table, metricName));
+    return column('quantile').map(Number).filter(Number.isFinite);
+  }
+
+  /**
+   * Export interval and shared series of a metric over the last 15 minutes. Cached, since the
+   * editor reads it when a metric is picked and again to show the warning.
+   */
+  fetchMetricHealth(
     database: string,
     table: string,
     metricName: string,
     type: MetricType,
     jsonAttributes?: boolean
-  ): Promise<{ shared: number; total: number }> {
-    const frame = await this.runQuery({
-      rawSql: getMetricIdentityCollisionSql(database, table, metricName, type, jsonAttributes),
-      format: 1,
+  ): Promise<MetricHealth> {
+    const key = `health:${database}.${table}:${type}:${metricName}:${Boolean(jsonAttributes)}`;
+    return this.cachedMetricsLookup(key, async () => {
+      const column = await this.fetchMetricsColumns(
+        getMetricHealthSql(database, table, metricName, type, jsonAttributes)
+      );
+      const exportInterval = Number(column('export_interval')[0]);
+      return {
+        exportInterval: Number.isFinite(exportInterval) && exportInterval > 0 ? Math.round(exportInterval) : undefined,
+        sharedSeries: Number(column('shared_series')[0] ?? 0),
+        series: Number(column('series')[0] ?? 0),
+      };
     });
-    const value = (name: string) => Number(frame.fields?.find((f) => f.name === name)?.values[0] ?? 0);
-    return { shared: value('shared'), total: value('total') };
-  }
-
-  /** The export interval of a metric in seconds, or undefined when it has too few recent points. */
-  async fetchMetricExportInterval(
-    database: string,
-    table: string,
-    metricName: string,
-    jsonAttributes?: boolean
-  ): Promise<number | undefined> {
-    const values = await this.fetchData(getMetricExportIntervalSql(database, table, metricName, jsonAttributes));
-    const seconds = Number(values[0]);
-    return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
-  }
-
-  async fetchSummaryQuantiles(database: string, table: string, metricName: string): Promise<number[]> {
-    const values = await this.fetchData(getSummaryQuantilesSql(database, table, metricName));
-    return values.map(Number).filter((q) => Number.isFinite(q));
   }
 
   async fetchDatabases(): Promise<string[]> {
@@ -2806,14 +2829,6 @@ function isJSONColumnType(type: string | undefined): boolean {
 // Shared empty set returned when a table is known to have no attribute columns
 // of a given kind — avoids per-call allocation.
 const EMPTY_COLUMN_SET: ReadonlySet<string> = new Set();
-
-// Escape a string for embedding inside a single-quoted ClickHouse string
-// literal: backslash and single quote are the only characters that need
-// escaping. Use when interpolating an untrusted identifier (e.g. a Map key
-// from system.columns) into raw SQL.
-export function escapeCHStringLiteral(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-}
 
 enum AdHocFilterStatus {
   none = 0,

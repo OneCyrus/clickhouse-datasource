@@ -16,9 +16,8 @@ import {
   getConfiguredMetricTables,
   getDefaultSeriesAggregation,
   getMetricCatalogSql,
-  getMetricExportIntervalSql,
   getMetricFunctions,
-  getMetricIdentityCollisionSql,
+  getMetricHealthSql,
   getMetricLabelAliases,
   getMetricLabelExpression,
   getMetricLabelId,
@@ -177,7 +176,7 @@ describe('metric functions', () => {
     ]);
     expect(getMetricValueAliases(metric({ fn: MetricFunction.Quantile, quantiles: [0.5, 0.999] }))).toEqual([
       'p50',
-      'p99_9',
+      'p99.9',
     ]);
   });
 });
@@ -400,23 +399,17 @@ describe('discovery queries', () => {
     expect(getSummaryQuantilesSql('otel', 's', 'rpc')).toContain('arrayJoin(ValueAtQuantiles.Quantile)');
   });
 
-  it('finds series shared by several writers', () => {
-    const sql = getMetricIdentityCollisionSql('otel', 's', 'requests', MetricType.Sum);
-    expect(sql).toContain('countIf(points >= timestamps * 1.5 OR starts > 1) AS mixed_minutes, count() AS minutes');
-    expect(sql).toContain('countIf(mixed_minutes >= 3 AND mixed_minutes * 2 >= minutes) AS shared');
-    expect(sql).toContain('uniqExactIf(StartTimeUnix, AggregationTemporality = 2) AS starts');
-    expect(getMetricIdentityCollisionSql('otel', 'g', 'cpu', MetricType.Gauge)).toContain('1 AS starts');
-    expect(getMetricIdentityCollisionSql('otel', 's', 'rpc', MetricType.Summary)).toContain(
-      'uniqExact(StartTimeUnix) AS starts'
+  it('checks export interval and shared series over the last 15 minutes', () => {
+    const sql = getMetricHealthSql('otel', 's', 'requests', MetricType.Sum);
+    expect(sql).toContain('quantile(0.9)(series_gap) AS export_interval');
+    expect(sql).toContain('countIf(odd >= 3 AND odd * 4 >= points) AS shared_series');
+    expect(sql).toContain('countIf(gap = 0 OR start_changed) AS odd');
+    expect(sql).toContain(
+      'AggregationTemporality = 2 AND gap IS NOT NULL AND StartTimeUnix != lagInFrame(StartTimeUnix)'
     );
-    expect(sql).toContain("WHERE MetricName = 'requests' AND TimeUnix >= $__fromTime");
-  });
-
-  it('detects the export interval', () => {
-    const sql = getMetricExportIntervalSql('otel', 'g', 'cpu');
-    expect(sql).toContain('SELECT least(max(series_gap), 600) AS seconds');
-    expect(sql).toContain('median(gap) AS series_gap');
-    expect(sql).toContain("WHERE MetricName = 'cpu' AND TimeUnix >= now() - INTERVAL 15 MINUTE");
+    expect(sql).toContain("WHERE MetricName = 'requests' AND TimeUnix >= now() - INTERVAL 15 MINUTE");
+    expect(getMetricHealthSql('otel', 'g', 'cpu', MetricType.Gauge)).toContain('0 AND gap IS NOT NULL');
+    expect(getMetricHealthSql('otel', 's', 'rpc', MetricType.Summary)).toContain('1 AND gap IS NOT NULL');
   });
 
   it('quotes strings', () => {

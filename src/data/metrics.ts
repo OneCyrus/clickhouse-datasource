@@ -26,7 +26,7 @@ import {
 import { CHMetricsConfig } from 'types/config';
 import { defaultMetricsTables, legacyExponentialHistogramTable } from 'otel';
 import { buildJSONPathAccess } from './jsonPath';
-import { escapeIdentifier, getFilters, getTableIdentifier } from './sqlGenerator';
+import { escapeCHStringLiteral, escapeIdentifier, getFilters, getTableIdentifier } from './sqlGenerator';
 
 export const metricTypes: readonly MetricType[] = [
   MetricType.Gauge,
@@ -92,8 +92,8 @@ export const resolveMetricTables = (
   return resolved;
 };
 
-/** Escapes a value for a single-quoted ClickHouse string literal. */
-export const quoteString = (value: string): string => `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+/** A single-quoted ClickHouse string literal. */
+export const quoteString = (value: string): string => `'${escapeCHStringLiteral(value)}'`;
 
 /** The time column shared by every metric table. */
 export const metricTimeColumn = 'TimeUnix';
@@ -257,7 +257,10 @@ export const getDefaultSeriesAggregation = (type: MetricType, fn: MetricFunction
 
 export const defaultQuantiles: readonly number[] = [0.5, 0.9, 0.95, 0.99];
 
-/** A metric query for a newly picked metric, keeping the group by and legend of the previous one. */
+/**
+ * A metric query for a newly picked metric. It keeps the group by of the previous metric (and its
+ * function when the metric is of the same kind), and resets the legend, which named the old metric.
+ */
 export const buildMetricQuery = (
   entry: Pick<MetricQuery, 'name' | 'type' | 'unit' | 'isMonotonic'>,
   previous?: MetricQuery
@@ -283,22 +286,20 @@ export const buildMetricQuery = (
   };
 };
 
-const formatQuantileAlias = (q: number): string => {
-  const percent = Math.round(q * 10000) / 100;
-  return `p${String(percent).replace('.', '_')}`;
-};
+/** A quantile as a percentile name, for example 0.95 as p95 and 0.999 as p99.9. */
+export const formatQuantile = (q: number): string => `p${Math.round(q * 10000) / 100}`;
 
 /** The value column names of a query: one per quantile, or a single value. */
 export const getMetricValueAliases = (metric: MetricQuery): string[] => {
   const quantiles = metric.fn === MetricFunction.Quantile ? getQuantiles(metric) : [];
   if (quantiles.length > 1) {
-    return quantiles.map(formatQuantileAlias);
+    return quantiles.map(formatQuantile);
   }
   if (metric.legend) {
     return [metric.legend];
   }
   if (quantiles.length === 1) {
-    return [`${metric.name} ${formatQuantileAlias(quantiles[0])}`];
+    return [`${metric.name} ${formatQuantile(quantiles[0])}`];
   }
   return [metric.name];
 };
@@ -705,55 +706,45 @@ export const getSummaryQuantilesSql = (database: string, table: string, metricNa
   `SELECT DISTINCT arrayJoin(ValueAtQuantiles.Quantile) AS quantile FROM ${getTableIdentifier(database, table)} ` +
   `WHERE MetricName = ${quoteString(metricName)} AND ${timeRangeCondition} ORDER BY quantile ASC LIMIT 100`;
 
+export interface MetricHealth {
+  /** Typical seconds between two points of a series, undefined without recent data. */
+  exportInterval?: number;
+  /** Series that several writers appear to share. */
+  sharedSeries: number;
+  series: number;
+}
+
 /**
- * Finds series that several writers appear to share. OTel requires every producer to have a
- * unique identity (`service.instance.id`); replicas without one land in the same series, where
- * their interleaved cumulative values read as constant counter resets and their values mix.
- * Writers sharing a series send about twice as many points as there are distinct timestamps (a
- * single writer only rarely repeats a second, for example at a restart), and a cumulative series
- * keeps its start time except once at a restart. Shared series show either in nearly every
- * minute, so a series showing it in at least half of its minutes (and at least three) is counted
- * as shared; occasional restarts or deploys are not. Delta points and gauges carry no stable start time,
- * so only their timestamps are checked. Returns one row: `shared`, `total`.
+ * One cheap look at a metric's last 15 minutes, read once when it is picked:
+ *
+ * - The export interval: the median gap between consecutive points of each series, taking the
+ *   90th percentile across series so a few sporadic series do not coarsen the whole metric.
+ * - Series shared by several writers. OTel requires every producer to have a unique identity
+ *   (`service.instance.id`); replicas without one land in one series, where their points arrive in
+ *   the same second or, for cumulative points, keep switching start time. A single writer only
+ *   does that at a restart, so a series is counted as shared when at least 3 and at least a
+ *   quarter of its points do. Gauges and delta points have no stable start time and are only
+ *   checked for repeated seconds. Timestamps are compared in whole seconds, which also covers the
+ *   DateTime64 columns of older exporter versions.
  */
-export const getMetricIdentityCollisionSql = (
+export const getMetricHealthSql = (
   database: string,
   table: string,
   metricName: string,
   type: MetricType,
   jsonAttributes = false
 ): string => {
-  const starts =
-    type === MetricType.Gauge
-      ? '1'
-      : hasTemporality(type)
-        ? 'uniqExactIf(StartTimeUnix, AggregationTemporality = 2)'
-        : 'uniqExact(StartTimeUnix)';
+  const window = `OVER (PARTITION BY series ORDER BY ${metricTimeColumn} ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW)`;
+  const cumulative = type === MetricType.Gauge ? '0' : hasTemporality(type) ? 'AggregationTemporality = 2' : '1';
   return (
-    `SELECT countIf(mixed_minutes >= 3 AND mixed_minutes * 2 >= minutes) AS shared, count() AS total FROM (` +
-    `SELECT series, countIf(points >= timestamps * 1.5 OR starts > 1) AS mixed_minutes, count() AS minutes FROM (` +
-    `SELECT ${getSeriesKeyExpression(jsonAttributes)} AS series, toStartOfMinute(${metricTimeColumn}) AS minute, ` +
-    `count() AS points, uniqExact(${metricTimeColumn}) AS timestamps, ${starts} AS starts ` +
-    `FROM ${getTableIdentifier(database, table)} WHERE MetricName = ${quoteString(metricName)} AND ${timeRangeCondition} ` +
-    `GROUP BY series, minute) GROUP BY series)`
+    `SELECT quantile(0.9)(series_gap) AS export_interval, countIf(odd >= 3 AND odd * 4 >= points) AS shared_series, ` +
+    `count() AS series FROM (` +
+    `SELECT series, medianIf(gap, gap > 0) AS series_gap, count() AS points, countIf(gap = 0 OR start_changed) AS odd FROM (` +
+    `SELECT ${getSeriesKeyExpression(jsonAttributes)} AS series, ` +
+    `dateDiff('second', lagInFrame(toNullable(${metricTimeColumn})) ${window}, ${metricTimeColumn}) AS gap, ` +
+    `${cumulative} AND gap IS NOT NULL AND StartTimeUnix != lagInFrame(StartTimeUnix) ${window} AS start_changed ` +
+    `FROM ${getTableIdentifier(database, table)} WHERE MetricName = ${quoteString(metricName)} ` +
+    `AND ${metricTimeColumn} >= now() - INTERVAL 15 MINUTE` +
+    `) GROUP BY series)`
   );
 };
-
-/**
- * The export interval of a metric in seconds: the median time between consecutive points of each
- * series over the last 15 minutes, taking the slowest series (capped at 10 minutes) so every
- * instance has a point in each bucket. Restarts and gaps do not move a median.
- */
-export const getMetricExportIntervalSql = (
-  database: string,
-  table: string,
-  metricName: string,
-  jsonAttributes = false
-): string =>
-  `SELECT least(max(series_gap), 600) AS seconds FROM (SELECT series, median(gap) AS series_gap FROM (` +
-  `SELECT ${getSeriesKeyExpression(jsonAttributes)} AS series, dateDiff('second', ` +
-  `lagInFrame(toNullable(${metricTimeColumn})) OVER (PARTITION BY ${getSeriesKeyExpression(jsonAttributes)} ` +
-  `ORDER BY ${metricTimeColumn} ASC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), ${metricTimeColumn}) AS gap ` +
-  `FROM ${getTableIdentifier(database, table)} WHERE MetricName = ${quoteString(metricName)} ` +
-  `AND ${metricTimeColumn} >= now() - INTERVAL 15 MINUTE` +
-  `) WHERE gap > 0 GROUP BY series)`;
