@@ -35,13 +35,20 @@ export const levelExpression =
  * The pattern of a log line: numbers, ids, IPs and quoted values replaced by `<_>`, so lines from
  * the same template group together (ClickHouse has no pattern miner like Loki's).
  */
-export const patternExpression =
-  'replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(Body, ' +
-  "'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', '<_>'), " +
-  "'\\\\b(\\\\d{1,3}\\\\.){3}\\\\d{1,3}\\\\b', '<_>'), " +
-  "'\\\\b[A-Za-z]*[-_]?[0-9][A-Za-z0-9_.:-]*\\\\b', '<_>'), " +
-  '\'"[^"]*"\', \'<_>\'), ' +
-  "'(<_>[ ,;:/=]*)+<_>', '<_>')";
+const patternReplacements = [
+  // UUIDs, IPv4 addresses, then words with digits (ids such as ord-123, u-42, numbers, durations)
+  '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}',
+  '\\b(\\d{1,3}\\.){3}\\d{1,3}\\b',
+  '\\b[A-Za-z]*[-_]?[0-9][A-Za-z0-9_.:-]*\\b',
+  // quoted values
+  '"[^"]*"',
+  "'[^']*'",
+];
+
+export const patternExpression = [...patternReplacements, '(<_>[ ,;:/=]*)+<_>'].reduce(
+  (expression, regex) => `replaceRegexpAll(${expression}, ${quoteString(regex)}, '<_>')`,
+  'Body'
+);
 
 /** The SQL expression of a filter key. */
 export const logsExpression = (key: string): string | undefined => {
@@ -85,3 +92,107 @@ export const volumeByLevelSql = (source: SignalSource, condition: string): strin
 
 export const countSql = (source: SignalSource, condition: string): string =>
   `SELECT count() AS count FROM ${logsTable(source)} WHERE $__timeFilter(Timestamp) AND ${condition}`;
+
+/** A line filter of the header: include or exclude text or a regular expression. */
+export interface LineFilter {
+  exclude: boolean;
+  text: string;
+  caseSensitive: boolean;
+  regex: boolean;
+}
+
+export const lineFilterSql = (filter: LineFilter): string => {
+  const text = quoteString(filter.text);
+  const match = filter.regex
+    ? `match(Body, ${quoteString(filter.caseSensitive ? filter.text : `(?i)${filter.text}`)})`
+    : filter.caseSensitive
+      ? `position(Body, ${text}) > 0`
+      : `positionCaseInsensitiveUTF8(Body, ${text}) > 0`;
+  return filter.exclude ? `NOT ${match}` : match;
+};
+
+export const lineFiltersSql = (filters: LineFilter[]): string => {
+  const conditions = filters.filter((filter) => filter.text).map((filter) => `(${lineFilterSql(filter)})`);
+  return conditions.length ? conditions.join(' AND ') : '1 = 1';
+};
+
+export const levelsSql = (levels: string[]): string =>
+  levels.length ? `${levelExpression} IN (${levels.map(quoteString).join(', ')})` : '1 = 1';
+
+export interface AppliedPattern {
+  type: 'include' | 'exclude';
+  pattern: string;
+}
+
+/** Included patterns are ORed, excluded ones ANDed, as in Logs Drilldown. */
+export const patternsSql = (patterns: AppliedPattern[]): string => {
+  const included = patterns.filter((p) => p.type === 'include').map((p) => quoteString(p.pattern));
+  const excluded = patterns.filter((p) => p.type === 'exclude').map((p) => quoteString(p.pattern));
+  const conditions = [
+    included.length ? `${patternExpression} IN (${included.join(', ')})` : '',
+    excluded.length ? `${patternExpression} NOT IN (${excluded.join(', ')})` : '',
+  ].filter(Boolean);
+  return conditions.length ? conditions.join(' AND ') : '1 = 1';
+};
+
+/** Labels (resource attributes and the service) or fields (log attributes) with their cardinality. */
+export const detectedKeysSql = (source: SignalSource, kind: 'labels' | 'fields', condition: string): string => {
+  const column = kind === 'labels' ? 'ResourceAttributes' : 'LogAttributes';
+  const prefix = kind === 'labels' ? 'resource.' : 'log.';
+  const keys =
+    `SELECT concat(${quoteString(prefix)}, tupleElement(kv, 1)) AS key, uniq(tupleElement(kv, 2)) AS cardinality ` +
+    `FROM (SELECT arrayJoin(arrayZip(mapKeys(${column}), mapValues(${column}))) AS kv FROM ${logsTable(source)} ` +
+    `WHERE $__timeFilter(Timestamp) AND ${condition}) GROUP BY key`;
+  if (kind === 'fields') {
+    return `SELECT key, cardinality FROM (${keys}) ORDER BY key ASC LIMIT 500`;
+  }
+  // service.name and the level are labels too; the service is a column of its own.
+  const extra =
+    `SELECT ${quoteString(SERVICE_KEY)} AS key, uniq(ServiceName) AS cardinality FROM ${logsTable(source)} WHERE $__timeFilter(Timestamp) AND ${condition} ` +
+    `UNION ALL SELECT 'level' AS key, uniq(${levelExpression}) AS cardinality FROM ${logsTable(source)} WHERE $__timeFilter(Timestamp) AND ${condition}`;
+  return `SELECT key, max(cardinality) AS cardinality FROM (${keys} UNION ALL ${extra}) GROUP BY key HAVING cardinality > 0 ORDER BY key ASC LIMIT 500`;
+};
+
+/** Values of a key by count, most first, for the landing page and suggestions. */
+export const valueCountsSql = (source: SignalSource, key: string, condition: string, limit = 1000): string => {
+  const expression = logsExpression(key) || 'ServiceName';
+  return (
+    `SELECT toString(${expression}) AS value, count() AS count FROM ${logsTable(source)} ` +
+    `WHERE $__timeFilter(Timestamp) AND ${condition} GROUP BY value HAVING value != '' ORDER BY count DESC, value ASC LIMIT ${limit}`
+  );
+};
+
+/** Count per time bucket and value of a key, for the top values (all when limit is 0). */
+export const volumeByValueSql = (source: SignalSource, key: string, condition: string, limit = 20): string => {
+  const expression = `toString(${logsExpression(key) || 'ServiceName'})`;
+  const top = limit
+    ? ` AND ${expression} IN (SELECT ${expression} FROM ${logsTable(source)} WHERE $__timeFilter(Timestamp) AND ${condition} ` +
+      `GROUP BY ${expression} ORDER BY count() DESC LIMIT ${limit})`
+    : '';
+  return (
+    `SELECT $__timeInterval(Timestamp) AS time, ${expression} AS value, count() AS count FROM ${logsTable(source)} ` +
+    `WHERE $__timeFilter(Timestamp) AND ${condition} AND ${expression} != ''${top} GROUP BY time, value ORDER BY time ASC`
+  );
+};
+
+/** Patterns with total count, levels and counts per bucket (for sparklines), most frequent first. */
+export const patternsListSql = (source: SignalSource, condition: string, bucketSeconds: number): string =>
+  `SELECT pattern, sum(count) AS total, groupUniqArray(level) AS levels, ` +
+  `arraySort(x -> tupleElement(x, 1), groupArray((t, count))) AS series FROM (` +
+  `SELECT ${patternExpression} AS pattern, ${levelExpression} AS level, ` +
+  `toUnixTimestamp(toStartOfInterval(Timestamp, INTERVAL ${Math.max(1, Math.round(bucketSeconds))} second)) AS t, count() AS count ` +
+  `FROM ${logsTable(source)} WHERE $__timeFilter(Timestamp) AND ${condition} GROUP BY pattern, level, t` +
+  `) GROUP BY pattern ORDER BY total DESC LIMIT 500`;
+
+/** Count over time of the most frequent patterns. */
+export const patternsVolumeSql = (source: SignalSource, condition: string, limit = 20): string =>
+  `SELECT $__timeInterval(Timestamp) AS time, ${patternExpression} AS pattern, count() AS count FROM ${logsTable(source)} ` +
+  `WHERE $__timeFilter(Timestamp) AND ${condition} AND ${patternExpression} IN (` +
+  `SELECT ${patternExpression} FROM ${logsTable(source)} WHERE $__timeFilter(Timestamp) AND ${condition} ` +
+  `GROUP BY 1 ORDER BY count() DESC LIMIT ${limit}) GROUP BY time, pattern ORDER BY time ASC`;
+
+/** Sample lines of one pattern. */
+export const patternSamplesSql = (source: SignalSource, condition: string, pattern: string): string =>
+  logLinesSql(source, `${condition} AND ${patternExpression} = ${quoteString(pattern)}`, 20);
+
+export const levelOrder = ['critical', 'fatal', 'error', 'warn', 'info', 'debug', 'trace', 'unknown'];
