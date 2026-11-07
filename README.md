@@ -4,3 +4,9 @@ Grafana supports ClickHouse through a plugin. You can perform a variety of simpl
 
 Read more about it here:  
 [Grafana ClickHouse Documentation](https://grafana.com/docs/plugins/grafana-clickhouse-datasource/latest/)
+
+## This fork
+
+Deploys the metrics single-table work (upstream PR #7) to the home Grafana.
+The `metrics-deploy` branch is rebuilt by the release workflow and consumed by
+the plugin init container in `OneCyrus/home-k8s`.
