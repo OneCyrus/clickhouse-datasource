@@ -451,4 +451,9 @@ export interface MetricQuery {
    * series would jump depending on which instances happened to export in each bucket.
    */
   minStep?: number;
+  /**
+   * An extra SQL condition for the WHERE clause, for example `$filters` of the Drilldown app's
+   * filter bar. The query editor doesn't set it.
+   */
+  condition?: string;
 }

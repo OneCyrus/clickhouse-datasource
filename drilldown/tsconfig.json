@@ -1,0 +1,9 @@
+{
+  "extends": "../.config/tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "baseUrl": "../src",
+    "paths": { "*": ["../src/*"] }
+  },
+  "include": ["../src", "../.config/types", "./app"]
+}

@@ -455,6 +455,9 @@ const buildContext = (options: QueryBuilderOptions, metric: MetricQuery, timeCon
   if (filters) {
     conditions.push(filters);
   }
+  if (metric.condition) {
+    conditions.push(`(${metric.condition})`);
+  }
 
   return {
     table: getTableIdentifier(options.database, options.table),
