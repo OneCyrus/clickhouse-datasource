@@ -7,13 +7,6 @@ import { selectors } from 'selectors';
 const input = () => screen.getByTestId(selectors.components.QueryEditor.MinIntervalEditor.input);
 
 describe('MinIntervalEditor', () => {
-  it('shows the default placeholder, or a custom one such as an automatic floor', () => {
-    const { rerender } = render(<MinIntervalEditor onMinIntervalChange={() => {}} />);
-    expect(screen.getByPlaceholderText(labels.components.MinIntervalEditor.placeholder)).toBeInTheDocument();
-    rerender(<MinIntervalEditor onMinIntervalChange={() => {}} placeholder="auto (≥ 20s)" />);
-    expect(screen.getByPlaceholderText('auto (≥ 20s)')).toBeInTheDocument();
-  });
-
   it('renders the current value', () => {
     render(<MinIntervalEditor minInterval="5m" onMinIntervalChange={() => {}} />);
     expect(input()).toHaveValue('5m');

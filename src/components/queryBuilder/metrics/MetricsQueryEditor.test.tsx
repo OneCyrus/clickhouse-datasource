@@ -179,6 +179,34 @@ describe('MetricsQueryEditor', () => {
   });
 });
 
+describe('Min interval', () => {
+  it('shows the automatic floor as placeholder', async () => {
+    const options: QueryBuilderOptions = {
+      database: 'otel',
+      table: 'otel_metrics_gauge',
+      queryType: QueryType.TimeSeries,
+      metric: {
+        name: 'system.cpu.utilization',
+        type: MetricType.Gauge,
+        fn: MetricFunction.Avg,
+        aggregation: MetricSeriesAggregation.Avg,
+        groupBy: [],
+        minStep: 20,
+      },
+    };
+    render(
+      <MetricsQueryEditor
+        datasource={createDatasource()}
+        builderOptions={options}
+        builderOptionsDispatch={jest.fn()}
+        generatedSql=""
+        onMinIntervalChange={jest.fn()}
+      />
+    );
+    expect(await screen.findByPlaceholderText('auto (≥ 20s)')).toBeInTheDocument();
+  });
+});
+
 describe('metric label helpers', () => {
   it('parses typed quantiles', () => {
     expect(parseQuantile('0.95')).toBe(0.95);

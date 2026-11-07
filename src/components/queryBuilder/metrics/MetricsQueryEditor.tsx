@@ -9,6 +9,7 @@ import {
   ComboboxOption,
   IconButton,
   InlineField,
+  Input,
   MultiCombobox,
   RadioButtonGroup,
   Stack,
@@ -48,7 +49,8 @@ import { selectors } from 'selectors';
 import { buildCompactMetricsDefaults } from '../compactQueryDefaults';
 import { FilterTagBar } from '../FilterTagBar';
 import { SqlPreview } from '../SqlPreview';
-import { MinIntervalEditor } from 'components/MinIntervalEditor';
+import { useMinIntervalDraft } from 'components/MinIntervalEditor';
+import labels from 'labels';
 import { getMetricLabelOptions, MetricLabelFilterEditor } from './MetricLabelFilterEditor';
 import {
   useMetricCatalog,
@@ -379,7 +381,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
         )}
 
         <div className={styles.section}>
-          <InlineField label="Metric" labelWidth={12} grow>
+          <InlineField label="Metric" labelWidth={14} grow>
             <div data-testid={editorSelectors.metricPicker}>
               <Combobox
                 aria-label="Metric"
@@ -437,7 +439,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
         {metric.name && (
           <>
             <div className={styles.section}>
-              <InlineField label="Function" labelWidth={12}>
+              <InlineField label="Function" labelWidth={14}>
                 <div data-testid={editorSelectors.functionPicker}>
                   <Combobox
                     aria-label="Function"
@@ -472,7 +474,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
 
             <div className={styles.section}>
               {usesSeriesAggregation(metric.type, metric.fn) && (
-                <InlineField label="Aggregate" labelWidth={12}>
+                <InlineField label="Aggregate" labelWidth={14}>
                   <div data-testid={editorSelectors.aggregationPicker}>
                     <RadioButtonGroup
                       options={aggregationOptions}
@@ -485,7 +487,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
               )}
               <InlineField
                 label={usesSeriesAggregation(metric.type, metric.fn) ? 'by' : 'Group by'}
-                labelWidth={usesSeriesAggregation(metric.type, metric.fn) ? undefined : 12}
+                labelWidth={usesSeriesAggregation(metric.type, metric.fn) ? undefined : 14}
                 tooltip="One series per combination of these labels. Leave empty for a single series."
                 grow
               >
@@ -505,7 +507,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
             </div>
 
             <div className={styles.section}>
-              <InlineField label="Filters" labelWidth={12}>
+              <InlineField label="Filters" labelWidth={14}>
                 <Stack direction="row" alignItems="center" gap={0.5} wrap="wrap">
                   <FilterTagBar
                     filters={filters}
@@ -541,15 +543,10 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
 
             <div className={styles.section}>
               {onMinIntervalChange && (
-                <MinIntervalEditor
+                <MetricMinInterval
                   minInterval={minInterval}
                   onMinIntervalChange={onMinIntervalChange}
-                  placeholder={metric.minStep ? `auto (≥ ${metric.minStep}s)` : undefined}
-                  hint={
-                    metric.minStep
-                      ? `This metric is exported every ${metric.minStep / 2}s, so its resolution is at least ${metric.minStep}s.`
-                      : undefined
-                  }
+                  minStep={metric.minStep}
                 />
               )}
             </div>
@@ -559,5 +556,40 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
 
       <SqlPreview sql={generatedSql} compact onEditAsSql={() => onEditAsSql?.(builderOptions)} />
     </div>
+  );
+};
+
+/**
+ * Min interval with a plain label like the editor's other fields. When empty, the placeholder
+ * shows the floor applied automatically (twice the metric's export interval), explained in the
+ * tooltip.
+ */
+const MetricMinInterval = (props: {
+  minInterval?: string;
+  onMinIntervalChange: (minInterval: string) => void;
+  minStep?: number;
+}) => {
+  const { minInterval, onMinIntervalChange, minStep } = props;
+  const { draft, setDraft, invalid, commit } = useMinIntervalDraft(minInterval, onMinIntervalChange);
+  const text = labels.components.MinIntervalEditor;
+  const placeholder = minStep ? `auto (≥ ${minStep}s)` : text.placeholder;
+  const tooltip = minStep
+    ? `${text.tooltip} This metric is exported every ${minStep / 2}s, so its resolution is at least ${minStep}s.`
+    : text.tooltip;
+
+  return (
+    <InlineField label={text.label} labelWidth={14} tooltip={tooltip} invalid={invalid} error={text.error}>
+      <Input
+        data-testid={selectors.components.QueryEditor.MinIntervalEditor.input}
+        aria-label={text.label}
+        width={Math.max(10, placeholder.length + 2)}
+        value={draft}
+        invalid={invalid}
+        placeholder={placeholder}
+        onChange={(e) => setDraft(e.currentTarget.value)}
+        onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && commit()}
+      />
+    </InlineField>
   );
 };
