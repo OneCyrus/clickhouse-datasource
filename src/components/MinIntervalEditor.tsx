@@ -9,6 +9,8 @@ interface MinIntervalEditorProps {
   onMinIntervalChange: (minInterval: string) => void;
   /** Extra context appended to the field's tooltip, such as an interval floor applied automatically. */
   hint?: string;
+  /** Overrides the placeholder, for example to show the interval floor used when the field is empty. */
+  placeholder?: string;
 }
 
 /**
@@ -40,7 +42,8 @@ export const useMinIntervalDraft = (minInterval: string | undefined, onCommit: (
 
 export const MinIntervalEditor = (props: MinIntervalEditorProps) => {
   const { draft, setDraft, invalid, commit } = useMinIntervalDraft(props.minInterval, props.onMinIntervalChange);
-  const { label, tooltip, placeholder, error } = labels.components.MinIntervalEditor;
+  const { label, tooltip, error } = labels.components.MinIntervalEditor;
+  const placeholder = props.placeholder || labels.components.MinIntervalEditor.placeholder;
 
   return (
     <InlineField
@@ -58,7 +61,7 @@ export const MinIntervalEditor = (props: MinIntervalEditorProps) => {
     >
       <Input
         data-testid={selectors.components.QueryEditor.MinIntervalEditor.input}
-        width={10}
+        width={Math.max(10, placeholder.length + 2)}
         value={draft}
         invalid={invalid}
         aria-label={label}

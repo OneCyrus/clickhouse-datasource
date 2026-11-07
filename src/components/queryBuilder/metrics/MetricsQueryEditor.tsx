@@ -544,6 +544,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
                 <MinIntervalEditor
                   minInterval={minInterval}
                   onMinIntervalChange={onMinIntervalChange}
+                  placeholder={metric.minStep ? `auto (≥ ${metric.minStep}s)` : undefined}
                   hint={
                     metric.minStep
                       ? `This metric is exported every ${metric.minStep / 2}s, so its resolution is at least ${metric.minStep}s.`
