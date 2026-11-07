@@ -678,11 +678,13 @@ const generateSummaryQuantileQuery = (options: QueryBuilderOptions, metric: Metr
     `${timeBucketExpression(metric)} AS __time`,
     ...innerLabels(ctx),
     `${ctx.seriesKey} AS __series`,
-    ...quantiles.map(
-      (q, index) =>
-        `avg(if(indexOf(ValueAtQuantiles.Quantile, ${formatNumber(q)}) = 0, NULL, ` +
-        `ValueAtQuantiles.Value[indexOf(ValueAtQuantiles.Quantile, ${formatNumber(q)})])) AS __q${index}`
-    ),
+    // A quantile the summary does not report, or reports as NaN (no observations in its window),
+    // is missing rather than a value, so it neither turns the average into NaN nor counts as a series.
+    ...quantiles.map((q, index) => {
+      const at = `indexOf(ValueAtQuantiles.Quantile, ${formatNumber(q)})`;
+      const value = `ValueAtQuantiles.Value[${at}]`;
+      return `avg(if(${at} = 0 OR isNaN(${value}), NULL, ${value})) AS __q${index}`;
+    }),
   ])} FROM ${ctx.table} WHERE ${ctx.where} GROUP BY ${join(['__time', ...labelRefs(ctx), '__series'])}`;
 
   return outerQuery(

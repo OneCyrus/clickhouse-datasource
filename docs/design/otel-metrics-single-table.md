@@ -91,6 +91,15 @@ generator, filter chips and "Open in SQL editor" behave as for logs and traces. 
 - Queries without a picked metric generate no SQL and are not run.
 - "Open in SQL editor" turns the generated SQL into a starting point for hand-written queries.
 
+### Verification of every function
+
+Every metric type x function x cross-series aggregation the editor offers (219 combinations, on
+real host and Prometheus data plus generated data with restarts, delta temporality, up-down
+counters and varying gauges) was compared with an independent Python reference that reads the
+raw points and applies the definitions, at 1 s, 60 s and 300 s intervals: all match. The check
+found one bug, fixed since: summary quantiles reported as NaN (no observations) now count as
+missing instead of turning averages into NaN.
+
 ### Many instances
 
 Verified with a simulated fleet sent through the Collector (30 instances with known rates, a

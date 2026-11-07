@@ -354,7 +354,7 @@ describe('generateMetricsQuery', () => {
       )
     );
     expect(sql).toContain(
-      'avg(if(indexOf(ValueAtQuantiles.Quantile, 0.9) = 0, NULL, ValueAtQuantiles.Value[indexOf(ValueAtQuantiles.Quantile, 0.9)])) AS __q0'
+      'avg(if(indexOf(ValueAtQuantiles.Quantile, 0.9) = 0 OR isNaN(ValueAtQuantiles.Value[indexOf(ValueAtQuantiles.Quantile, 0.9)]), NULL, ValueAtQuantiles.Value[indexOf(ValueAtQuantiles.Quantile, 0.9)])) AS __q0'
     );
     expect(sql).toContain('max(__q0) AS "http.server.request.duration p90"');
   });
