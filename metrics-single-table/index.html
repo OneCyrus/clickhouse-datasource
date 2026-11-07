@@ -1,0 +1,99 @@
+<title>ClickHouse Metrics Editor</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; video first, then a two-up grid of screenshots that opens full size on click. */
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --fg: #1b1f27; --muted: #5b6372; --line: #dde1e8; --accent: #c2410c;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111318; --surface: #181b22; --fg: #e6e8ee; --muted: #9aa2b1; --line: #2a2f3a; --accent: #f59e66; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111318; --surface: #181b22; --fg: #e6e8ee; --muted: #9aa2b1; --line: #2a2f3a; --accent: #f59e66; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 40px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 36px; }
+header { display: flex; flex-direction: column; gap: 8px; max-width: 70ch; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+h1 { font-size: clamp(26px, 4vw, 34px); line-height: 1.15; margin: 0; font-weight: 600; text-wrap: balance; }
+h2 { font-size: 18px; margin: 0; font-weight: 600; }
+p { margin: 0; color: var(--muted); }
+code { font-family: var(--mono); font-size: .9em; }
+a { color: var(--accent); }
+section { display: flex; flex-direction: column; gap: 14px; }
+video, .gif { width: 100%; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #000; display: block; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 24px; }
+figure { margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+figure button { padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); cursor: zoom-in; display: block; overflow: hidden; }
+figure button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+figure img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; }
+figcaption { font-size: 14px; display: flex; gap: 10px; align-items: baseline; }
+figcaption .n { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.file { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+dialog { padding: 0; border: 0; background: transparent; max-width: 96vw; max-height: 94vh; }
+dialog::backdrop { background: rgba(0,0,0,.82); }
+dialog img { max-width: 96vw; max-height: 94vh; display: block; cursor: zoom-out; }
+details summary { cursor: pointer; font-weight: 500; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">PR #7 · OneCyrus/clickhouse-datasource</span>
+    <h1>OTel metrics in the ClickHouse data source</h1>
+    <p>Media for the pull request: the editor browsing OTel Collector metrics stored in ClickHouse, recorded on Grafana 13.3.0 with real Collector data from 32 simulated instances plus host metrics. Click a screenshot to see it full size.</p>
+  </header>
+
+  <section aria-labelledby="video-h">
+    <h2 id="video-h">Walkthrough (1:24)</h2>
+    <video controls preload="metadata" playsinline src="media/metrics-editor-walkthrough.mp4"></video>
+    <span class="file">metrics-editor-walkthrough.mp4</span>
+  </section>
+
+  <section aria-labelledby="shots-h">
+    <h2 id="shots-h">Screenshots</h2>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <section aria-labelledby="gif-h">
+    <details>
+      <summary id="gif-h">Short preview (GIF, 6.7 MB)</summary>
+      <p style="margin-top:10px">The same walkthrough as an animated GIF, for places that don't play video.</p>
+      <img class="gif" loading="lazy" src="media/metrics-editor-preview.gif" alt="Animated preview of the metrics editor walkthrough" style="margin-top:12px">
+    </details>
+  </section>
+</div>
+
+<dialog id="zoom"><img id="zoom-img" alt=""></dialog>
+
+<script>
+const shots = [
+  ['1-metric-browser.png', 'Metric browser with type, unit and description'],
+  ['2-gauge-group-by.png', 'Gauge grouped by a label'],
+  ['3-label-filter-suggestions.png', 'Label filter with value suggestions'],
+  ['4-counter-rate-by-service.png', 'Counter rate by service, filtered'],
+  ['5-histogram-quantiles.png', 'Histogram p50 / p95 / p99 with the generated SQL'],
+  ['6-settings.png', 'Data source settings for the metrics signal'],
+  ['7-dashboard-variables.png', 'Dashboard with chained $service / $pod variables'],
+  ['8-variable-editor.png', 'Label values variable with a $service filter'],
+  ['9-filter-variables.png', 'Dashboard variables offered as filter values'],
+  ['10-histogram-heatmap.png', 'Histogram heatmaps; the lower left merges series with different bucket bounds'],
+  ['11-heatmap-editor.png', 'Heatmap function in the editor, read by the Heatmap panel as is'],
+];
+const grid = document.getElementById('grid');
+const zoom = document.getElementById('zoom');
+const zoomImg = document.getElementById('zoom-img');
+shots.forEach(([file, caption], i) => {
+  const fig = document.createElement('figure');
+  fig.innerHTML = `<button type="button" aria-label="Open ${caption} full size"><img loading="lazy" src="media/${file}" alt="${caption}"></button>
+    <figcaption><span class="n">${String(i + 1)}</span><span>${caption}</span></figcaption>
+    <span class="file">${file}</span>`;
+  fig.querySelector('button').addEventListener('click', () => {
+    zoomImg.src = 'media/' + file; zoomImg.alt = caption; zoom.showModal();
+  });
+  grid.appendChild(fig);
+});
+zoom.addEventListener('click', () => zoom.close());
+</script>
