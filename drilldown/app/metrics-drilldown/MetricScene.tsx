@@ -542,276 +542,272 @@ export class MetricScene extends SceneObjectBase<MetricSceneState> {
     );
   }
 
-  static Component = ({ model }: SceneComponentProps<MetricScene>) => {
-    const styles = useStyles2(getStyles);
-    const state = model.useState();
-    const { entry, query, main, body, actionView, groupBy, labels, sort, search, layout, summaryQuantiles } = state;
-    const { histogramFn, relatedPrefix, relatedSearch, logsCount, logsUid } = state;
-    const exploration = model.getExploration();
-    const { catalog } = exploration.useState();
-    const [searchText, setSearchText] = useState(search);
-    useEffect(() => setSearchText(search), [search]);
-    useEffect(() => {
-      if (searchText === search) {
-        return;
-      }
-      const timer = setTimeout(() => model.setView({ search: searchText }), 250);
-      return () => clearTimeout(timer);
-    }, [searchText, search, model]);
+  static Component = MetricSceneRenderer;
+}
 
-    const functions = getMetricFunctions(entry.type, entry.isMonotonic);
-    const quantileOptions = (
-      entry.type === MetricType.Summary && summaryQuantiles.length ? summaryQuantiles : quantileChoices
-    ).map((q) => ({ label: formatQuantile(q), value: String(q) }));
-    const groupOptions = [
-      { label: 'All', value: ALL },
-      ...labels.map((label) => ({ label: label.key, value: getMetricLabelId(label), description: label.source })),
-    ];
-    const breakdownable = usesGroupBy(query.fn) || entry.type === MetricType.Histogram;
-    const prefixes = Array.from(new Set(catalog.map((other) => metricPrefix(other.name)))).sort();
-    const logsSources = model.logsSources();
+function MetricSceneRenderer({ model }: SceneComponentProps<MetricScene>) {
+  const styles = useStyles2(getStyles);
+  const state = model.useState();
+  const { entry, query, main, body, actionView, groupBy, labels, sort, search, layout, summaryQuantiles } = state;
+  const { histogramFn, relatedPrefix, relatedSearch, logsCount, logsUid } = state;
+  const exploration = model.getExploration();
+  const { catalog } = exploration.useState();
+  const [searchText, setSearchText] = useState(search);
+  useEffect(() => setSearchText(search), [search]);
+  useEffect(() => {
+    if (searchText === search) {
+      return;
+    }
+    const timer = setTimeout(() => model.setView({ search: searchText }), 250);
+    return () => clearTimeout(timer);
+  }, [searchText, search, model]);
 
-    return (
-      <div className={styles.container}>
-        <div className={styles.header}>
-          <Stack direction="row" alignItems="center" gap={1} wrap="wrap">
-            <h3 className={styles.title}>{entry.name}</h3>
-            <Badge color="purple" text={metricKindLabel(entry)} />
-            {entry.unit && <Badge color="blue" text={entry.unit} />}
-          </Stack>
-          <Stack direction="row" gap={1}>
-            <Button
-              variant="secondary"
-              size="sm"
-              icon="arrow-left"
-              tooltip="Remove existing metric and choose a new metric"
-              onClick={() => exploration.selectMetric(undefined)}
-            >
-              Select new metric
-            </Button>
-            <Button variant="secondary" size="sm" icon="compass" onClick={() => model.openInExplore()}>
-              Explore
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              icon="share-alt"
-              tooltip="Copy URL"
-              onClick={() => copyCurrentUrl()}
-            />
-          </Stack>
-        </div>
+  const functions = getMetricFunctions(entry.type, entry.isMonotonic);
+  const quantileOptions = (
+    entry.type === MetricType.Summary && summaryQuantiles.length ? summaryQuantiles : quantileChoices
+  ).map((q) => ({ label: formatQuantile(q), value: String(q) }));
+  const groupOptions = [
+    { label: 'All', value: ALL },
+    ...labels.map((label) => ({ label: label.key, value: getMetricLabelId(label), description: label.source })),
+  ];
+  const breakdownable = usesGroupBy(query.fn) || entry.type === MetricType.Histogram;
+  const prefixes = Array.from(new Set(catalog.map((other) => metricPrefix(other.name)))).sort();
+  const logsSources = model.logsSources();
 
-        <div className={styles.functionRow}>
-          <Field label="Function" className={styles.field} horizontal>
-            <RadioButtonGroup
-              size="sm"
-              options={functions.map((fn) => ({
-                label: metricFunctionLabels[fn].label,
-                value: fn,
-                description: metricFunctionLabels[fn].description,
-              }))}
-              value={query.fn}
-              onChange={(fn) => model.setQuery({ fn })}
-            />
-          </Field>
-          {query.fn === MetricFunction.Quantile && (
-            <MultiCombobox
-              aria-label="Quantiles"
-              options={quantileOptions}
-              value={(query.quantiles || []).map(String)}
-              onChange={(options) =>
-                model.setQuery({ quantiles: options.map((o) => Number(o.value)).sort((a, b) => a - b) })
-              }
-              width="auto"
-              minWidth={20}
-            />
-          )}
-          {usesSeriesAggregation(entry.type, query.fn) && (
-            <RadioButtonGroup
-              size="sm"
-              options={['sum', 'avg', 'min', 'max'].map((agg) => ({
-                label: agg,
-                value: agg as MetricSeriesAggregation,
-              }))}
-              value={query.aggregation}
-              onChange={(aggregation) => model.setQuery({ aggregation })}
-            />
-          )}
-        </div>
+  return (
+    <div className={styles.container}>
+      <div className={styles.header}>
+        <Stack direction="row" alignItems="center" gap={1} wrap="wrap">
+          <h3 className={styles.title}>{entry.name}</h3>
+          <Badge color="purple" text={metricKindLabel(entry)} />
+          {entry.unit && <Badge color="blue" text={entry.unit} />}
+        </Stack>
+        <Stack direction="row" gap={1}>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon="arrow-left"
+            tooltip="Remove existing metric and choose a new metric"
+            onClick={() => exploration.selectMetric(undefined)}
+          >
+            Select new metric
+          </Button>
+          <Button variant="secondary" size="sm" icon="compass" onClick={() => model.openInExplore()}>
+            Explore
+          </Button>
+          <Button variant="secondary" size="sm" icon="share-alt" tooltip="Copy URL" onClick={() => copyCurrentUrl()} />
+        </Stack>
+      </div>
 
-        <div className={styles.mainPanel}>{main && <main.Component model={main} />}</div>
-
-        <TabsBar>
-          <Tab
-            label="Breakdown"
-            active={actionView === 'breakdown'}
-            onChangeTab={() => model.setView({ actionView: 'breakdown' })}
+      <div className={styles.functionRow}>
+        <Field label="Function" className={styles.field} horizontal>
+          <RadioButtonGroup
+            size="sm"
+            options={functions.map((fn) => ({
+              label: metricFunctionLabels[fn].label,
+              value: fn,
+              description: metricFunctionLabels[fn].description,
+            }))}
+            value={query.fn}
+            onChange={(fn) => model.setQuery({ fn })}
           />
-          <Tab
-            label="Related metrics"
-            active={actionView === 'related'}
-            onChangeTab={() => model.setView({ actionView: 'related' })}
+        </Field>
+        {query.fn === MetricFunction.Quantile && (
+          <MultiCombobox
+            aria-label="Quantiles"
+            options={quantileOptions}
+            value={(query.quantiles || []).map(String)}
+            onChange={(options) =>
+              model.setQuery({ quantiles: options.map((o) => Number(o.value)).sort((a, b) => a - b) })
+            }
+            width="auto"
+            minWidth={20}
           />
-          <Tab
-            label="Related logs"
-            counter={logsCount}
-            active={actionView === 'logs'}
-            onChangeTab={() => model.setView({ actionView: 'logs' })}
+        )}
+        {usesSeriesAggregation(entry.type, query.fn) && (
+          <RadioButtonGroup
+            size="sm"
+            options={['sum', 'avg', 'min', 'max'].map((agg) => ({
+              label: agg,
+              value: agg as MetricSeriesAggregation,
+            }))}
+            value={query.aggregation}
+            onChange={(aggregation) => model.setQuery({ aggregation })}
           />
-        </TabsBar>
+        )}
+      </div>
 
-        {actionView === 'breakdown' && breakdownable && (
-          <div className={styles.controls}>
-            <Field label="Group by" description="By label" className={styles.field}>
-              {groupOptions.length <= 4 ? (
-                <RadioButtonGroup
-                  options={groupOptions}
-                  value={groupBy}
-                  onChange={(value) => model.setView({ groupBy: value })}
-                />
-              ) : (
-                <Combobox
-                  aria-label="Group by"
-                  placeholder="Select a label to group by"
-                  options={groupOptions}
-                  value={groupBy}
-                  onChange={(option) => model.setView({ groupBy: option?.value || ALL })}
-                  isClearable
-                  width={36}
-                />
-              )}
-            </Field>
-            {entry.type === MetricType.Histogram && (
-              <Field label="Histogram breakdown function" className={styles.field}>
-                <RadioButtonGroup
-                  options={(['sum', 'p99', 'p95', 'p75', 'p50'] as HistogramBreakdownFn[]).map((fn) => ({
-                    label: fn === 'sum' ? 'Sum' : fn,
-                    value: fn,
-                  }))}
-                  value={histogramFn}
-                  onChange={(value) => model.setView({ histogramFn: value })}
-                />
-              </Field>
-            )}
-            <div className={styles.spacer} />
-            {groupBy !== ALL && (
-              <>
-                <Field label="Search" className={styles.field}>
-                  <Input
-                    prefix={<Icon name="search" />}
-                    placeholder="Quick search label values"
-                    value={searchText}
-                    onChange={(e) => setSearchText(e.currentTarget.value)}
-                    onKeyDown={(e) => e.key === 'Escape' && setSearchText('')}
-                    width={32}
-                  />
-                </Field>
-                <Field
-                  label="Sort by"
-                  description="Sorts values using standard or smart time series calculations."
-                  className={styles.field}
-                >
-                  <Combobox
-                    aria-label="Sort by"
-                    placeholder="Choose criteria"
-                    options={seriesSortOptions}
-                    value={sort}
-                    onChange={(option) => model.setView({ sort: option.value })}
-                    width={24}
-                  />
-                </Field>
-              </>
-            )}
-            <Field label="View" className={styles.field}>
+      <div className={styles.mainPanel}>{main && <main.Component model={main} />}</div>
+
+      <TabsBar>
+        <Tab
+          label="Breakdown"
+          active={actionView === 'breakdown'}
+          onChangeTab={() => model.setView({ actionView: 'breakdown' })}
+        />
+        <Tab
+          label="Related metrics"
+          active={actionView === 'related'}
+          onChangeTab={() => model.setView({ actionView: 'related' })}
+        />
+        <Tab
+          label="Related logs"
+          counter={logsCount}
+          active={actionView === 'logs'}
+          onChangeTab={() => model.setView({ actionView: 'logs' })}
+        />
+      </TabsBar>
+
+      {actionView === 'breakdown' && breakdownable && (
+        <div className={styles.controls}>
+          <Field label="Group by" description="By label" className={styles.field}>
+            {groupOptions.length <= 4 ? (
               <RadioButtonGroup
-                options={(groupBy === ALL ? ['grid', 'rows'] : ['single', 'grid', 'rows']).map((value) => ({
-                  value: value as BreakdownLayout,
-                  label: value[0].toUpperCase() + value.slice(1),
-                }))}
-                value={groupBy === ALL && layout === 'single' ? 'grid' : layout}
-                onChange={(value) => model.setView({ layout: value })}
+                options={groupOptions}
+                value={groupBy}
+                onChange={(value) => model.setView({ groupBy: value })}
               />
-            </Field>
-          </div>
-        )}
-        {actionView === 'breakdown' && !breakdownable && (
-          <p className={styles.note}>A heatmap shows all series together; pick another function to break it down.</p>
-        )}
-        {actionView === 'breakdown' && breakdownable && groupBy === ALL && !labels.length && (
-          <Alert severity="info" title="No labels found for the current filters and time range." />
-        )}
-
-        {actionView === 'related' && (
-          <div className={styles.controls}>
-            <Field label="View by" className={styles.field}>
+            ) : (
               <Combobox
-                aria-label="View by prefix"
-                options={[
-                  { label: 'All metric names', value: 'all' },
-                  ...prefixes.map((prefix) => ({ label: prefix, value: prefix })),
-                ]}
-                value={relatedPrefix}
-                onChange={(option) => model.setView({ relatedPrefix: option.value })}
-                width={28}
-              />
-            </Field>
-            <Field label="Search" className={styles.field}>
-              <Input
-                prefix={<Icon name="search" />}
-                placeholder="Search related metrics"
-                value={relatedSearch}
-                onChange={(e) => model.setView({ relatedSearch: e.currentTarget.value })}
+                aria-label="Group by"
+                placeholder="Select a label to group by"
+                options={groupOptions}
+                value={groupBy}
+                onChange={(option) => model.setView({ groupBy: option?.value || ALL })}
+                isClearable
                 width={36}
               />
+            )}
+          </Field>
+          {entry.type === MetricType.Histogram && (
+            <Field label="Histogram breakdown function" className={styles.field}>
+              <RadioButtonGroup
+                options={(['sum', 'p99', 'p95', 'p75', 'p50'] as HistogramBreakdownFn[]).map((fn) => ({
+                  label: fn === 'sum' ? 'Sum' : fn,
+                  value: fn,
+                }))}
+                value={histogramFn}
+                onChange={(value) => model.setView({ histogramFn: value })}
+              />
             </Field>
-          </div>
-        )}
-
-        {actionView === 'logs' && (
-          <>
-            <div className={styles.controls}>
-              <Field
-                label="Logs data source"
-                description="ClickHouse data sources with OpenTelemetry logs"
-                className={styles.field}
-              >
-                <Combobox
-                  aria-label="Logs data source"
-                  options={logsSources.map((settings) => ({ label: settings.name, value: settings.uid }))}
-                  value={logsUid || logsSources[0]?.uid || null}
-                  onChange={(option) => model.setView({ logsUid: option.value })}
+          )}
+          <div className={styles.spacer} />
+          {groupBy !== ALL && (
+            <>
+              <Field label="Search" className={styles.field}>
+                <Input
+                  prefix={<Icon name="search" />}
+                  placeholder="Quick search label values"
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.currentTarget.value)}
+                  onKeyDown={(e) => e.key === 'Escape' && setSearchText('')}
                   width={32}
                 />
               </Field>
-              <div className={styles.spacer} />
-              <LinkButton
-                variant="secondary"
-                icon="external-link-alt"
-                href={model.logsDrilldownUrl()}
-                tooltip="Use the Logs Drilldown app to explore these logs"
+              <Field
+                label="Sort by"
+                description="Sorts values using standard or smart time series calculations."
+                className={styles.field}
               >
-                Open in Logs Drilldown
-              </LinkButton>
-            </div>
-            {!body && (
-              <Alert severity="info" title="No related logs found">
-                Logs are matched to the metric by the filters they share: the service and resource attributes such as
-                k8s.pod.name. Add such a filter, or check that a ClickHouse data source holds OpenTelemetry logs.
-              </Alert>
-            )}
-          </>
-        )}
-        {body && (
-          <div
-            className={actionView === 'logs' || (layout === 'single' && groupBy !== ALL) ? styles.tallBody : undefined}
-          >
-            <body.Component model={body} />
+                <Combobox
+                  aria-label="Sort by"
+                  placeholder="Choose criteria"
+                  options={seriesSortOptions}
+                  value={sort}
+                  onChange={(option) => model.setView({ sort: option.value })}
+                  width={24}
+                />
+              </Field>
+            </>
+          )}
+          <Field label="View" className={styles.field}>
+            <RadioButtonGroup
+              options={(groupBy === ALL ? ['grid', 'rows'] : ['single', 'grid', 'rows']).map((value) => ({
+                value: value as BreakdownLayout,
+                label: value[0].toUpperCase() + value.slice(1),
+              }))}
+              value={groupBy === ALL && layout === 'single' ? 'grid' : layout}
+              onChange={(value) => model.setView({ layout: value })}
+            />
+          </Field>
+        </div>
+      )}
+      {actionView === 'breakdown' && !breakdownable && (
+        <p className={styles.note}>A heatmap shows all series together; pick another function to break it down.</p>
+      )}
+      {actionView === 'breakdown' && breakdownable && groupBy === ALL && !labels.length && (
+        <Alert severity="info" title="No labels found for the current filters and time range." />
+      )}
+
+      {actionView === 'related' && (
+        <div className={styles.controls}>
+          <Field label="View by" className={styles.field}>
+            <Combobox
+              aria-label="View by prefix"
+              options={[
+                { label: 'All metric names', value: 'all' },
+                ...prefixes.map((prefix) => ({ label: prefix, value: prefix })),
+              ]}
+              value={relatedPrefix}
+              onChange={(option) => model.setView({ relatedPrefix: option.value })}
+              width={28}
+            />
+          </Field>
+          <Field label="Search" className={styles.field}>
+            <Input
+              prefix={<Icon name="search" />}
+              placeholder="Search related metrics"
+              value={relatedSearch}
+              onChange={(e) => model.setView({ relatedSearch: e.currentTarget.value })}
+              width={36}
+            />
+          </Field>
+        </div>
+      )}
+
+      {actionView === 'logs' && (
+        <>
+          <div className={styles.controls}>
+            <Field
+              label="Logs data source"
+              description="ClickHouse data sources with OpenTelemetry logs"
+              className={styles.field}
+            >
+              <Combobox
+                aria-label="Logs data source"
+                options={logsSources.map((settings) => ({ label: settings.name, value: settings.uid }))}
+                value={logsUid || logsSources[0]?.uid || null}
+                onChange={(option) => model.setView({ logsUid: option.value })}
+                width={32}
+              />
+            </Field>
+            <div className={styles.spacer} />
+            <LinkButton
+              variant="secondary"
+              icon="external-link-alt"
+              href={model.logsDrilldownUrl()}
+              tooltip="Use the Logs Drilldown app to explore these logs"
+            >
+              Open in Logs Drilldown
+            </LinkButton>
           </div>
-        )}
-      </div>
-    );
-  };
+          {!body && (
+            <Alert severity="info" title="No related logs found">
+              Logs are matched to the metric by the filters they share: the service and resource attributes such as
+              k8s.pod.name. Add such a filter, or check that a ClickHouse data source holds OpenTelemetry logs.
+            </Alert>
+          )}
+        </>
+      )}
+      {body && (
+        <div
+          className={actionView === 'logs' || (layout === 'single' && groupBy !== ALL) ? styles.tallBody : undefined}
+        >
+          <body.Component model={body} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 const getStyles = (theme: GrafanaTheme2) => ({

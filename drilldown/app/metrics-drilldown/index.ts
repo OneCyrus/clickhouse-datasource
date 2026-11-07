@@ -1,7 +1,6 @@
 import { EmbeddedScene } from '@grafana/scenes';
 import { MetricLabel } from 'types/queryBuilder';
-import { filtersVariable, otherFiltersSql } from '../shared/scene';
-import { buildAppScene } from '../shared/scene';
+import { buildAppScene, filtersVariable, otherFiltersSql } from '../shared/scene';
 import { frameRows, getSignalSource, interpolate, runSql } from '../shared';
 import { VAR_DATASOURCE } from '../constants';
 import {

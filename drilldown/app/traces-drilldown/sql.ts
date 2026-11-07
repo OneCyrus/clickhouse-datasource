@@ -138,7 +138,7 @@ export const slowestQuarterThreshold = (buckets: number[]): number | undefined =
 
 /** The comparison selection: errors for rate and errors, slow spans for duration. */
 export const selectionSql = (metric: MetricType, threshold?: number): string =>
-  metric === 'duration' ? `Duration >= ${Math.round((threshold ?? 0) * 1e9)}` : ERROR_CONDITION;
+  metric === 'duration' ? `Duration >= ${Math.round((threshold ?? 0) * 1e9)} AND ${VALID_DURATION}` : ERROR_CONDITION;
 
 /** The metric over time grouped by an attribute (Breakdown). */
 export const breakdownSql = (source: SignalSource, metric: MetricType, key: string, percentiles: number[]): string => {

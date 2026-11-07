@@ -118,125 +118,127 @@ export class PatternsScene extends SceneObjectBase<PatternsSceneState> {
     });
   }
 
-  static Component = ({ model }: SceneComponentProps<PatternsScene>) => {
-    const styles = useStyles2(getStyles);
-    const { rows, loading, error, search, volume, expanded, samples } = model.useState();
-    const { patterns } = model.getExploration().useState();
-    const [sortBy, setSortBy] = useState<'count' | 'pattern'>('count');
-    const total = rows.reduce((sum, row) => sum + row.total, 0) || 1;
-    const shown = rows
-      .filter((row) => row.pattern.toLowerCase().includes(search.toLowerCase()))
-      .sort((a, b) => (sortBy === 'count' ? b.total - a.total : a.pattern.localeCompare(b.pattern)));
+  static Component = PatternsSceneRenderer;
+}
 
-    return (
-      <div className={styles.container}>
-        <Input
-          prefix={<Icon name="search" />}
-          placeholder="Search patterns"
-          value={search}
-          onChange={(e) => model.setState({ search: e.currentTarget.value })}
-          width={50}
-        />
-        <p className={styles.muted}>
-          Patterns are selected by label and may be filtered by level. Fields and line filters are not supported for the
-          pattern list. Numbers, ids, IP addresses and quoted values are replaced by &lt;_&gt;.
-        </p>
-        {volume && (
-          <div className={styles.volume}>
-            <volume.Component model={volume} />
-          </div>
-        )}
-        {error && <Alert title="Could not load patterns">{error}</Alert>}
-        {loading && <LoadingPlaceholder text="Loading patterns…" />}
-        {!loading && !error && !rows.length && (
-          <Alert severity="info" title="No patterns found in the current time range." />
-        )}
-        {!loading && rows.length > 0 && !shown.length && (
-          <Alert severity="info" title="No patterns match these filters." />
-        )}
-        {shown.length > 0 && (
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th />
-                <th />
-                <th className={styles.sortable} onClick={() => setSortBy('count')}>
-                  Count {sortBy === 'count' && <Icon name="arrow-down" size="sm" />}
-                </th>
-                <th>%</th>
-                <th className={styles.sortable} onClick={() => setSortBy('pattern')}>
-                  Pattern {sortBy === 'pattern' && <Icon name="arrow-down" size="sm" />}
-                </th>
-                <th />
-                <th>Levels</th>
-              </tr>
-            </thead>
-            <tbody>
-              {shown.slice(0, 500).map((row) => {
-                const applied = patterns.find((p) => p.pattern === row.pattern)?.type;
-                return (
-                  <React.Fragment key={row.pattern}>
+function PatternsSceneRenderer({ model }: SceneComponentProps<PatternsScene>) {
+  const styles = useStyles2(getStyles);
+  const { rows, loading, error, search, volume, expanded, samples } = model.useState();
+  const { patterns } = model.getExploration().useState();
+  const [sortBy, setSortBy] = useState<'count' | 'pattern'>('count');
+  const total = rows.reduce((sum, row) => sum + row.total, 0) || 1;
+  const shown = rows
+    .filter((row) => row.pattern.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => (sortBy === 'count' ? b.total - a.total : a.pattern.localeCompare(b.pattern)));
+
+  return (
+    <div className={styles.container}>
+      <Input
+        prefix={<Icon name="search" />}
+        placeholder="Search patterns"
+        value={search}
+        onChange={(e) => model.setState({ search: e.currentTarget.value })}
+        width={50}
+      />
+      <p className={styles.muted}>
+        Patterns are selected by label and may be filtered by level. Fields and line filters are not supported for the
+        pattern list. Numbers, ids, IP addresses and quoted values are replaced by &lt;_&gt;.
+      </p>
+      {volume && (
+        <div className={styles.volume}>
+          <volume.Component model={volume} />
+        </div>
+      )}
+      {error && <Alert title="Could not load patterns">{error}</Alert>}
+      {loading && <LoadingPlaceholder text="Loading patterns…" />}
+      {!loading && !error && !rows.length && (
+        <Alert severity="info" title="No patterns found in the current time range." />
+      )}
+      {!loading && rows.length > 0 && !shown.length && (
+        <Alert severity="info" title="No patterns match these filters." />
+      )}
+      {shown.length > 0 && (
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th />
+              <th />
+              <th className={styles.sortable} onClick={() => setSortBy('count')}>
+                Count {sortBy === 'count' && <Icon name="arrow-down" size="sm" />}
+              </th>
+              <th>%</th>
+              <th className={styles.sortable} onClick={() => setSortBy('pattern')}>
+                Pattern {sortBy === 'pattern' && <Icon name="arrow-down" size="sm" />}
+              </th>
+              <th />
+              <th>Levels</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.slice(0, 500).map((row) => {
+              const applied = patterns.find((p) => p.pattern === row.pattern)?.type;
+              return (
+                <React.Fragment key={row.pattern}>
+                  <tr>
+                    <td>
+                      <IconButton
+                        name={expanded === row.pattern ? 'angle-down' : 'angle-right'}
+                        aria-label="Show sample lines"
+                        onClick={() => model.expand(row.pattern)}
+                      />
+                    </td>
+                    <td>
+                      <Sparkline points={row.series} />
+                    </td>
+                    <td className={styles.number}>{row.total.toLocaleString()}</td>
+                    <td className={styles.number}>{Math.round((row.total / total) * 100)}%</td>
+                    <td className={styles.pattern}>
+                      {row.pattern.split('<_>').map((part, index) => (
+                        <React.Fragment key={index}>
+                          {index > 0 && <span className={styles.placeholder}>&lt;_&gt;</span>}
+                          {part}
+                        </React.Fragment>
+                      ))}
+                    </td>
+                    <td className={styles.actions}>
+                      <Button
+                        size="sm"
+                        variant={applied === 'include' ? 'primary' : 'secondary'}
+                        fill={applied === 'include' ? 'solid' : 'outline'}
+                        onClick={() => model.toggle(row.pattern, 'include')}
+                      >
+                        Include
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={applied === 'exclude' ? 'primary' : 'secondary'}
+                        fill={applied === 'exclude' ? 'solid' : 'outline'}
+                        onClick={() => model.toggle(row.pattern, 'exclude')}
+                      >
+                        Exclude
+                      </Button>
+                    </td>
+                    <td>
+                      {row.levels.map((level) => (
+                        <LevelChip key={level} level={level} />
+                      ))}
+                    </td>
+                  </tr>
+                  {expanded === row.pattern && samples && (
                     <tr>
-                      <td>
-                        <IconButton
-                          name={expanded === row.pattern ? 'angle-down' : 'angle-right'}
-                          aria-label="Show sample lines"
-                          onClick={() => model.expand(row.pattern)}
-                        />
-                      </td>
-                      <td>
-                        <Sparkline points={row.series} />
-                      </td>
-                      <td className={styles.number}>{row.total.toLocaleString()}</td>
-                      <td className={styles.number}>{Math.round((row.total / total) * 100)}%</td>
-                      <td className={styles.pattern}>
-                        {row.pattern.split('<_>').map((part, index) => (
-                          <React.Fragment key={index}>
-                            {index > 0 && <span className={styles.placeholder}>&lt;_&gt;</span>}
-                            {part}
-                          </React.Fragment>
-                        ))}
-                      </td>
-                      <td className={styles.actions}>
-                        <Button
-                          size="sm"
-                          variant={applied === 'include' ? 'primary' : 'secondary'}
-                          fill={applied === 'include' ? 'solid' : 'outline'}
-                          onClick={() => model.toggle(row.pattern, 'include')}
-                        >
-                          Include
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant={applied === 'exclude' ? 'primary' : 'secondary'}
-                          fill={applied === 'exclude' ? 'solid' : 'outline'}
-                          onClick={() => model.toggle(row.pattern, 'exclude')}
-                        >
-                          Exclude
-                        </Button>
-                      </td>
-                      <td>
-                        {row.levels.map((level) => (
-                          <LevelChip key={level} level={level} />
-                        ))}
+                      <td colSpan={7} className={styles.samples}>
+                        <samples.Component model={samples} />
                       </td>
                     </tr>
-                    {expanded === row.pattern && samples && (
-                      <tr>
-                        <td colSpan={7} className={styles.samples}>
-                          <samples.Component model={samples} />
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-    );
-  };
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
 }
 
 function Sparkline({ points }: { points: Array<[number, number]> }) {

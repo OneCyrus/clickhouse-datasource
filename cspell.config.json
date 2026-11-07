@@ -11,7 +11,8 @@
     "mage_output_file.go",
     "test-results/**",
     "test_summary.json",
-    "playwright-report/**"
+    "playwright-report/**",
+    "drilldown/dist/**"
   ],
   "words": [
     "k8sattributes",
@@ -158,6 +159,24 @@
     "dsconfig",
     "struct",
     "Struct",
-    "behaviour"
+    "behaviour",
+    "aveniq",
+    "Aveniq",
+    "clickhousedrilldown",
+    "groupby",
+    "breakdownable",
+    "Queryless",
+    "queryless",
+    "updowncounter",
+    "pointwise",
+    "percentunit",
+    "sparklines",
+    "reqps",
+    "pids",
+    "mbytes",
+    "kbytes",
+    "ingester",
+    "analyse",
+    "DBSCAN"
   ]
 }

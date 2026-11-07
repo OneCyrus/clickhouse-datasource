@@ -2,7 +2,11 @@
 // generally used by snapshots, but can affect specific tests
 process.env.TZ = 'UTC';
 
+const base = require('./.config/jest.config');
+
 module.exports = {
   // Jest configuration provided by Grafana scaffolding
-  ...require('./.config/jest.config'),
+  ...base,
+  // The ClickHouse Drilldown app plugin (drilldown/) is tested with the data source.
+  testMatch: [...base.testMatch, '<rootDir>/drilldown/app/**/*.{spec,test,jest}.{js,jsx,ts,tsx}'],
 };

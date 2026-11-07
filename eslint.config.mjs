@@ -34,4 +34,17 @@ export default defineConfig([
     ],
   },
   ...baseConfig,
+  {
+    // The ClickHouse Drilldown app plugin, typed with its own tsconfig.
+    files: ['drilldown/app/**/*.{ts,tsx}'],
+    languageOptions: {
+      parserOptions: {
+        project: './drilldown/tsconfig.json',
+      },
+    },
+    rules: {
+      'react/prop-types': 'off',
+      '@typescript-eslint/no-deprecated': 'warn',
+    },
+  },
 ]);

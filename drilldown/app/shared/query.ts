@@ -1,4 +1,4 @@
-import { DataFrame, DataQueryResponse, dataFrameFromJSON, DataFrameJSON } from '@grafana/data';
+import { DataFrame, dataFrameFromJSON, DataFrameJSON } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
 import { SceneDataQuery, SceneObject, SceneQueryRunner, sceneGraph } from '@grafana/scenes';
 import { lastValueFrom } from 'rxjs';
@@ -52,7 +52,7 @@ export const runSql = async (
   const range = sceneGraph.getTimeRange(sceneObject).state.value;
   const response = await lastValueFrom(
     getBackendSrv().fetch<{
-      results: Record<string, DataQueryResponse & { frames?: DataFrameJSON[]; error?: string }>;
+      results: Record<string, { frames?: DataFrameJSON[]; error?: string }>;
     }>({
       url: '/api/ds/query',
       method: 'POST',

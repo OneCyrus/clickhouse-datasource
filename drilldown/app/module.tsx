@@ -8,6 +8,18 @@ interface CHQueryLike {
   builderOptions?: { queryType?: string; metric?: { name?: string; type?: string } };
 }
 
+/** A time for the URL: relative times as they are (`now-6h`), absolute ones as epoch milliseconds. */
+const urlTime = (time: string | { valueOf(): number }): string => {
+  if (typeof time !== 'string') {
+    return String(time.valueOf());
+  }
+  if (time.startsWith('now') || /^\d+$/.test(time)) {
+    return time;
+  }
+  const parsed = Date.parse(time);
+  return Number.isFinite(parsed) ? String(parsed) : time;
+};
+
 /**
  * Where "Open in ClickHouse Drilldown" leads for a panel or Explore query: the metric of a metrics
  * query, else the app for the query's signal.
@@ -23,9 +35,15 @@ export const getDrilldownPath = (context?: Partial<PluginExtensionPanelContext>)
   if (uid && !uid.startsWith('$')) {
     params.set('var-ds', uid);
   }
+  // The panel's time range, so the app opens on the same data.
+  const range = context?.timeRange;
+  if (range) {
+    params.set('from', urlTime(range.from));
+    params.set('to', urlTime(range.to));
+  }
   const metric = query.builderOptions?.metric;
-  if (metric?.name && metric.type) {
-    params.set('metric', `${metric.type}:${metric.name}`);
+  if (metric?.name) {
+    params.set('metric', metric.name);
     return `${prefixRoute(ROUTES.Metrics)}?${params}`;
   }
   const type = query.builderOptions?.queryType || query.queryType;

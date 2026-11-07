@@ -8,7 +8,9 @@
   },
   "scripts": {
     "build": "webpack -c ./webpack.config.ts --env production",
+    "build:drilldown": "webpack -c ./drilldown/webpack.config.ts --env production",
     "dev": "webpack -w -c ./webpack.config.ts --env development",
+    "dev:drilldown": "webpack -w -c ./drilldown/webpack.config.ts --env development",
     "e2e:report": "npx playwright show-report",
     "e2e:ui": "npx playwright test --ui",
     "e2e": "playwright test",
@@ -23,7 +25,8 @@
     "spellcheck": "cspell -c cspell.config.json \"**/*.{ts,tsx,js,go,md,mdx,yml,yaml,json,scss,css}\"",
     "test:ci": "jest --passWithNoTests --maxWorkers 4",
     "test": "jest --watch --onlyChanged",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:drilldown": "tsc --noEmit -p drilldown/tsconfig.json"
   },
   "author": "Grafana Labs",
   "license": "Apache-2.0",
