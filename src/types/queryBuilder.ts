@@ -443,8 +443,6 @@ export interface MetricQuery {
   groupBy: MetricLabel[];
   /** True when the attribute columns use the ClickHouse JSON type instead of Map. */
   jsonAttributes?: boolean;
-  /** Overrides the value column name, which defaults to the metric name. */
-  legend?: string;
   /**
    * Smallest time bucket in seconds, set to twice the metric's detected export interval. Buckets
    * shorter than the export interval would hold only some of the series' points, so sums across

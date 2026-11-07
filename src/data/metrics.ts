@@ -152,6 +152,10 @@ export const getFilterMetricLabel = (filter: Filter): MetricLabel | undefined =>
   return filter.key && !filter.mapKey ? { source: 'column', key: filter.key } : undefined;
 };
 
+/** The name a label filter shows in its chip: the label key, like in the label pickers. */
+export const getMetricFilterDisplayName = (filter: Filter): string =>
+  getFilterMetricLabel(filter)?.key ?? (filter.mapKey ? `${filter.key}.${filter.mapKey}` : filter.key);
+
 /** The name of the dashboard variable a value refers to: `$name`, `${name}`, `${name:format}` or `[[name]]`. */
 export const getVariableName = (value: unknown): string | undefined => {
   if (typeof value !== 'string') {
@@ -352,7 +356,7 @@ export const defaultQuantiles: readonly number[] = [0.5, 0.9, 0.95, 0.99];
 
 /**
  * A metric query for a newly picked metric. It keeps the group by of the previous metric (and its
- * function when the metric is of the same kind), and resets the legend, which named the old metric.
+ * function when the metric is of the same kind).
  */
 export const buildMetricQuery = (
   entry: Pick<MetricQuery, 'name' | 'type' | 'unit' | 'isMonotonic'>,
@@ -375,7 +379,6 @@ export const buildMetricQuery = (
     aggregation: keepAggregation ? previous.aggregation : getDefaultSeriesAggregation(entry.type, fn),
     groupBy: previous?.groupBy || [],
     jsonAttributes: previous?.jsonAttributes,
-    legend: undefined,
   };
 };
 
@@ -387,9 +390,6 @@ export const getMetricValueAliases = (metric: MetricQuery): string[] => {
   const quantiles = metric.fn === MetricFunction.Quantile ? getQuantiles(metric) : [];
   if (quantiles.length > 1) {
     return quantiles.map(formatQuantile);
-  }
-  if (metric.legend) {
-    return [metric.legend];
   }
   if (quantiles.length === 1) {
     return [`${metric.name} ${formatQuantile(quantiles[0])}`];

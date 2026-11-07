@@ -162,7 +162,6 @@ export const Components = {
       groupByPicker: 'query-builder__metrics-editor__group-by-picker',
       addFilterButton: 'query-builder__metrics-editor__add-filter-button',
       filterEditor: 'query-builder__metrics-editor__filter-editor',
-      legendInput: 'query-builder__metrics-editor__legend-input',
       identityWarning: 'query-builder__metrics-editor__identity-warning',
     },
     TimeSeriesQueryBuilder: {

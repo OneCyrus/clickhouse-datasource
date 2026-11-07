@@ -140,7 +140,6 @@ describe('metric functions', () => {
       aggregation: MetricSeriesAggregation.Sum,
       groupBy: [],
       jsonAttributes: undefined,
-      legend: undefined,
     });
   });
 
@@ -150,13 +149,11 @@ describe('metric functions', () => {
       fn: MetricFunction.Quantile,
       quantiles: [0.99],
       groupBy: [route],
-      legend: 'old',
     });
     const next = buildMetricQuery({ name: 'other', type: MetricType.Histogram }, previous);
     expect(next.fn).toBe(MetricFunction.Quantile);
     expect(next.quantiles).toEqual([0.99]);
     expect(next.groupBy).toEqual([route]);
-    expect(next.legend).toBeUndefined();
 
     const counter = buildMetricQuery({ name: 'c', type: MetricType.Sum, isMonotonic: true }, previous);
     expect(counter.fn).toBe(MetricFunction.Rate);
@@ -171,7 +168,6 @@ describe('metric functions', () => {
 
   it('names value columns', () => {
     expect(getMetricValueAliases(metric())).toEqual(['http.server.request.duration']);
-    expect(getMetricValueAliases(metric({ legend: 'latency' }))).toEqual(['latency']);
     expect(getMetricValueAliases(metric({ fn: MetricFunction.Quantile, quantiles: [0.95] }))).toEqual([
       'http.server.request.duration p95',
     ]);

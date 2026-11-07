@@ -8,6 +8,7 @@ import {
 } from 'types/queryBuilder';
 import {
   getFilterMetricLabel,
+  getMetricFilterDisplayName,
   getMetricFilterSql,
   getMetricLabelValuesVariableSql,
   getMetricNamesVariableSql,
@@ -153,5 +154,12 @@ describe('variable queries', () => {
       )
     ).toContain('toString(ResourceAttributes[\'k8s.pod.name\']) AS value FROM "otel"."s" WHERE MetricName = \'m\'');
     expect(generateVariableSql({ refId: 'v', queryType: 'metricLabelValues', metricTables: ['s'] }, 'otel')).toBe('');
+  });
+});
+
+describe('getMetricFilterDisplayName', () => {
+  it('names filter chips by label key', () => {
+    expect(getMetricFilterDisplayName(toMetricLabelFilter(pod, FilterOperator.Equals, 'x'))).toBe('k8s.pod.name');
+    expect(getMetricFilterDisplayName(toMetricLabelFilter(service, FilterOperator.Equals, 'x'))).toBe('ServiceName');
   });
 });

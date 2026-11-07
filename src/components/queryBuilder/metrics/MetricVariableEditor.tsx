@@ -1,7 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Combobox, ComboboxOption, InlineField, InlineFormLabel, Stack } from '@grafana/ui';
 import { Datasource } from 'data/CHDatasource';
-import { getMetricLabelId, metricColumnLabels, MetricTables, parseMetricLabelId } from 'data/metrics';
+import {
+  getMetricFilterDisplayName,
+  getMetricLabelId,
+  metricColumnLabels,
+  MetricTables,
+  parseMetricLabelId,
+} from 'data/metrics';
 import { Filter, MetricLabel, MetricType } from 'types/queryBuilder';
 import { FilterTagBar } from '../FilterTagBar';
 import { getMetricLabelOptions, MetricLabelFilterEditor } from './MetricLabelFilterEditor';
@@ -146,6 +152,8 @@ export const MetricVariableEditor = ({ datasource, query, onChange }: Props) => 
             <Stack direction="row" alignItems="center" gap={0.5} wrap="wrap">
               <FilterTagBar
                 filters={filters}
+                showLabel={false}
+                getDisplayName={getMetricFilterDisplayName}
                 onRemoveFilter={(index) => onChange({ metricFilters: filters.filter((_, i) => i !== index) })}
               />
               <Button icon="plus" variant="secondary" size="sm" fill="text" onClick={() => setShowFilterEditor(true)}>

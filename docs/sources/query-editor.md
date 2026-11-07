@@ -81,7 +81,6 @@ When a data source is configured in **Single source** mode for **Metrics**, the 
 
 1. **Aggregate … by**: how the series of each group are combined (`sum`, `avg`, `min`, `max`, `count`), and which labels form the groups. Labels are listed from the metric's data point attributes, resource attributes (such as `service.name` or `k8s.pod.name`), and scope attributes, plus the `ServiceName` and `ScopeName` columns. Leave the labels empty for a single series.
 1. **Filters**: narrow the series by label, with value suggestions for the selected metric. Dashboard variables are offered as values too; see [Metrics variables](/docs/plugins/grafana-clickhouse-datasource/<CLICKHOUSE_PLUGIN_VERSION>/template-variables/#metrics-variables).
-1. **Legend**: renames the value, which defaults to the metric name.
 
 Like PromQL, values are computed per series first (a series is one combination of resource, scope, and data point attributes) and then aggregated per group, so a gauge reported every 10 seconds is not counted several times when summed across pods. Rates divide each increase by the time it actually covers, so they stay correct at any zoom level.
 

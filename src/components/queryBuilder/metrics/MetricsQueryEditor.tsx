@@ -9,7 +9,6 @@ import {
   ComboboxOption,
   IconButton,
   InlineField,
-  Input,
   MultiCombobox,
   RadioButtonGroup,
   Stack,
@@ -22,6 +21,7 @@ import {
   defaultQuantiles,
   formatQuantile,
   getDefaultSeriesAggregation,
+  getMetricFilterDisplayName,
   getMetricFunctions,
   getMetricLabelId,
   metricAttributeColumns,
@@ -509,6 +509,8 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
                 <Stack direction="row" alignItems="center" gap={0.5} wrap="wrap">
                   <FilterTagBar
                     filters={filters}
+                    showLabel={false}
+                    getDisplayName={getMetricFilterDisplayName}
                     onRemoveFilter={(index) => onFiltersChange(filters.filter((_, i) => i !== index))}
                   />
                   <Button
@@ -538,13 +540,6 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
             )}
 
             <div className={styles.section}>
-              <InlineField
-                label="Legend"
-                labelWidth={12}
-                tooltip="Name of the value column. Defaults to the metric name. Group by labels are added by Grafana."
-              >
-                <LegendInput legend={metric.legend} onChange={(legend) => updateMetric({ legend })} />
-              </InlineField>
               {onMinIntervalChange && (
                 <MinIntervalEditor minInterval={minInterval} onMinIntervalChange={onMinIntervalChange} />
               )}
@@ -560,28 +555,5 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
 
       <SqlPreview sql={generatedSql} compact onEditAsSql={() => onEditAsSql?.(builderOptions)} />
     </div>
-  );
-};
-
-const LegendInput = (props: { legend?: string; onChange: (legend: string | undefined) => void }) => {
-  const [draft, setDraft] = useState(props.legend || '');
-  useEffect(() => setDraft(props.legend || ''), [props.legend]);
-  const commit = () => {
-    const legend = draft.trim() || undefined;
-    if (legend !== props.legend) {
-      props.onChange(legend);
-    }
-  };
-
-  return (
-    <Input
-      data-testid={editorSelectors.legendInput}
-      value={draft}
-      width={30}
-      placeholder="Metric name"
-      onChange={(e) => setDraft(e.currentTarget.value)}
-      onBlur={commit}
-      onKeyDown={(e) => e.key === 'Enter' && commit()}
-    />
   );
 };
