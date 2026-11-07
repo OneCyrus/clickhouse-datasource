@@ -480,7 +480,6 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
                       options={aggregationOptions}
                       value={metric.aggregation}
                       onChange={(aggregation) => updateMetric({ aggregation })}
-                      size="sm"
                     />
                   </div>
                 </InlineField>
