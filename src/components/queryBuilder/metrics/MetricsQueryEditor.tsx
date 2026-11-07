@@ -541,12 +541,15 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
 
             <div className={styles.section}>
               {onMinIntervalChange && (
-                <MinIntervalEditor minInterval={minInterval} onMinIntervalChange={onMinIntervalChange} />
-              )}
-              {metric.minStep && (
-                <Text color="secondary" variant="bodySmall">
-                  {`Resolution at least ${metric.minStep}s: the metric is exported every ${metric.minStep / 2}s`}
-                </Text>
+                <MinIntervalEditor
+                  minInterval={minInterval}
+                  onMinIntervalChange={onMinIntervalChange}
+                  hint={
+                    metric.minStep
+                      ? `This metric is exported every ${metric.minStep / 2}s, so its resolution is at least ${metric.minStep}s.`
+                      : undefined
+                  }
+                />
               )}
             </div>
           </>

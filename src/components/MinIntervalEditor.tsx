@@ -7,6 +7,8 @@ import { parseMinIntervalMs } from 'data/queryInterval';
 interface MinIntervalEditorProps {
   minInterval?: string;
   onMinIntervalChange: (minInterval: string) => void;
+  /** Extra context appended to the field's tooltip, such as an interval floor applied automatically. */
+  hint?: string;
 }
 
 /**
@@ -43,7 +45,11 @@ export const MinIntervalEditor = (props: MinIntervalEditorProps) => {
   return (
     <InlineField
       label={
-        <InlineFormLabel width={8} className="query-keyword" tooltip={tooltip}>
+        <InlineFormLabel
+          width={8}
+          className="query-keyword"
+          tooltip={props.hint ? `${tooltip} ${props.hint}` : tooltip}
+        >
           {label}
         </InlineFormLabel>
       }
