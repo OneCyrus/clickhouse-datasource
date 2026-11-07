@@ -95,6 +95,12 @@ export const defaultFavorites = [
 ];
 
 const traces = (source: SignalSource) => tableSql(source.database, source.table);
+
+/**
+ * Durations that make sense: a span that ends before it starts (clock skew) is stored as a huge
+ * unsigned value, which would stretch every duration chart. About 11 days at most.
+ */
+const VALID_DURATION = 'Duration < 1000000000000000';
 const timeFilter = '$__timeFilter(Timestamp)';
 
 /** Span rate (or error rate) per second over time. */
@@ -109,12 +115,12 @@ export const durationBucketExpression = 'pow(2, ceil(log2(greatest(Duration, 100
 /** Span counts per time bucket and duration bucket, for the duration heatmap. */
 export const durationHeatmapSql = (source: SignalSource): string =>
   `SELECT $__timeInterval(Timestamp) AS time, toString(${durationBucketExpression}) AS le, count() AS count ` +
-  `FROM ${traces(source)} WHERE ${timeFilter} AND ${SCOPE} GROUP BY time, le ORDER BY time ASC`;
+  `FROM ${traces(source)} WHERE ${timeFilter} AND ${SCOPE} AND ${VALID_DURATION} GROUP BY time, le ORDER BY time ASC`;
 
 /** The duration buckets that have spans, for the default comparison selection. */
 export const durationBucketsSql = (source: SignalSource): string =>
   `SELECT ${durationBucketExpression} AS bucket, count() AS count FROM ${traces(source)} ` +
-  `WHERE ${timeFilter} AND ${SCOPE} GROUP BY bucket ORDER BY bucket ASC`;
+  `WHERE ${timeFilter} AND ${SCOPE} AND ${VALID_DURATION} GROUP BY bucket ORDER BY bucket ASC`;
 
 /**
  * The default comparison selection of the duration metric: the slowest quarter of the buckets that
@@ -137,7 +143,9 @@ export const selectionSql = (metric: MetricType, threshold?: number): string =>
 /** The metric over time grouped by an attribute (Breakdown). */
 export const breakdownSql = (source: SignalSource, metric: MetricType, key: string, percentiles: number[]): string => {
   const expression = `toString(${traceExpression(key) || 'ServiceName'})`;
-  const where = `${timeFilter} AND ${SCOPE}${metric === 'errors' ? ` AND ${ERROR_CONDITION}` : ''} AND ${expression} != ''`;
+  const where =
+    `${timeFilter} AND ${SCOPE}${metric === 'errors' ? ` AND ${ERROR_CONDITION}` : ''} AND ${expression} != ''` +
+    (metric === 'duration' ? ` AND ${VALID_DURATION}` : '');
   if (metric === 'duration') {
     const ps = percentiles.length ? percentiles : [0.9];
     return (
@@ -188,9 +196,9 @@ export const comparisonSql = (source: SignalSource, selection: string): string =
 /** Spans for the trace list, slowest first. */
 export const spanListSql = (source: SignalSource, condition: string, columns: string[]): string =>
   `SELECT Timestamp AS "Start time", StatusCode AS "status", ServiceName AS "Service", SpanName AS "Name", ` +
-  `Duration / 1000000 AS "Duration", TraceId AS "Trace ID", SpanId AS "Span ID"` +
+  `Duration / 1000000 AS "Duration (ms)", TraceId AS "Trace ID", SpanId AS "Span ID"` +
   columns.map((key) => `, toString(${traceExpression(key) || "''"}) AS ${quoteIdentifier(key)}`).join('') +
-  ` FROM ${traces(source)} WHERE ${timeFilter} AND ${SCOPE} AND ${condition} ORDER BY Duration DESC LIMIT 200`;
+  ` FROM ${traces(source)} WHERE ${timeFilter} AND ${SCOPE} AND ${condition} AND ${VALID_DURATION} ORDER BY Duration DESC LIMIT 200`;
 
 const quoteIdentifier = (name: string) => `"${name.replace(/"/g, '""')}"`;
 
