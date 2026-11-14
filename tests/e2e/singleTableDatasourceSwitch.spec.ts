@@ -121,7 +121,7 @@ async function waitForQueryOn(page: Page, datasourceUid: string, table: string) 
 }
 
 async function expectCompactEditor(page: Page) {
-  await expect(page.locator('[data-testid="compact-filter-bar"]')).toBeVisible();
+  await expect(page.locator('[data-testid="otel-query-bar"]')).toBeVisible();
   // The classic builder's Query Type row is what showed up before this was fixed.
   await expect(page.getByText('Query Type', { exact: true })).toHaveCount(0);
 }
@@ -286,7 +286,7 @@ test.describe('Switching between single-table data sources in Explore', () => {
     const { query, body } = await converted;
 
     await expectCompactEditor(page);
-    await expect(page.getByPlaceholder('Search log body text...')).toHaveValue('timeout');
+    await expect(page.getByTestId('otel-search')).toHaveValue('timeout');
     expect(query.rawSql).toContain('timeout');
     // trace_links_logs has ServiceName but no `service` column, so that filter cannot carry over.
     expect(query.rawSql).not.toMatch(/\bservice\s*=/);
@@ -313,7 +313,7 @@ test.describe('Switching between single-table data sources in Explore', () => {
       builderOptions: EVENTS_LOGS_QUERY,
     });
 
-    await expect(page.getByPlaceholder('Search log body text...')).toHaveValue('timeout');
+    await expect(page.getByTestId('otel-search')).toHaveValue('timeout');
     expect(tables).toContain('events');
     expect(tables).not.toContain('trace_links_logs');
   });

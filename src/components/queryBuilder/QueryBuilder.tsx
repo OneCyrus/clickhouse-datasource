@@ -1,14 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Datasource } from 'data/CHDatasource';
-import {
-  Filter,
-  OrderBy,
-  QueryType,
-  QueryBuilderOptions,
-  ColumnHint,
-  StringFilter,
-  TableColumn,
-} from 'types/queryBuilder';
+import { OrderBy, QueryType, QueryBuilderOptions, ColumnHint, StringFilter, TableColumn } from 'types/queryBuilder';
 import { CoreApp, TimeRange } from '@grafana/data';
 import { LogsQueryBuilder } from './views/LogsQueryBuilder';
 import { TimeSeriesQueryBuilder } from './views/TimeSeriesQueryBuilder';
@@ -49,8 +41,7 @@ import { getColumnByHint } from 'data/sqlGenerator';
 import { SignalType } from 'types/config';
 import useColumns from 'hooks/useColumns';
 import { sourceKey } from 'hooks/useFitQueryToTable';
-import { CompactModeBar, getDefaultCompactMode } from './CompactModeBar';
-import { CompactFilterBar } from './CompactFilterBar';
+import { OtelQueryBar } from './otel/OtelQueryBar';
 import { CompactAdvanced } from './CompactAdvanced';
 import { MinIntervalEditor } from 'components/MinIntervalEditor';
 import { MetricsQueryEditor } from './metrics/MetricsQueryEditor';
@@ -175,6 +166,7 @@ export const QueryBuilder = (props: QueryBuilderProps) => {
           generatedSql={generatedSql}
           signalType={signalType}
           isCarriedOver={isCarriedOver}
+          range={range}
           minInterval={minInterval}
           onQueryChange={onQueryChange}
           onEditAsSql={onEditAsSql}
@@ -264,6 +256,7 @@ interface CompactQueryEditorProps {
   signalType: SignalType;
   /** The query was carried over from another data source and is converted for this one. */
   isCarriedOver: boolean;
+  range?: TimeRange;
   minInterval?: string;
   onQueryChange?: (builderOptions: QueryBuilderOptions) => void;
   onEditAsSql?: (builderOptions: QueryBuilderOptions) => void;
@@ -279,6 +272,7 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
     generatedSql,
     signalType,
     isCarriedOver,
+    range,
     minInterval,
     onQueryChange,
     onEditAsSql,
@@ -439,21 +433,26 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
 
   return (
     <div data-testid="query-editor-section-builder">
-      <CompactModeBar
-        mode={getDefaultCompactMode(signalType)}
-        searchText={activeOptions.meta?.logMessageLike || ''}
-        onSearchChange={(logMessageLike) => mergeActiveOptions({ meta: { logMessageLike } }, true)}
-      />
-      <CompactFilterBar
+      <OtelQueryBar
         datasource={datasource}
-        database={activeOptions.database}
-        table={activeOptions.table}
-        filters={activeOptions.filters || []}
-        allColumns={filterColumns}
-        selectedColumns={activeOptions.columns || []}
-        onFiltersChange={(filters: Filter[]) => mergeActiveOptions({ filters }, true)}
-        onToggleAdvanced={() => setAdvancedOpen(!advancedOpen)}
-        advancedOpen={advancedOpen}
+        signalType={signalType}
+        options={activeOptions}
+        columns={filterColumns}
+        range={range}
+        onChange={(next) => mergeActiveOptions(next, true)}
+        advanced={
+          <Button
+            size="sm"
+            variant="secondary"
+            fill={advancedOpen ? 'solid' : 'outline'}
+            icon="sliders-v-alt"
+            aria-expanded={advancedOpen}
+            onClick={() => setAdvancedOpen(!advancedOpen)}
+            tooltip="Order, limit and interval"
+          >
+            Options
+          </Button>
+        }
       />
       {advancedOpen && (
         <CompactAdvanced

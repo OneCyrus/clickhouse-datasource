@@ -1,7 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { getCompactFilterColumns, QueryBuilder } from './QueryBuilder';
-import { getDefaultCompactMode } from './CompactModeBar';
 import { Datasource } from 'data/CHDatasource';
 import { generateSql } from 'data/sqlGenerator';
 import {
@@ -156,11 +155,6 @@ describe('QueryBuilder', () => {
     );
 
     expect(filterColumns.map((column) => column.name)).toEqual(['Body', 'ingested_at']);
-  });
-
-  it('maps configured signal types to compact modes', () => {
-    expect(getDefaultCompactMode('logs')).toBe('otel-logs');
-    expect(getDefaultCompactMode('traces')).toBe('otel-traces');
   });
 
   it('renders correctly', async () => {
@@ -398,14 +392,15 @@ describe('QueryBuilder', () => {
       />
     );
 
-    expect(screen.getByTestId('compact-mode-bar')).toBeInTheDocument();
-    expect(screen.getByTestId('compact-filter-bar')).toBeInTheDocument();
+    expect(screen.getByTestId('otel-query-bar')).toBeInTheDocument();
     expect(screen.queryByText('Database')).not.toBeInTheDocument();
     expect(screen.queryByText('Query Type')).not.toBeInTheDocument();
-    fireEvent.change(screen.getByPlaceholderText('Search log body text...'), { target: { value: 'error' } });
-    fireEvent.blur(screen.getByPlaceholderText('Search log body text...'));
+    fireEvent.change(screen.getByPlaceholderText('Search log messages (ignores case) or paste a trace ID'), {
+      target: { value: 'error' },
+    });
+    fireEvent.blur(screen.getByPlaceholderText('Search log messages (ignores case) or paste a trace ID'));
     expect(screen.getByRole('button', { name: 'Add filter' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Order by' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Options' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open query history' })).not.toBeInTheDocument();
     await waitFor(() =>
       expect(builderOptionsDispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_all_options' }))
@@ -532,8 +527,8 @@ describe('QueryBuilder', () => {
     // The authored time series query falls back to the classic builder instead of being
     // replaced with compact logs defaults.
     expect(await screen.findByTestId('time-series-component')).toBeInTheDocument();
-    expect(screen.queryByTestId('compact-mode-bar')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('compact-filter-bar')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('otel-query-bar')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('otel-query-bar')).not.toBeInTheDocument();
     expect(builderOptionsDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'set_all_options' }));
     expect(onQueryChange).not.toHaveBeenCalled();
   });
@@ -646,7 +641,7 @@ describe('QueryBuilder', () => {
     it('converts it for the traces data source in Explore, keeping the filters that fit, and runs it', async () => {
       const { onQueryChange, onRunQuery } = renderBuilder(CoreApp.Explore, tracesDs);
 
-      expect(screen.getByTestId('compact-filter-bar')).toBeInTheDocument();
+      expect(screen.getByTestId('otel-query-bar')).toBeInTheDocument();
       expect(screen.queryByText('Query Type')).not.toBeInTheDocument();
       expect(screen.queryByTestId('logs-component')).not.toBeInTheDocument();
       await waitFor(() => expect(onRunQuery).toHaveBeenCalledTimes(1));
@@ -676,7 +671,7 @@ describe('QueryBuilder', () => {
     it('retargets it to another logs table in Explore, keeping the search text and filters', async () => {
       const { onQueryChange, onRunQuery } = renderBuilder(CoreApp.Explore, otherLogsDs);
 
-      expect(screen.getByTestId('compact-mode-bar')).toBeInTheDocument();
+      expect(screen.getByTestId('otel-query-bar')).toBeInTheDocument();
       await waitFor(() => expect(onRunQuery).toHaveBeenCalledTimes(1));
       const converted = onQueryChange.mock.calls[0][0];
       expect(converted).toMatchObject({ database: 'otel_v2', table: 'app_logs', queryType: QueryType.Logs });
@@ -696,7 +691,7 @@ describe('QueryBuilder', () => {
         unrecordedLogsQuery
       );
 
-      expect(await screen.findByTestId('compact-mode-bar')).toBeInTheDocument();
+      expect(await screen.findByTestId('otel-query-bar')).toBeInTheDocument();
       expect(datasource.getColumnsCached).not.toHaveBeenCalled();
       expect(builderOptionsDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'set_all_options' }));
       expect(onQueryChange).not.toHaveBeenCalled();
@@ -709,7 +704,7 @@ describe('QueryBuilder', () => {
         meta: { ...carriedOverLogsQuery.meta, datasourceUid: 'single-table-app-logs' },
       });
 
-      expect(await screen.findByTestId('compact-mode-bar')).toBeInTheDocument();
+      expect(await screen.findByTestId('otel-query-bar')).toBeInTheDocument();
       expect(builderOptionsDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'set_all_options' }));
       expect(onRunQuery).not.toHaveBeenCalled();
     });
@@ -735,7 +730,7 @@ describe('QueryBuilder', () => {
       const { builderOptionsDispatch, onQueryChange, onRunQuery } = renderBuilder(CoreApp.PanelEditor, tracesDs);
 
       expect(await screen.findByTestId('logs-component')).toHaveAttribute('data-table', 'otel_logs');
-      expect(screen.queryByTestId('compact-filter-bar')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('otel-query-bar')).not.toBeInTheDocument();
       expect(builderOptionsDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'set_all_options' }));
       expect(onQueryChange).not.toHaveBeenCalled();
       expect(onRunQuery).not.toHaveBeenCalled();
@@ -747,7 +742,7 @@ describe('QueryBuilder', () => {
         table: 'app_logs',
       });
 
-      expect(await screen.findByTestId('compact-mode-bar')).toBeInTheDocument();
+      expect(await screen.findByTestId('otel-query-bar')).toBeInTheDocument();
       expect(builderOptionsDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'set_all_options' }));
       expect(onRunQuery).not.toHaveBeenCalled();
     });
@@ -763,7 +758,7 @@ describe('QueryBuilder', () => {
       });
 
       expect(await screen.findByTestId('time-series-component')).toBeInTheDocument();
-      expect(screen.queryByTestId('compact-mode-bar')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('otel-query-bar')).not.toBeInTheDocument();
       expect(builderOptionsDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'set_all_options' }));
       expect(onQueryChange).not.toHaveBeenCalled();
       expect(onRunQuery).not.toHaveBeenCalled();
@@ -871,8 +866,8 @@ describe('QueryBuilder', () => {
       />
     );
 
-    expect(screen.queryByTestId('compact-mode-bar')).not.toBeInTheDocument();
-    expect(screen.getByTestId('compact-filter-bar')).toBeInTheDocument();
+    expect(screen.getByTestId('otel-query-bar')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search span names or paste a trace ID to open it')).toBeInTheDocument();
     expect(screen.queryByText('Database')).not.toBeInTheDocument();
     expect(screen.queryByText('Query Type')).not.toBeInTheDocument();
     await waitFor(() =>

@@ -176,7 +176,7 @@ async function runCompactLogsQuery(page: Page, explorePage: ExplorePage) {
   const { responsePromise, getBody } = await waitForQueryDataResponseWithBody(explorePage);
 
   await page.getByRole('button', { name: 'Switch to compact view' }).click();
-  await expect(page.locator('[data-testid="compact-filter-bar"]')).toBeVisible();
+  await expect(page.locator('[data-testid="otel-query-bar"]')).toBeVisible();
 
   await page.locator('[data-testid="data-testid RefreshPicker run button"]').click();
 
@@ -245,11 +245,19 @@ function detailsFieldValue(page: Page, fieldName: string, value: string) {
 }
 
 async function waitForNextQueryRequestBody(page: Page): Promise<any> {
-  const requestPromise = page.waitForRequest((r) => r.url().includes('/api/ds/query') && r.method() === 'POST');
-  const responsePromise = page.waitForResponse(
-    (r) => r.url().includes('/api/ds/query') && r.request().method() === 'POST' && r.ok()
-  );
-  const [req] = await Promise.all([requestPromise, responsePromise]);
+  // The editor also runs its own lookups (field value counts) through /api/ds/query, so wait for
+  // the panel query itself: refId A.
+  const req = await page.waitForRequest((r) => {
+    if (!r.url().includes('/api/ds/query') || r.method() !== 'POST') {
+      return false;
+    }
+    try {
+      return JSON.parse(r.postData() || '{}')?.queries?.[0]?.refId === 'A';
+    } catch {
+      return false;
+    }
+  });
+  await req.response();
   return JSON.parse(req.postData() || '{}');
 }
 

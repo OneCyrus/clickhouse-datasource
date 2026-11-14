@@ -57,6 +57,13 @@ export interface QueryBuilderOptions {
 
     // Trace
     traceDurationUnit?: TimeUnit;
+    /** Adds the span status to trace search results. Set by the single-table traces editor. */
+    showTraceStatus?: boolean;
+    /**
+     * 'trace': a search listing root spans returns the traces holding a span that matches the
+     * filters anywhere, not only root spans that match. Set by the single-table traces editor.
+     */
+    traceSearchScope?: 'trace' | 'span';
     /**
      * true for trace ID mode, false for trace search mode
      */
@@ -300,6 +307,13 @@ export interface CommonFilterProps {
    * Display label for filter
    */
   label?: string;
+
+  /**
+   * The value is plain data (picked from the table, or typed into a field filter), never SQL: it is
+   * always quoted and escaped. Without it a value holding `$`, parentheses or quotes is inserted as
+   * written, so classic filters can hold template variables and SQL expressions.
+   */
+  literal?: boolean;
 }
 
 export interface NullFilter extends CommonFilterProps {

@@ -714,7 +714,7 @@ describe('Query Editor', () => {
         />
       );
 
-      await waitFor(() => expect(screen.getByTestId('compact-mode-bar')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByTestId('otel-query-bar')).toBeInTheDocument());
       for (const [changedQuery] of onChange.mock.calls) {
         expect(changedQuery.builderOptions.meta?.datasourceUid).toBeUndefined();
       }

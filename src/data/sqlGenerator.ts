@@ -3,6 +3,7 @@ import {
   BuilderMode,
   ColumnHint,
   DateFilterWithValue,
+  Filter,
   FilterOperator,
   MultiFilter,
   NumberFilter,
@@ -77,6 +78,12 @@ const generateTraceSearchQuery = (options: QueryBuilderOptions): string => {
     selectParts.push(getTraceDurationSelectSql(escapeIdentifier(traceDurationTime.name), timeUnit));
   }
 
+  // The span status shows which results failed without opening each trace.
+  const traceStatusCode = getColumnByHint(options, ColumnHint.TraceStatusCode);
+  if (traceStatusCode !== undefined && options.meta?.showTraceStatus) {
+    selectParts.push(`${escapeIdentifier(traceStatusCode.name)} as status`);
+  }
+
   const selectPartsSql = selectParts.join(', ');
 
   queryParts.push('SELECT');
@@ -84,10 +91,19 @@ const generateTraceSearchQuery = (options: QueryBuilderOptions): string => {
   queryParts.push('FROM');
   queryParts.push(getTableIdentifier(database, table));
 
-  const filterParts = getFilters(options);
-  if (filterParts) {
+  const split = splitTraceSearchFilters(options);
+  const statsColumn = split && options.meta?.showTraceStatus ? traceStatusCode : undefined;
+  if (split && traceId && statsColumn) {
+    return generateTraceListWithStats(options, selectParts, split, traceId.name, statsColumn.name);
+  }
+  const conditions = split
+    ? [getFilters({ ...options, filters: split.outer }), getTraceMatchCondition(options, split.inner)]
+        .filter(Boolean)
+        .join(' AND ')
+    : getFilters(options);
+  if (conditions) {
     queryParts.push('WHERE');
-    queryParts.push(filterParts);
+    queryParts.push(conditions);
   }
 
   const orderBy = getOrderBy(options);
@@ -102,6 +118,117 @@ const generateTraceSearchQuery = (options: QueryBuilderOptions): string => {
   }
 
   return concatQueryParts(queryParts);
+};
+
+/**
+ * A trace search in trace scope with the span count and error count of each listed trace, so a
+ * trace whose root span looks fine but holds a failing span shows it in the list. The root spans
+ * are found first (filtered, ordered and limited as usual), then their spans counted, in the time
+ * range, and joined back. Order columns ride along hidden, since the join does not keep the order.
+ */
+const generateTraceListWithStats = (
+  options: QueryBuilderOptions,
+  selectParts: string[],
+  split: { outer: Filter[]; inner: Filter[] },
+  traceIdColumn: string,
+  statusColumn: string
+): string => {
+  const table = getTableIdentifier(options.database, options.table);
+  const orderColumns = (options.orderBy || [])
+    .map((o) => {
+      const hinted = o.hint ? getColumnByHint(options, o.hint) : undefined;
+      return { name: hinted ? hinted.name : o.name, dir: o.dir };
+    })
+    .filter((o) => o.name);
+  const hiddenOrder = orderColumns.map((o, i) => `${escapeIdentifier(o.name)} as __gf_o${i}`);
+  const rootConditions = [
+    getFilters({ ...options, filters: split.outer }),
+    getTraceMatchCondition(options, split.inner),
+  ]
+    .filter(Boolean)
+    .join(' AND ');
+  const rootQuery = concatQueryParts([
+    'SELECT',
+    [...selectParts, ...hiddenOrder].join(', '),
+    'FROM',
+    table,
+    rootConditions ? `WHERE ${rootConditions}` : '',
+    orderColumns.length ? `ORDER BY ${orderColumns.map((_, i) => `__gf_o${i} ${orderColumns[i].dir}`).join(', ')}` : '',
+    getLimit(options.limit),
+  ]);
+  const timeConditions = getFilters({ ...options, filters: getTimeRangeFilters(options) });
+  const traceId = escapeIdentifier(traceIdColumn);
+  const status = escapeIdentifier(statusColumn);
+  const stats = concatQueryParts([
+    `SELECT ${traceId} as __gf_trace_id, count() as spans,`,
+    `countIf(${status} IN ('Error', 'STATUS_CODE_ERROR')) as errors`,
+    `FROM ${table} WHERE`,
+    timeConditions ? `${timeConditions} AND` : '',
+    `${traceId} IN (SELECT traceID FROM __gf_roots)`,
+    'GROUP BY __gf_trace_id',
+  ]);
+  const hidden = orderColumns.map((_, i) => `__gf_o${i}`);
+  return concatQueryParts([
+    `WITH __gf_roots AS (${rootQuery})`,
+    `SELECT __gf_roots.*${hidden.length ? ` EXCEPT (${hidden.join(', ')})` : ''}, __gf_stats.spans as spans, __gf_stats.errors as errors`,
+    `FROM __gf_roots LEFT JOIN (${stats}) AS __gf_stats ON __gf_roots.traceID = __gf_stats.__gf_trace_id`,
+    orderColumns.length ? `ORDER BY ${hidden.map((h, i) => `${h} ${orderColumns[i].dir}`).join(', ')}` : '',
+  ]);
+};
+
+/** True for the trace search filters that test the listed (root) span itself. */
+const isTraceLevelFilter = (options: QueryBuilderOptions, filter: Filter): boolean => {
+  const durationColumn = getColumnByHint(options, ColumnHint.TraceDurationTime)?.name;
+  return (
+    filter.operator === FilterOperator.WithInGrafanaTimeRange ||
+    filter.operator === FilterOperator.OutsideGrafanaTimeRange ||
+    filter.hint === ColumnHint.Time ||
+    filter.hint === ColumnHint.TraceParentSpanId ||
+    filter.hint === ColumnHint.TraceDurationTime ||
+    (Boolean(durationColumn) && filter.key === durationColumn && !filter.mapKey)
+  );
+};
+
+/**
+ * With `meta.traceSearchScope` 'trace', a trace search listing root spans finds traces holding a
+ * matching span anywhere (like TraceQL and Jaeger): the root span, time range and duration
+ * filters test the listed root span (duration is then the trace's), and every other filter moves
+ * into a sub-query over all spans. Returns undefined when the query keeps plain span semantics:
+ * another scope, no root span filter, or filters joined with OR (splitting would change them).
+ */
+export const splitTraceSearchFilters = (
+  options: QueryBuilderOptions
+): { outer: Filter[]; inner: Filter[] } | undefined => {
+  const filters = (options.filters || []).filter((f) => f.operator !== FilterOperator.IsAnything);
+  const listsRootSpans = filters.some(
+    (f) => f.hint === ColumnHint.TraceParentSpanId && f.operator === FilterOperator.IsEmpty
+  );
+  if (options.meta?.traceSearchScope !== 'trace' || !listsRootSpans || filters.some((f) => f.condition === 'OR')) {
+    return undefined;
+  }
+  const outer = filters.filter((f) => isTraceLevelFilter(options, f));
+  const inner = filters.filter((f) => !isTraceLevelFilter(options, f));
+  return { outer, inner };
+};
+
+/** The time range filters of a query: the span filters of a trace match need them too. */
+const getTimeRangeFilters = (options: QueryBuilderOptions): Filter[] =>
+  (options.filters || []).filter(
+    (f) => f.operator === FilterOperator.WithInGrafanaTimeRange || f.operator === FilterOperator.OutsideGrafanaTimeRange
+  );
+
+/**
+ * `<trace id> IN (<traces with a span matching the filters in the time range>)`, or nothing when
+ * there are no span filters.
+ */
+export const getTraceMatchCondition = (options: QueryBuilderOptions, spanFilters: Filter[]): string => {
+  const traceId = getColumnByHint(options, ColumnHint.TraceId);
+  if (!traceId || spanFilters.length === 0) {
+    return '';
+  }
+  const where = getFilters({ ...options, filters: [...getTimeRangeFilters(options), ...spanFilters] });
+  const column = escapeIdentifier(traceId.name);
+  return `(${column} IN (SELECT ${column} FROM ${getTableIdentifier(options.database, options.table)} WHERE ${where}))`;
 };
 
 /**
@@ -300,7 +427,9 @@ const generateTraceIdQuery = (options: QueryBuilderOptions): string => {
   queryParts.push('FROM');
   queryParts.push(getTableIdentifier(database, table));
 
-  const filterParts = getFilters(options);
+  // The single-table traces editor opens a trace from its search: the trace shows whole, whatever
+  // the search's filters (root spans only, status, ...) were.
+  const filterParts = options.meta?.traceSearchScope ? '' : getFilters(options);
 
   if (hasTraceIdFilter || filterParts) {
     queryParts.push('WHERE');
@@ -421,23 +550,10 @@ const generateLogsQuery = (_options: QueryBuilderOptions): string => {
   queryParts.push('FROM');
   queryParts.push(getTableIdentifier(database, table));
 
-  const filterParts = getFilters(options);
-  const hasLogMessageFilter = logMessage && options.meta?.logMessageLike;
-
-  if (filterParts || hasLogMessageFilter) {
+  const whereConditions = getWhereConditions(options);
+  if (whereConditions) {
     queryParts.push('WHERE');
-  }
-
-  if (filterParts) {
-    queryParts.push(filterParts);
-  }
-
-  if (hasLogMessageFilter) {
-    if (filterParts) {
-      queryParts.push('AND');
-    }
-
-    queryParts.push(`(${logMessage.alias || logMessage.name} LIKE '%${options.meta!.logMessageLike}%')`);
+    queryParts.push(whereConditions);
   }
 
   const hintsToGroup = new Set([ColumnHint.FilterTime, ColumnHint.Time]);
@@ -754,6 +870,48 @@ const escapeValue = (value: string | number | boolean): string => {
   return `'${value}'`;
 };
 
+/** A string literal holding `value` as written. */
+const quoteLiteral = (value: string | number | boolean): string => `'${escapeCHStringLiteral(String(value))}'`;
+
+/** A filter's value, quoted as data when the filter says it is never SQL. */
+const escapeFilterValue = (filter: Filter, value: string | number | boolean): string =>
+  filter.literal ? quoteLiteral(value) : escapeValue(value);
+
+/** `text` for use inside a LIKE pattern: matched as written, wildcards included. */
+export const escapeLikePattern = (text: string): string =>
+  escapeCHStringLiteral(text.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_'));
+
+const isNumericComparison = (operator: FilterOperator): boolean =>
+  operator === FilterOperator.GreaterThan ||
+  operator === FilterOperator.GreaterThanOrEqual ||
+  operator === FilterOperator.LessThan ||
+  operator === FilterOperator.LessThanOrEqual;
+
+const isNumericValue = (value: unknown): boolean =>
+  (typeof value === 'number' && isFinite(value)) ||
+  (typeof value === 'string' && value.trim() !== '' && isFinite(Number(value)));
+
+/**
+ * The condition of the logs search box: the message contains the text, ignoring case. It reads
+ * `lower(<message>)`, the expression the OpenTelemetry exporter indexes (a `text` index since
+ * collector v0.151), so whole words of the text can skip granules that cannot match.
+ */
+export const getLogSearchCondition = (options: QueryBuilderOptions): string => {
+  const logMessage = getColumnByHint(options, ColumnHint.LogMessage);
+  const search = options.meta?.logMessageLike;
+  if (!logMessage || !search) {
+    return '';
+  }
+  return `(lower(${escapeIdentifier(logMessage.name)}) LIKE '%${escapeLikePattern(search.toLowerCase())}%')`;
+};
+
+/** The WHERE conditions of a logs or traces builder query: its filters and its search text. */
+export const getWhereConditions = (options: QueryBuilderOptions): string => {
+  const filters = getFilters(options);
+  const search = options.queryType === QueryType.Logs ? getLogSearchCondition(options) : '';
+  return [filters, search].filter(Boolean).join(' AND ');
+};
+
 /**
  * Returns the SELECT column for trace duration.
  * Time unit is used to convert the value to milliseconds, as is required by Grafana's Trace panel.
@@ -906,10 +1064,20 @@ export const getFilters = (options: QueryBuilderOptions): string => {
     }
 
     if (filter.mapKey && type.startsWith('Map')) {
-      column += `['${filter.mapKey}']`;
+      column += `['${escapeCHStringLiteral(filter.mapKey)}']`;
       // Extract the value type from Map(KeyType, ValueType)
       const valueType = type.match(/Map\(\s*.+\s*,\s*(.+)\s*\)/)?.[1]?.trim() || 'String';
       type = valueType;
+      // OTel attribute maps hold every value as a string, so `status_code >= 500` would compare
+      // text ('60' > '500'). A numeric comparison against a number reads the value as a number.
+      if (
+        isStringType(type) &&
+        isNumericComparison(filter.operator) &&
+        isNumericValue((filter as NumberFilter).value)
+      ) {
+        column = `toFloat64OrNull(${column})`;
+        type = 'Float64';
+      }
     } else if (filter.mapKey && type.startsWith('JSON')) {
       // JSON path extraction returns Dynamic, which ClickHouse's `IN` / `NOT IN` reject
       // with ILLEGAL_TYPE_OF_ARGUMENT. buildJSONPathAccess casts to Nullable(String) so
@@ -951,6 +1119,14 @@ export const getFilters = (options: QueryBuilderOptions): string => {
       filterParts.push(`!= ''`);
     } else if (isBooleanFilter(type)) {
       filterParts.push(String((filter as BooleanFilter).value));
+    } else if (
+      isNumberFilter(type) &&
+      (filter.operator === FilterOperator.In || filter.operator === FilterOperator.NotIn)
+    ) {
+      // A set of numbers, such as the severity numbers of the picked log levels. Anything that is
+      // not a number is dropped, so the list never carries SQL.
+      const values = ((filter as MultiFilter).value || []).map((v) => String(v).trim()).filter(isNumericValue);
+      filterParts.push(`(${values.length ? values.join(', ') : 'NULL'})`);
     } else if (isNumberFilter(type)) {
       filterParts.push(String((filter as NumberFilter).value || '0'));
     } else if (isDateFilter(type)) {
@@ -981,14 +1157,17 @@ export const getFilters = (options: QueryBuilderOptions): string => {
         filter.operator === FilterOperator.ILike ||
         filter.operator === FilterOperator.NotILike
       ) {
-        filterParts.push(`'%${filter.value || ''}%'`);
+        const pattern = String(filter.value || '');
+        filterParts.push(filter.literal ? `'%${escapeLikePattern(pattern)}%'` : `'%${pattern}%'`);
       } else {
-        filterParts.push(escapeValue((filter as StringFilter).value || ''));
+        filterParts.push(escapeFilterValue(filter, (filter as StringFilter).value || ''));
       }
     } else if (isMultiFilter(type, filter.operator)) {
-      filterParts.push(`(${(filter as MultiFilter).value?.map((v) => escapeValue(v.trim())).join(', ')})`);
+      filterParts.push(
+        `(${(filter as MultiFilter).value?.map((v) => (filter.literal ? quoteLiteral(v) : escapeValue(v.trim()))).join(', ')})`
+      );
     } else {
-      filterParts.push(escapeValue((filter as StringFilter).value || ''));
+      filterParts.push(escapeFilterValue(filter, (filter as StringFilter).value || ''));
     }
 
     if (negate) {

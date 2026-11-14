@@ -1,7 +1,7 @@
 // E2E coverage for compact query mode against the locally provisioned
 // single-source datasources (logs-only and traces-only). Unit tests cover the
 // compact components in isolation; only E2E confirms the plugin detects a
-// single-source datasource inside Explore, swaps in the compact filter bar,
+// single-source datasource inside Explore, swaps in the logs and traces query bar,
 // hides the full builder chrome, and still issues queries that return frames.
 
 import { expect, test } from '@grafana/plugin-e2e';
@@ -35,10 +35,10 @@ test.describe('Compact query mode', () => {
     await page.getByRole('button', { name: 'Switch to compact view' }).click();
 
     const queryEditor = page.locator('[data-testid="query-editor-section-builder"]');
-    await expect(queryEditor.locator('[data-testid="compact-filter-bar"]')).toBeVisible();
-    await expect(page.getByPlaceholder('Search log body text...')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Add filter' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Order by' })).toBeVisible();
+    await expect(queryEditor.locator('[data-testid="otel-query-bar"]')).toBeVisible();
+    await expect(page.getByTestId('otel-search')).toBeVisible();
+    await expect(page.getByTestId('otel-add-filter')).toBeVisible();
+    await expect(queryEditor.getByRole('button', { name: 'Options' })).toBeVisible();
     await expect(queryEditor.getByRole('button', { name: 'SQL', exact: true })).toBeVisible();
 
     const databaseLabel = page.locator('.query-editor-row').locator('label.query-keyword', { hasText: 'Database' });
@@ -50,7 +50,7 @@ test.describe('Compact query mode', () => {
     ).toHaveCount(0);
 
     const { responsePromise, getBody } = await waitForQueryDataResponseWithBody(explorePage);
-    await page.getByPlaceholder('Search log body text...').fill('error');
+    await page.getByTestId('otel-search').fill('error');
     await page.keyboard.press('Enter');
     await responsePromise;
     expect(frames(getBody()).length).toBeGreaterThan(0);
@@ -68,10 +68,11 @@ test.describe('Compact query mode', () => {
     await page.getByRole('button', { name: 'Switch to compact view' }).click();
 
     const queryEditor = page.locator('[data-testid="query-editor-section-builder"]');
-    await expect(queryEditor.locator('[data-testid="compact-filter-bar"]')).toBeVisible();
-    await expect(page.getByPlaceholder('Search log body text...')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Add filter' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Order by' })).toBeVisible();
+    await expect(queryEditor.locator('[data-testid="otel-query-bar"]')).toBeVisible();
+    await expect(page.getByPlaceholder('Search span names or paste a trace ID to open it')).toBeVisible();
+    await expect(page.getByTestId('otel-span-scope')).toBeVisible();
+    await expect(page.getByTestId('otel-add-filter')).toBeVisible();
+    await expect(queryEditor.getByRole('button', { name: 'Options' })).toBeVisible();
     await expect(queryEditor.getByRole('button', { name: 'SQL', exact: true })).toBeVisible();
 
     const databaseLabel = page.locator('.query-editor-row').locator('label.query-keyword', { hasText: 'Database' });

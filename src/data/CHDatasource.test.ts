@@ -2322,7 +2322,7 @@ describe('ClickHouseDatasource', () => {
         expect(result?.rawSql).toEqual(
           'SELECT toStartOfInterval("created_at", INTERVAL 1 DAY) as "time", count(*) as logs ' +
             'FROM "default"."logs" ' +
-            "WHERE ( Body LIKE '%found%' ) " +
+            "WHERE ( Body ILIKE '%found%' ) " +
             'GROUP BY time ' +
             'ORDER BY time ASC'
         );
@@ -2682,13 +2682,13 @@ describe('ClickHouseDatasource', () => {
           },
         }) as CHBuilderQuery;
         expect(result).toBeDefined();
-        expect(result.rawSql).toContain("( Body LIKE '%found%' )");
+        expect(result.rawSql).toContain("( Body ILIKE '%found%' )");
         // real column name, not the "body" alias
-        expect(result.rawSql).not.toContain('body LIKE');
+        expect(result.rawSql).not.toContain('body ILIKE');
         const appended = result.builderOptions.filters?.find((f) => f.key === 'Body');
         expect(appended).toMatchObject({
           key: 'Body',
-          operator: FilterOperator.Like,
+          operator: FilterOperator.ILike,
           value: 'found',
           type: 'string',
           filterType: 'custom',
