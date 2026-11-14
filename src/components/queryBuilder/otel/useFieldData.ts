@@ -15,7 +15,7 @@ import {
 
 /**
  * The fields of a table: its plain columns, and the keys of its attribute columns seen in recent
- * data. Keys are looked up once per table and attribute column.
+ * data. Keys are looked up once per table and attribute column, once `enabled`.
  */
 export const useOtelFields = (
   datasource: Datasource,
@@ -23,7 +23,9 @@ export const useOtelFields = (
   table: string,
   columns: readonly TableColumn[],
   hiddenColumns: ReadonlySet<string>,
-  otelEnabled: boolean
+  otelEnabled: boolean,
+  /** Looks the attribute keys up only once true: when a field list is opened. */
+  enabled = true
 ): { fields: OtelField[]; loading: boolean } => {
   const [keys, setKeys] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(false);
@@ -31,6 +33,9 @@ export const useOtelFields = (
   const attributeKey = attributeColumns.map((c) => c.name).join(',');
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     if (!database || !table || attributeColumns.length === 0) {
       setKeys({});
       return;
@@ -65,7 +70,7 @@ export const useOtelFields = (
     };
     // attributeKey stands for attributeColumns, columns only matter through it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datasource, database, table, attributeKey]);
+  }, [datasource, database, table, attributeKey, enabled]);
 
   const fields = useMemo(
     () => [

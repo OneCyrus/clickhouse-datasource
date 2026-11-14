@@ -73,11 +73,12 @@ const tracesColumns = [
 ];
 
 describe('OtelQueryBar', () => {
-  it('filters logs by severity level from the level buttons, showing counts', async () => {
+  it('filters logs by severity level from the level buttons, without counting them', async () => {
     const onChange = jest.fn();
+    const datasource = makeDatasource();
     render(
       <OtelQueryBar
-        datasource={makeDatasource()}
+        datasource={datasource}
         signalType="logs"
         options={logsOptions}
         columns={logsColumns}
@@ -86,8 +87,7 @@ describe('OtelQueryBar', () => {
       />
     );
 
-    const error = await screen.findByRole('button', { name: /ERROR\s*66/ });
-    fireEvent.click(error);
+    fireEvent.click(screen.getByRole('button', { name: /^ERROR$/ }));
     const { filters } = onChange.mock.calls[0][0];
     expect(filters[filters.length - 1]).toMatchObject({
       id: 'otel:severity',
@@ -95,8 +95,13 @@ describe('OtelQueryBar', () => {
       operator: FilterOperator.In,
       value: ['17', '18', '19', '20'],
     });
+    // The volume chart's legend has the counts per level; nothing is counted or looked up on load.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(datasource.fetchFieldValueCounts).not.toHaveBeenCalled();
+    expect(datasource.fetchUniqueMapKeys).not.toHaveBeenCalled();
     expect(await screen.findByTestId('otel-facet-ServiceName')).toBeInTheDocument();
-    expect(await screen.findByTestId('otel-facet-ResourceAttributes.deployment.environment.name')).toBeInTheDocument();
+    // An OTel table gets the environment filter from the semantic convention key, without a lookup.
+    expect(screen.getByTestId('otel-facet-ResourceAttributes.deployment.environment.name')).toBeInTheDocument();
   });
 
   it('searches log messages, and turns a pasted trace ID into a trace filter', async () => {
@@ -161,9 +166,10 @@ describe('OtelQueryBar', () => {
 
   it('switches between traces and all spans, and filters on status', async () => {
     const onChange = jest.fn();
+    const datasource = makeDatasource();
     render(
       <OtelQueryBar
-        datasource={makeDatasource()}
+        datasource={datasource}
         signalType="traces"
         options={tracesOptions}
         columns={tracesColumns}
@@ -171,15 +177,41 @@ describe('OtelQueryBar', () => {
         advanced={null}
       />
     );
-    fireEvent.click(await screen.findByRole('button', { name: /Error\s*12/ }));
+    // Status counts load only while the pointer is on the buttons.
+    expect(screen.getByRole('button', { name: /^Error$/ })).toBeInTheDocument();
+    fireEvent.mouseEnter(screen.getByTestId('otel-status-filter'));
+    await waitFor(() => expect(datasource.fetchFieldValueCounts).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: /^Error$/ }));
     const statusFilters = onChange.mock.calls[0][0].filters;
-    expect(statusFilters[statusFilters.length - 1]).toMatchObject({ id: 'otel:status', value: ['Error'] });
+    expect(statusFilters[statusFilters.length - 1]).toMatchObject({
+      id: 'otel:status',
+      value: ['Error', 'STATUS_CODE_ERROR'],
+    });
 
     fireEvent.click(screen.getByLabelText('All spans'));
     await waitFor(() =>
       expect(
         onChange.mock.calls[1][0].filters.some((f: { hint?: ColumnHint }) => f.hint === ColumnHint.TraceParentSpanId)
       ).toBe(false)
+    );
+  });
+
+  it('looks attribute keys up only when a filter editor opens', async () => {
+    const datasource = makeDatasource();
+    render(
+      <OtelQueryBar
+        datasource={datasource}
+        signalType="logs"
+        options={logsOptions}
+        columns={logsColumns}
+        onChange={jest.fn()}
+        advanced={null}
+      />
+    );
+    expect(datasource.fetchUniqueMapKeys).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('otel-add-filter'));
+    await waitFor(() =>
+      expect(datasource.fetchUniqueMapKeys).toHaveBeenCalledWith('ResourceAttributes', 'otel', 'otel_logs')
     );
   });
 });

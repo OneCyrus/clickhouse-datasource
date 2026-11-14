@@ -219,6 +219,22 @@ describe('trace search in trace scope', () => {
     );
   });
 
+  it('leaves the span counts out when they are switched off', () => {
+    const sql = generateSql(
+      tracesOptions({
+        filters: [...getDefaultTraceFilters(), statusError],
+        meta: {
+          traceDurationUnit: TimeUnit.Nanoseconds,
+          traceSearchScope: 'trace',
+          showTraceStatus: true,
+          hideTraceSpanCounts: true,
+        },
+      })
+    );
+    expect(sql).not.toContain('__gf_roots');
+    expect(sql).toContain('"StatusCode" as status');
+  });
+
   it('keeps span semantics when listing all spans, without a scope, or with OR filters', () => {
     const allSpans = tracesOptions({
       filters: [...getDefaultTraceFilters().filter((f) => f.hint !== ColumnHint.TraceParentSpanId), statusError],

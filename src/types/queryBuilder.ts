@@ -64,6 +64,8 @@ export interface QueryBuilderOptions {
      * filters anywhere, not only root spans that match. Set by the single-table traces editor.
      */
     traceSearchScope?: 'trace' | 'span';
+    /** Leaves out the span and error counts of each trace in a trace scope search. */
+    hideTraceSpanCounts?: boolean;
     /**
      * true for trace ID mode, false for trace search mode
      */

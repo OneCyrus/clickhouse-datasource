@@ -195,28 +195,45 @@ export interface PillOption {
 interface PillFilterProps {
   name: string;
   pills: PillOption[];
-  counts: FieldValueCount[];
+  /** Counts per value, shown on the buttons; undefined while they are not loaded. */
+  counts?: FieldValueCount[];
   selected: readonly string[];
   onChange: (selected: string[]) => void;
+  /** Called when the pointer or focus enters the buttons, to load the counts only then. */
+  onActivate?: () => void;
+  /**
+   * Shows the counts in the buttons' tooltips only. Counts loaded on hover would otherwise widen
+   * the buttons and move the controls next to them under the pointer.
+   */
+  countsInTooltip?: boolean;
   testId: string;
 }
 
 /**
  * Toggle buttons for the few values of a field engineers switch between constantly: log levels and
- * span status. Each shows its count; values with no rows are dimmed but stay clickable.
+ * span status. With counts loaded each button shows its count and values with no rows are dimmed;
+ * they stay clickable either way.
  */
 export const PillFilter = (props: PillFilterProps) => {
-  const { name, pills, counts, selected, onChange, testId } = props;
+  const { name, pills, counts, selected, onChange, onActivate, countsInTooltip, testId } = props;
   const styles = useStyles2(getStyles);
   const theme = useTheme2();
-  const countOf = (value: string) => counts.find((c) => c.value === value)?.count ?? 0;
+  const countOf = (value: string) => counts?.find((c) => c.value === value)?.count ?? 0;
 
   return (
-    <div className={styles.pills} role="group" aria-label={name} data-testid={testId}>
+    <div
+      className={styles.pills}
+      role="group"
+      aria-label={name}
+      data-testid={testId}
+      onMouseEnter={onActivate}
+      onFocus={onActivate}
+    >
       {pills.map((pill) => {
         const on = selected.includes(pill.value);
         const count = countOf(pill.value);
         const color = theme.visualization.getColorByName(pill.color);
+        const inRange = counts ? ` (${count.toLocaleString()} in range)` : '';
         return (
           <Tooltip
             key={pill.value}
@@ -224,8 +241,8 @@ export const PillFilter = (props: PillFilterProps) => {
               on
                 ? `Stop filtering on ${pill.label}`
                 : selected.length
-                  ? `Also show ${pill.label}`
-                  : `Show only ${pill.label} (${count.toLocaleString()} in range)`
+                  ? `Also show ${pill.label}${inRange}`
+                  : `Show only ${pill.label}${inRange}`
             }
             placement="top"
           >
@@ -236,14 +253,14 @@ export const PillFilter = (props: PillFilterProps) => {
                 styles.pill,
                 on && styles.pillOn,
                 !on && selected.length > 0 && styles.pillDim,
-                !count && !on && styles.pillDim
+                counts && !count && !on && styles.pillDim
               )}
               style={on ? { background: `${color}33`, borderColor: color } : undefined}
               onClick={() => onChange(on ? selected.filter((s) => s !== pill.value) : [...selected, pill.value])}
             >
               <span className={styles.dot} style={{ background: color }} />
               {pill.label}
-              {count > 0 && <span className={styles.pillCount}>{shortCount(count)}</span>}
+              {count > 0 && !countsInTooltip && <span className={styles.pillCount}>{shortCount(count)}</span>}
             </button>
           </Tooltip>
         );

@@ -462,6 +462,11 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
           onOrderByChange={(orderBy: OrderBy[]) => mergeActiveOptions({ orderBy }, true)}
           onLimitChange={(limit: number) => mergeActiveOptions({ limit }, true)}
           onMinIntervalChange={onMinIntervalChange}
+          onSpanCountsChange={
+            signalType === 'traces' && activeOptions.meta?.traceSearchScope === 'trace'
+              ? (show) => mergeActiveOptions({ meta: { hideTraceSpanCounts: !show } }, true)
+              : undefined
+          }
         />
       )}
 

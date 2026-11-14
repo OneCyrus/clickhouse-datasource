@@ -83,6 +83,8 @@ interface FilterChipsProps {
   fields: OtelField[];
   fieldsLoading?: boolean;
   onFiltersChange: (filters: Filter[]) => void;
+  /** Called when a filter editor opens, so the field list can load then. */
+  onEditorOpen?: () => void;
 }
 
 /**
@@ -90,7 +92,7 @@ interface FilterChipsProps {
  * it, flip it between include and exclude, or remove it.
  */
 export const FilterChips = (props: FilterChipsProps) => {
-  const { datasource, options, range, fields, fieldsLoading, onFiltersChange } = props;
+  const { datasource, options, range, fields, fieldsLoading, onFiltersChange, onEditorOpen } = props;
   const styles = useStyles2(getStyles);
   const [editing, setEditing] = useState<number>();
   const filters = options.filters || [];
@@ -124,7 +126,10 @@ export const FilterChips = (props: FilterChipsProps) => {
           <span key={index} className={cx(styles.chip, negative && styles.chipNegative)} data-testid="otel-filter-chip">
             <Toggletip
               show={editing === index}
-              onOpen={() => setEditing(index)}
+              onOpen={() => {
+                setEditing(index);
+                onEditorOpen?.();
+              }}
               onClose={() => setEditing(undefined)}
               placement="bottom-start"
               closeButton={false}
@@ -170,13 +175,16 @@ export const FilterChips = (props: FilterChipsProps) => {
 export const AddFilterButton = (
   props: Omit<FilterChipsProps, 'onFiltersChange'> & { onAdd: (filter: Filter) => void }
 ) => {
-  const { onAdd, ...rest } = props;
+  const { onAdd, onEditorOpen, ...rest } = props;
   const styles = useStyles2(getStyles);
   const [open, setOpen] = useState(false);
   return (
     <Toggletip
       show={open}
-      onOpen={() => setOpen(true)}
+      onOpen={() => {
+        setOpen(true);
+        onEditorOpen?.();
+      }}
       onClose={() => setOpen(false)}
       placement="bottom-start"
       closeButton={false}

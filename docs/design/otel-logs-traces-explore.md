@@ -105,14 +105,27 @@ range, ClickHouse 26.10 on 4 cores, replaying the same browser scenario (levels,
 environment facets, search, a field filter; traces with status, service, all spans and duration) and
 reading `system.query_log`:
 
-|               | Queries | ClickHouse time |
-| ------------- | ------- | --------------- |
-| First version | 78      | 57.1 s          |
-| After round 1 | 29      | 7.0 s           |
-| After round 2 | 29      | 6.9 s           |
+|                                 | Queries | ClickHouse time |
+| ------------------------------- | ------- | --------------- |
+| First version                   | 78      | 57.1 s          |
+| After round 1                   | 29      | 7.0 s           |
+| After round 2                   | 29      | 6.9 s           |
+| After round 3 (lazy UI lookups) | 21      | 5.8 s           |
+
+Round 3 loads nothing the page does not need to show data. A page load now runs only the data
+queries (logs list and volume; trace list), down from 6 queries on logs and 4 on traces:
+
+- Level buttons show no counts: the volume chart's legend already has them, and they cost a scan
+  of the range on every change.
+- Status counts load while the pointer or focus is on the buttons, and show in their tooltips so the
+  row does not move under the pointer.
+- Attribute keys are looked up when a filter editor first opens. Environment and Namespace come
+  from the exporter's materialized columns, or, on OTel tables, from the semantic convention key.
+- The trace list's span and error counts (about two thirds of its cost) can be turned off under
+  **Options**.
 
 - Value counts are debounced, keyed on the time range in 1/200 steps and reused for 60 s: level
-  counts went from 26 requests to 3 in the scenario.
+  counts went from 26 requests to 3 in the scenario (round 3 then removed them).
 - Materialized resource attributes: environment facet 1.3 s / 7 GB to 116 ms / 199 MB.
 - Attribute key discovery samples rows: 313 ms / 1.1 GB to 30 ms / 43 MB.
 - Trace scope facets count spans, not `uniq(TraceId)`: 563 ms / 978 MB to 90 ms / 200 MB.

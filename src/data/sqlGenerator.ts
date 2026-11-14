@@ -92,7 +92,8 @@ const generateTraceSearchQuery = (options: QueryBuilderOptions): string => {
   queryParts.push(getTableIdentifier(database, table));
 
   const split = splitTraceSearchFilters(options);
-  const statsColumn = split && options.meta?.showTraceStatus ? traceStatusCode : undefined;
+  const statsColumn =
+    split && options.meta?.showTraceStatus && !options.meta.hideTraceSpanCounts ? traceStatusCode : undefined;
   if (split && traceId && statsColumn) {
     return generateTraceListWithStats(options, selectParts, split, traceId.name, statsColumn.name);
   }

@@ -9,9 +9,10 @@ import { SignalType } from 'types/config';
 import { getDefaultTraceFilters } from '../defaultQueryOptions';
 import {
   buildFieldFilter,
+  getKeyFields,
+  getMaterializedColumn,
   getEnumDisplayName,
   getFilterValues,
-  getSeverityLevelExpression,
   getSeverityLevelsOf,
   getSeverityNumberColumn,
   getSeverityNumbers,
@@ -73,6 +74,32 @@ const keyField = (fields: OtelField[], group: OtelField['group'], keys: string[]
     .find(Boolean);
 
 /**
+ * A resource attribute quick filter without looking the keys up: the exporter's materialized column
+ * when the table has one, else (on an OTel table, where the key is the semantic convention) the
+ * first key read from the map. With `required` false a missing materialized column hides it.
+ */
+const resourceField = (
+  fields: OtelField[],
+  columns: readonly TableColumn[],
+  keys: string[],
+  synthesize: boolean
+): OtelField | undefined => {
+  const found = keyField(fields, 'resource', keys);
+  if (found) {
+    return found;
+  }
+  const resource = columns.find((c) => c.name === 'ResourceAttributes' && c.type.startsWith('Map('));
+  if (!resource) {
+    return undefined;
+  }
+  const materialized = keys.find((k) => getMaterializedColumn(resource, k, columns));
+  if (materialized || synthesize) {
+    return getKeyFields(resource, [materialized || keys[0]], columns)[0];
+  }
+  return undefined;
+};
+
+/**
  * The logs and traces editor of a single-table data source: a search box, quick filters for the
  * fields engineers narrow down by first (level, service, status, duration), and chips for any other
  * field filter. Every control writes builder filters, so the SQL stays visible and editable.
@@ -94,14 +121,18 @@ export const OtelQueryBar = (props: OtelQueryBarProps) => {
       ),
     [options]
   );
+  // Attribute keys are looked up when a filter editor first opens, not on every page load.
+  const [fieldsWanted, setFieldsWanted] = useState(false);
   const { fields, loading: fieldsLoading } = useOtelFields(
     datasource,
     options.database,
     options.table,
     columns,
     timeColumns,
-    otelEnabled
+    otelEnabled,
+    fieldsWanted
   );
+  const onEditorOpen = () => setFieldsWanted(true);
 
   // Search box
   const traceIdColumn = getColumnByHint(options, ColumnHint.TraceId)?.name;
@@ -236,6 +267,7 @@ export const OtelQueryBar = (props: OtelQueryBarProps) => {
             datasource={datasource}
             options={options}
             range={range}
+            columns={columns}
             fields={fields}
             onFiltersChange={setFilters}
           />
@@ -249,6 +281,7 @@ export const OtelQueryBar = (props: OtelQueryBarProps) => {
           fields={fields}
           fieldsLoading={fieldsLoading}
           onFiltersChange={setFilters}
+          onEditorOpen={onEditorOpen}
         />
         <AddFilterButton
           datasource={datasource}
@@ -256,6 +289,7 @@ export const OtelQueryBar = (props: OtelQueryBarProps) => {
           range={range}
           fields={fields}
           fieldsLoading={fieldsLoading}
+          onEditorOpen={onEditorOpen}
           onAdd={(filter) => setFilters([...filters, filter])}
         />
         {hasUserFilters && (
@@ -283,18 +317,20 @@ const LogsQuickFilters = (props: QuickFiltersProps & { columns: readonly TableCo
   const severityColumn = getSeverityNumberColumn(columns);
   const levelColumn = getColumnByHint(options, ColumnHint.LogLevel)?.name;
   const severityField = columnField(fields, severityColumn);
-  const levelCounts = useFieldValueCounts(datasource, options, undefined, range, Boolean(severityColumn), {
-    expression: severityColumn ? getSeverityLevelExpression(severityColumn) : undefined,
-    excludeFilterIds: [quickFilterIds.severity],
-  });
   const severityFilter = filters.find((f) => f.id === quickFilterIds.severity);
   const selectedLevels = severityFilter ? getSeverityLevelsOf(getFilterValues(severityFilter)) : [];
 
   const serviceField =
     columnField(fields, 'ServiceName') ||
     columnField(fields, getColumnByHint(options, ColumnHint.TraceServiceName)?.name);
-  const environmentField = keyField(fields, 'resource', ['deployment.environment.name', 'deployment.environment']);
-  const namespaceField = keyField(fields, 'resource', ['k8s.namespace.name']);
+  // Counts per level are in the volume chart's legend already, so the buttons show none.
+  const environmentField = resourceField(
+    fields,
+    columns,
+    ['deployment.environment.name', 'deployment.environment'],
+    Boolean(options.meta?.otelEnabled)
+  );
+  const namespaceField = resourceField(fields, columns, ['k8s.namespace.name'], false);
   const levelField = !severityColumn ? columnField(fields, levelColumn) : undefined;
 
   return (
@@ -304,7 +340,6 @@ const LogsQuickFilters = (props: QuickFiltersProps & { columns: readonly TableCo
           name="Log level"
           testId="otel-level-filter"
           pills={levelPills}
-          counts={levelCounts.values}
           selected={selectedLevels}
           onChange={(levels) =>
             onFiltersChange(
@@ -369,8 +404,8 @@ const LogsQuickFilters = (props: QuickFiltersProps & { columns: readonly TableCo
   );
 };
 
-const TraceQuickFilters = (props: QuickFiltersProps) => {
-  const { datasource, options, range, fields, onFiltersChange } = props;
+const TraceQuickFilters = (props: QuickFiltersProps & { columns: readonly TableColumn[] }) => {
+  const { datasource, options, range, fields, columns, onFiltersChange } = props;
   const styles = useStyles2(getStyles);
   const filters = options.filters || [];
   const hintField = (hint: ColumnHint) => columnField(fields, getColumnByHint(options, hint)?.name);
@@ -379,21 +414,32 @@ const TraceQuickFilters = (props: QuickFiltersProps) => {
   const statusField = hintField(ColumnHint.TraceStatusCode);
   const kindField = hintField(ColumnHint.TraceKind);
   const durationField = hintField(ColumnHint.TraceDurationTime);
-  const environmentField = keyField(fields, 'resource', ['deployment.environment.name', 'deployment.environment']);
+  const environmentField = resourceField(
+    fields,
+    columns,
+    ['deployment.environment.name', 'deployment.environment'],
+    Boolean(options.meta?.otelEnabled)
+  );
   const rootOnly = filters.some(isRootSpanFilter);
   const hasParentColumn = Boolean(getColumnByHint(options, ColumnHint.TraceParentSpanId));
 
-  const statusCounts = useFieldValueCounts(datasource, options, statusField, range, Boolean(statusField), {
-    excludeFilterIds: [quickFilterIds.status],
-  });
+  // Status counts load while the pointer or focus is on the buttons: a scan of the time range for
+  // numbers that only guide the choice.
+  const [statusHover, setStatusHover] = useState(false);
+  const statusCounts = useFieldValueCounts(
+    datasource,
+    options,
+    statusField,
+    range,
+    Boolean(statusField) && statusHover,
+    {
+      excludeFilterIds: [quickFilterIds.status],
+    }
+  );
   const statusFilter = filters.find((f) => f.id === quickFilterIds.status);
   const selectedRaw = statusFilter ? getFilterValues(statusFilter) : [];
-  // Status values differ by exporter version (Error, STATUS_CODE_ERROR); pills show the name and
-  // filter on the values found.
-  const rawFor = (name: string) => {
-    const found = statusCounts.values.filter((c) => getEnumDisplayName(c.value) === name).map((c) => c.value);
-    return found.length ? found : [name];
-  };
+  // Status values differ by exporter version (Error, STATUS_CODE_ERROR): a pill filters on both.
+  const rawFor = (name: string) => [name, `STATUS_CODE_${name.toUpperCase()}`];
   const statusPills: PillOption[] = spanStatusOrder.map((name) => ({
     value: name,
     label: name,
@@ -431,24 +477,28 @@ const TraceQuickFilters = (props: QuickFiltersProps) => {
         </Tooltip>
       )}
       {statusField && (
-        <PillFilter
-          name="Status"
-          testId="otel-status-filter"
-          pills={statusPills}
-          counts={statusPillCounts}
-          selected={selectedStatus}
-          onChange={(names) =>
-            onFiltersChange(
-              replaceFilter(
-                filters,
-                quickFilterIds.status,
-                names.length
-                  ? buildFieldFilter(statusField, FilterOperator.In, names.flatMap(rawFor), quickFilterIds.status)
-                  : undefined
+        <div onMouseLeave={() => setStatusHover(false)} onBlur={() => setStatusHover(false)}>
+          <PillFilter
+            name="Status"
+            testId="otel-status-filter"
+            pills={statusPills}
+            counts={statusHover && !statusCounts.loading ? statusPillCounts : undefined}
+            onActivate={() => setStatusHover(true)}
+            countsInTooltip
+            selected={selectedStatus}
+            onChange={(names) =>
+              onFiltersChange(
+                replaceFilter(
+                  filters,
+                  quickFilterIds.status,
+                  names.length
+                    ? buildFieldFilter(statusField, FilterOperator.In, names.flatMap(rawFor), quickFilterIds.status)
+                    : undefined
+                )
               )
-            )
-          }
-        />
+            }
+          />
+        </div>
       )}
       <div className={styles.divider} />
       {serviceField && (

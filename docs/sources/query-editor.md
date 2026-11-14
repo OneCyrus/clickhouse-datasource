@@ -58,13 +58,13 @@ Every control below writes ordinary builder filters, so the generated SQL stays 
 #### Logs
 
 - **Search**: finds log messages containing the text, ignoring case. The search reads `lower(Body)`, the expression the OpenTelemetry Collector ClickHouse exporter indexes (a `text` index since collector v0.151), so whole words of the search skip data that cannot match. Paste a trace ID instead to show the logs of that trace.
-- **Level**: one button per OpenTelemetry severity level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`), with the number of matching log lines in the time range. Levels filter on `SeverityNumber` ranges from the OpenTelemetry logs data model, so they work whatever text the application writes in `SeverityText`. Tables without a `SeverityNumber` column get a **Level** dropdown on the configured level column instead.
+- **Level**: one button per OpenTelemetry severity level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`). The logs volume chart's legend shows how many lines each level has. Levels filter on `SeverityNumber` ranges from the OpenTelemetry logs data model, so they work whatever text the application writes in `SeverityText`. Tables without a `SeverityNumber` column get a **Level** dropdown on the configured level column instead.
 - **Service**, **Environment** and **Namespace**: dropdowns listing the values in the time range with their counts. Tick values to include them, or switch to **Exclude**. Hover a value and pick **only** to select just that value. Environment and Namespace appear when the resource attributes hold `deployment.environment.name` (or the older `deployment.environment`) and `k8s.namespace.name`.
 
 #### Traces
 
 - **Traces / All spans**: **Traces** lists one row per trace (its root span) with the number of spans and failed spans in each trace. Filters then find traces holding a matching span anywhere, like TraceQL or Jaeger: for example, **Error** finds traces with any failing span, and a filter on `db.system.name` finds traces calling a database. Duration filters test the trace (root span) duration. **All spans** lists every span and applies all filters to each span.
-- **Status**: `Error`, `Ok` and `Unset` buttons with counts. Values written by older exporters (`STATUS_CODE_ERROR`) are matched too.
+- **Status**: `Error`, `Ok` and `Unset` buttons. Hover them to see how many spans each has in the time range. Values written by older exporters (`STATUS_CODE_ERROR`) are matched too.
 - **Service**, **Span name**, **Kind** and **Environment**: dropdowns with value counts, as for logs.
 - **Duration**: minimum and maximum, written like `250ms`, `1.5s` or `800us`. A bare number is read as milliseconds.
 - **Search**: finds span names containing the text. Paste a trace ID to open that trace; **Back to search** returns to the list.
@@ -80,9 +80,9 @@ Use **Add filter** to filter on any other field. The field list shows the table'
 
 Filters show as chips such as `http.route = /api/cart`. Click a chip to edit it, use its minus or plus icon to switch between including and excluding, or remove it. Filters added from a log line's details (**Filter for value**, **Filter out value**) show up as chips too. **Clear all** removes the search and every filter.
 
-Value counts follow the time range and the other filters of the query. On large tables a count stops after 50 million rows or 10 seconds and shows the counts so far.
+Value counts load when you open a dropdown (or hover the status buttons), and follow the time range and the other filters of the query. On large tables a count stops after 50 million rows or 10 seconds and shows the counts so far. The attribute keys of the field list are looked up when you first open **Add filter** or a chip.
 
-Compact filters use Grafana's selected time range automatically. The configured time fields are not shown in the filter field list because the query builder manages the time range filter for you. Use **Options** to change the sort order, the result limit and the minimum interval.
+Compact filters use Grafana's selected time range automatically. The configured time fields are not shown in the filter field list because the query builder manages the time range filter for you. Use **Options** to change the sort order, the result limit and the minimum interval. For traces, **Span counts** turns the span and failed span counts of the trace list off, which makes the list cheaper on large time ranges.
 
 The compact editor also includes a generated SQL preview. Use **Copy** to copy the generated query, or **Open in SQL editor** to switch to the SQL editor for manual customization.
 
