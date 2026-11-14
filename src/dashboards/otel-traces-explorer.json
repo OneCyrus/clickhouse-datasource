@@ -115,7 +115,7 @@
         "current": {
           "selected": true,
           "text": "",
-          "value": "${DS_GRAFANA_CLICKHOUSE_DATASOURCE}"
+          "value": "${DS_ONECYRUS_CLICKHOUSE_DATASOURCE}"
         },
         "hide": 0,
         "includeAll": false,
@@ -123,7 +123,7 @@
         "multi": false,
         "name": "datasource",
         "options": [],
-        "query": "grafana-clickhouse-datasource",
+        "query": "onecyrus-clickhouse-datasource",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,

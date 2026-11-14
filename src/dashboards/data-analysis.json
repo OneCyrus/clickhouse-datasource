@@ -2316,7 +2316,7 @@
         "label": "ClickHouse instance",
         "name": "datasource",
         "options": [],
-        "query": "grafana-clickhouse-datasource",
+        "query": "onecyrus-clickhouse-datasource",
         "refresh": 1,
         "regex": "",
         "type": "datasource"

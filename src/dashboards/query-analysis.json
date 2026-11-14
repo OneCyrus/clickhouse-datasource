@@ -1446,7 +1446,7 @@
         "multi": false,
         "name": "datasource",
         "options": [],
-        "query": "grafana-clickhouse-datasource",
+        "query": "onecyrus-clickhouse-datasource",
         "queryValue": "",
         "refresh": 1,
         "regex": "",
