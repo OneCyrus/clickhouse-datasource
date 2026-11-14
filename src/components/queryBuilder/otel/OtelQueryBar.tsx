@@ -3,7 +3,7 @@ import { css } from '@emotion/css';
 import { GrafanaTheme2, TimeRange } from '@grafana/data';
 import { Button, Icon, Input, RadioButtonGroup, Tooltip, useStyles2 } from '@grafana/ui';
 import { Datasource } from 'data/CHDatasource';
-import { getColumnByHint } from 'data/sqlGenerator';
+import { escapeIdentifier, getColumnByHint, MESSAGE_PLACEHOLDER_REGEX } from 'data/sqlGenerator';
 import { ColumnHint, Filter, FilterOperator, QueryBuilderOptions, TableColumn, TimeUnit } from 'types/queryBuilder';
 import { SignalType } from 'types/config';
 import { getDefaultTraceFilters } from '../defaultQueryOptions';
@@ -19,6 +19,7 @@ import {
   isQuickFilter,
   isRootSpanFilter,
   isTraceIdLike,
+  messageTemplateKeys,
   OtelField,
   quickFilterIds,
   severityLevels,
@@ -295,6 +296,35 @@ const LogsQuickFilters = (props: QuickFiltersProps & { columns: readonly TableCo
   const namespaceField = keyField(fields, 'resource', ['k8s.namespace.name']);
   const levelField = !severityColumn ? columnField(fields, levelColumn) : undefined;
 
+  // Message templates: an attribute holding them, or else messages that are templates themselves
+  // (.NET's default), found by probing recent rows.
+  const templateAttribute = fields.find(
+    (f) => f.group === 'attributes' && f.mapKey !== undefined && messageTemplateKeys.includes(f.mapKey)
+  );
+  const messageColumn = getColumnByHint(options, ColumnHint.LogMessage)?.name;
+  const [templatedMessages, setTemplatedMessages] = useState(false);
+  useEffect(() => {
+    if (templateAttribute || !messageColumn || !options.database || !options.table) {
+      setTemplatedMessages(false);
+      return;
+    }
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => datasource.hasMessageTemplates(options.database, options.table, messageColumn))
+      .then(
+        (found) => !cancelled && setTemplatedMessages(found),
+        () => !cancelled && setTemplatedMessages(false)
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [datasource, options.database, options.table, messageColumn, templateAttribute]);
+  const templateField = templateAttribute || (templatedMessages ? columnField(fields, messageColumn) : undefined);
+  const templateCondition =
+    !templateAttribute && messageColumn
+      ? `match(${escapeIdentifier(messageColumn)}, '${MESSAGE_PLACEHOLDER_REGEX}')`
+      : undefined;
+
   return (
     <>
       {severityField && (
@@ -340,6 +370,19 @@ const LogsQuickFilters = (props: QuickFiltersProps & { columns: readonly TableCo
           range={range}
           field={serviceField}
           name="Service"
+          onFiltersChange={onFiltersChange}
+        />
+      )}
+      {templateField && (
+        <FacetFilter
+          datasource={datasource}
+          options={options}
+          range={range}
+          field={templateField}
+          name="Template"
+          condition={templateCondition}
+          searchPlaceholder="Search message templates"
+          wide
           onFiltersChange={onFiltersChange}
         />
       )}

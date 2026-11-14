@@ -462,6 +462,11 @@ const CompactQueryEditor = (props: CompactQueryEditorProps) => {
           onOrderByChange={(orderBy: OrderBy[]) => mergeActiveOptions({ orderBy }, true)}
           onLimitChange={(limit: number) => mergeActiveOptions({ limit }, true)}
           onMinIntervalChange={onMinIntervalChange}
+          onRenderMessageTemplatesChange={
+            signalType === 'logs'
+              ? (renderMessageTemplates) => mergeActiveOptions({ meta: { renderMessageTemplates } }, true)
+              : undefined
+          }
         />
       )}
 

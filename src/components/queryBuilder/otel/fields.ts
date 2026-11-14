@@ -69,7 +69,15 @@ const rareColumns = new Set(['ResourceSchemaUrl', 'ScopeSchemaUrl', 'TraceFlags'
  * Former names stay because data written by older SDKs keeps them (http.method before
  * http.request.method, deployment.environment before deployment.environment.name, ...).
  */
+/**
+ * Attributes holding the message template of a log record: .NET's OTLP exporter writes
+ * `{OriginalFormat}` when IncludeFormattedMessage is on (by default the template is the body
+ * instead), Serilog's OpenTelemetry sink writes `message_template.text`.
+ */
+export const messageTemplateKeys = ['{OriginalFormat}', 'message_template.text'];
+
 const wellKnownKeys = [
+  ...messageTemplateKeys,
   'deployment.environment.name',
   'deployment.environment',
   'service.namespace',

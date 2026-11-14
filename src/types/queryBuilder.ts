@@ -54,6 +54,11 @@ export interface QueryBuilderOptions {
     // Logs
     liveView?: boolean;
     logMessageLike?: string;
+    /**
+     * Fills message template placeholders (`{UserId}`) in the log message from the log attributes
+     * of the same name. Set by the single-table logs editor.
+     */
+    renderMessageTemplates?: boolean;
 
     // Trace
     traceDurationUnit?: TimeUnit;

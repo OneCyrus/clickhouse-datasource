@@ -85,6 +85,19 @@ ordered and limited first (`WITH __gf_roots AS (...)`), then their spans are cou
 range and joined back. Order columns are carried hidden (`* EXCEPT`) because a join does not keep
 the order. Opening a trace ignores the search filters, so the waterfall shows the whole trace.
 
+### Message templates (.NET)
+
+With the OpenTelemetry .NET SDK defaults (`IncludeFormattedMessage = false`) the OTLP exporter sends
+the `ILogger` template as the body (`AddItem called with user {UserId}`) and the parameters as
+attributes named after the placeholders; `{OriginalFormat}` is only an attribute when the formatted
+message is the body. The editor offers a **Template** facet on the `{OriginalFormat}` (or Serilog
+`message_template.text`) attribute when present, else on the body when a probe of recent rows finds
+placeholders. Filtering is an exact match on the template, cheap and independent of values.
+
+`meta.renderMessageTemplates` (on by default for OTel logs) selects the body with placeholders filled
+from the log attributes in SQL (`splitByRegexp` / `extractAll` on a placeholder pattern that ignores
+JSON braces), only for the returned rows. The search still reads the stored body.
+
 ### Other fixes found on the way
 
 - Classic `LIKE` filters and map keys inserted the value unescaped; literal filters escape both.

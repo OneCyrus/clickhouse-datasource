@@ -16,7 +16,20 @@ interface ValueListProps {
   onSubmitText?: (text: string) => void;
   autoFocus?: boolean;
   placeholder?: string;
+  /** A wider list for long values, such as message templates. */
+  wide?: boolean;
+  /** Shows message template placeholders (`{UserId}`) apart from the fixed text. */
+  highlightPlaceholders?: boolean;
 }
+
+const placeholderPattern = /(\{[@$]?[A-Za-z_][A-Za-z0-9_.]*(?:[,:][^{}]*)?\})/;
+
+/** `text` with its message template placeholders wrapped, to show them apart. */
+export const splitPlaceholders = (text: string): Array<{ text: string; placeholder: boolean }> =>
+  text
+    .split(placeholderPattern)
+    .filter((part) => part !== '')
+    .map((part) => ({ text: part, placeholder: placeholderPattern.test(part) }));
 
 const formatCount = (count: number): string =>
   count >= 1_000_000
@@ -27,6 +40,8 @@ const formatCount = (count: number): string =>
 
 const getStyles = (theme: GrafanaTheme2) => ({
   wrapper: css({ display: 'flex', flexDirection: 'column', gap: theme.spacing(0.5), minWidth: 280 }),
+  wide: css({ width: 560, maxWidth: '80vw' }),
+  placeholder: css({ color: theme.colors.text.link }),
   list: css({ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column' }),
   row: css({
     position: 'relative',
@@ -87,7 +102,19 @@ const getStyles = (theme: GrafanaTheme2) => ({
  * shows its share, so outliers stand out without reading numbers.
  */
 export const ValueList = (props: ValueListProps) => {
-  const { values, selected, onChange, loading, error, formatValue, onSubmitText, autoFocus, placeholder } = props;
+  const {
+    values,
+    selected,
+    onChange,
+    loading,
+    error,
+    formatValue,
+    onSubmitText,
+    autoFocus,
+    placeholder,
+    wide,
+    highlightPlaceholders,
+  } = props;
   const styles = useStyles2(getStyles);
   const [search, setSearch] = useState('');
   const max = Math.max(1, ...values.map((v) => v.count));
@@ -106,7 +133,7 @@ export const ValueList = (props: ValueListProps) => {
     onChange(selected.includes(value) ? selected.filter((s) => s !== value) : [...selected, value]);
 
   return (
-    <div className={styles.wrapper} data-testid="otel-value-list">
+    <div className={cx(styles.wrapper, wide && styles.wide)} data-testid="otel-value-list">
       <Input
         value={search}
         autoFocus={autoFocus}
@@ -139,7 +166,19 @@ export const ValueList = (props: ValueListProps) => {
               <div className={styles.bar} style={{ width: `${(v.count / max) * 100}%` }} />
               <Checkbox value={checked} onChange={() => toggle(v.value)} onClick={(e) => e.stopPropagation()} />
               <span className={cx(styles.label, v.value === '' && styles.empty)}>
-                {v.value === '' ? '(empty)' : display}
+                {v.value === ''
+                  ? '(empty)'
+                  : highlightPlaceholders
+                    ? splitPlaceholders(display).map((part, i) =>
+                        part.placeholder ? (
+                          <span key={i} className={styles.placeholder}>
+                            {part.text}
+                          </span>
+                        ) : (
+                          part.text
+                        )
+                      )
+                    : display}
               </span>
               <button
                 type="button"

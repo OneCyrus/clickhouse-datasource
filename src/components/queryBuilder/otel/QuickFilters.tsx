@@ -96,6 +96,12 @@ interface FacetFilterProps {
   name: string;
   onFiltersChange: (filters: Filter[]) => void;
   formatValue?: (value: string) => string;
+  /** Narrows the values listed to rows matching this SQL condition. */
+  condition?: string;
+  /** Shows long values, such as message templates, in a wider list. */
+  wide?: boolean;
+  /** Describes the facet in the list's search box. */
+  searchPlaceholder?: string;
 }
 
 /**
@@ -103,7 +109,8 @@ interface FacetFilterProps {
  * other filters. Ticked values are included, or excluded with the switch. It owns one filter.
  */
 export const FacetFilter = (props: FacetFilterProps) => {
-  const { datasource, options, range, field, name, onFiltersChange, formatValue } = props;
+  const { datasource, options, range, field, name, onFiltersChange, formatValue, condition, wide, searchPlaceholder } =
+    props;
   const styles = useStyles2(getStyles);
   const [open, setOpen] = useState(false);
   const id = quickFilterIds.facet(field.id);
@@ -111,7 +118,7 @@ export const FacetFilter = (props: FacetFilterProps) => {
   const current = filters.find((f) => f.id === id);
   const selected = current ? getFilterValues(current) : [];
   const exclude = current?.operator === FilterOperator.NotIn;
-  const counts = useFieldValueCounts(datasource, options, field, range, open, { excludeFilterIds: [id] });
+  const counts = useFieldValueCounts(datasource, options, field, range, open, { excludeFilterIds: [id], condition });
 
   const apply = (values: string[], excluded: boolean) => {
     const next = values.length
@@ -153,7 +160,9 @@ export const FacetFilter = (props: FacetFilterProps) => {
             formatValue={formatValue}
             onChange={(values) => apply(values, exclude)}
             onSubmitText={(text) => apply([...new Set([...selected, text])], exclude)}
-            placeholder={`Search ${name.toLowerCase()}`}
+            placeholder={searchPlaceholder || `Search ${name.toLowerCase()}`}
+            wide={wide}
+            highlightPlaceholders={wide}
           />
           <div className={styles.facetFooter}>
             <button type="button" className={styles.link} onClick={() => apply([], false)} disabled={!selected.length}>

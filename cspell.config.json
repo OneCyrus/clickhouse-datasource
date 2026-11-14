@@ -161,6 +161,8 @@
     "Struct",
     "behaviour",
     "sqltemplates",
-    "tokenbf"
+    "tokenbf",
+    "Serilog",
+    "Serilog's"
   ]
 }

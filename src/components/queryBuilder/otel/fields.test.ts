@@ -14,6 +14,7 @@ import {
 } from './fields';
 import { buildFilterFromMode, getFilterMode } from './FieldFilterEditor';
 import { getFacet } from './useFieldData';
+import { splitPlaceholders } from './ValueList';
 import { getDefaultTraceFilters } from '../defaultQueryOptions';
 
 const logsColumns = [
@@ -171,5 +172,17 @@ describe('facets', () => {
 
     const own = getFacet(options, { column: 'ServiceName', columnType: 'String' });
     expect(own.where).toBe('( Timestamp >= $__fromTime AND Timestamp <= $__toTime )');
+  });
+});
+
+describe('message template placeholders', () => {
+  it('splits a template into text and placeholders, leaving JSON braces alone', () => {
+    expect(splitPlaceholders('Took {Elapsed:0.00} ms for {@Order} {"a":1}')).toEqual([
+      { text: 'Took ', placeholder: false },
+      { text: '{Elapsed:0.00}', placeholder: true },
+      { text: ' ms for ', placeholder: false },
+      { text: '{@Order}', placeholder: true },
+      { text: ' {"a":1}', placeholder: false },
+    ]);
   });
 });

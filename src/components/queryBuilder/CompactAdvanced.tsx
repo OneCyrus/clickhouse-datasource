@@ -1,7 +1,7 @@
 import React from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
-import { Combobox, ComboboxOption, Input, useStyles2 } from '@grafana/ui';
+import { Combobox, ComboboxOption, InlineSwitch, Input, Tooltip, useStyles2 } from '@grafana/ui';
 import { OrderBy, OrderByDirection, QueryBuilderOptions, TableColumn } from 'types/queryBuilder';
 import labels from 'labels';
 import { selectors } from 'selectors';
@@ -14,6 +14,8 @@ interface CompactAdvancedProps {
   onOrderByChange: (orderBy: OrderBy[]) => void;
   onLimitChange: (limit: number) => void;
   onMinIntervalChange?: (minInterval: string) => void;
+  /** Shown for logs: fill message template placeholders from the log attributes. */
+  onRenderMessageTemplatesChange?: (render: boolean) => void;
 }
 
 const getStyles = (theme: GrafanaTheme2) => ({
@@ -38,7 +40,15 @@ const getStyles = (theme: GrafanaTheme2) => ({
 });
 
 export const CompactAdvanced = (props: CompactAdvancedProps) => {
-  const { builderOptions, allColumns, minInterval, onOrderByChange, onLimitChange, onMinIntervalChange } = props;
+  const {
+    builderOptions,
+    allColumns,
+    minInterval,
+    onOrderByChange,
+    onLimitChange,
+    onMinIntervalChange,
+    onRenderMessageTemplatesChange,
+  } = props;
   const styles = useStyles2(getStyles);
   const orderBy = builderOptions.orderBy || [];
   const limit = builderOptions.limit || 1000;
@@ -97,6 +107,19 @@ export const CompactAdvanced = (props: CompactAdvancedProps) => {
           }}
         />
       </div>
+
+      {onRenderMessageTemplatesChange && (
+        <div className={styles.item}>
+          <Tooltip content="Replace placeholders such as {UserId} in log messages with the log attribute of the same name. .NET sends message templates this way by default.">
+            <span className={styles.label}>Fill message templates</span>
+          </Tooltip>
+          <InlineSwitch
+            aria-label="Fill message templates"
+            value={Boolean(builderOptions.meta?.renderMessageTemplates)}
+            onChange={(e) => onRenderMessageTemplatesChange(e.currentTarget.checked)}
+          />
+        </div>
+      )}
 
       {onMinIntervalChange && (
         <div className={styles.item}>
