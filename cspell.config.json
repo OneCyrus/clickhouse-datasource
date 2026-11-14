@@ -163,6 +163,7 @@
     "sqltemplates",
     "tokenbf",
     "Serilog",
-    "Serilog's"
+    "Serilog's",
+    "Logback"
   ]
 }

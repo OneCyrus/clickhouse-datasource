@@ -102,6 +102,8 @@ interface FacetFilterProps {
   wide?: boolean;
   /** Describes the facet in the list's search box. */
   searchPlaceholder?: string;
+  /** The ID of the filter the facet owns, when not the field's default. */
+  filterId?: string;
 }
 
 /**
@@ -109,11 +111,22 @@ interface FacetFilterProps {
  * other filters. Ticked values are included, or excluded with the switch. It owns one filter.
  */
 export const FacetFilter = (props: FacetFilterProps) => {
-  const { datasource, options, range, field, name, onFiltersChange, formatValue, condition, wide, searchPlaceholder } =
-    props;
+  const {
+    datasource,
+    options,
+    range,
+    field,
+    name,
+    onFiltersChange,
+    formatValue,
+    condition,
+    wide,
+    searchPlaceholder,
+    filterId,
+  } = props;
   const styles = useStyles2(getStyles);
   const [open, setOpen] = useState(false);
-  const id = quickFilterIds.facet(field.id);
+  const id = filterId || quickFilterIds.facet(field.id);
   const filters = options.filters || [];
   const current = filters.find((f) => f.id === id);
   const selected = current ? getFilterValues(current) : [];

@@ -93,6 +93,12 @@ attributes named after the placeholders; `{OriginalFormat}` is only an attribute
 message is the body. The editor offers a **Template** facet on the `{OriginalFormat}` (or Serilog
 `message_template.text`) attribute when present, else on the body when a probe of recent rows finds
 placeholders. Filtering is an exact match on the template, cheap and independent of values.
+Templates belong to one service and only some services have them, so the facet sits in the second
+row with the field filters, not with level and service. Picking templates adds one facet per named
+placeholder (`otel:placeholder:<name>` filters on the log attribute of that name), scoped to the
+templates; changing the templates drops the placeholder filters they no longer have. Java's
+`log.body.template` (opt-in `captureTemplate`) uses positional `{}` placeholders, so it gets the
+template facet but no placeholder facets.
 
 `meta.renderMessageTemplates` (on by default for OTel logs) selects the body with placeholders filled
 from the log attributes in SQL (`splitByRegexp` / `extractAll` on a placeholder pattern that ignores

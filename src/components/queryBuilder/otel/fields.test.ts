@@ -6,6 +6,7 @@ import {
   getFieldExpression,
   getFieldPresenceCondition,
   getKeyFields,
+  getPlaceholderNames,
   getSeverityLevelExpression,
   getSeverityLevelsOf,
   getSeverityNumbers,
@@ -183,6 +184,16 @@ describe('message template placeholders', () => {
       { text: ' ms for ', placeholder: false },
       { text: '{@Order}', placeholder: true },
       { text: ' {"a":1}', placeholder: false },
+    ]);
+  });
+});
+
+describe('placeholder names', () => {
+  it('names the placeholders of a template without alignment and format, skipping positional ones', () => {
+    expect(getPlaceholderNames('Took {Elapsed,8:0.00} ms for {@Order} by {UserId}; java {} {"a":1}')).toEqual([
+      'Elapsed',
+      '@Order',
+      'UserId',
     ]);
   });
 });

@@ -72,9 +72,19 @@ const rareColumns = new Set(['ResourceSchemaUrl', 'ScopeSchemaUrl', 'TraceFlags'
 /**
  * Attributes holding the message template of a log record: .NET's OTLP exporter writes
  * `{OriginalFormat}` when IncludeFormattedMessage is on (by default the template is the body
- * instead), Serilog's OpenTelemetry sink writes `message_template.text`.
+ * instead; the NLog OTLP target does the same), Serilog's OpenTelemetry sink writes
+ * `message_template.text`, and Java's Logback and Log4j appenders write `log.body.template` when
+ * `captureTemplate` is on.
  */
-export const messageTemplateKeys = ['{OriginalFormat}', 'message_template.text'];
+export const messageTemplateKeys = ['{OriginalFormat}', 'message_template.text', 'log.body.template'];
+
+/**
+ * The names of a message template's placeholders, without alignment or format
+ * (`{Elapsed,8:0.00}` is `Elapsed`, `{@Order}` is `@Order`). Positional `{}` placeholders (Java)
+ * have no name and are left out.
+ */
+export const getPlaceholderNames = (template: string): string[] =>
+  [...template.matchAll(/\{([@$]?[A-Za-z_][A-Za-z0-9_.]*)(?:[,:][^{}]*)?\}/g)].map((m) => m[1]);
 
 const wellKnownKeys = [
   ...messageTemplateKeys,
@@ -372,6 +382,8 @@ export const quickFilterIds = {
   durationMax: 'otel:duration-max',
   spanSearch: 'otel:span-search',
   facet: (fieldId: string) => `otel:facet:${fieldId}`,
+  placeholderPrefix: 'otel:placeholder:',
+  placeholder: (name: string) => `otel:placeholder:${name}`,
 };
 
 export const isQuickFilter = (filter: Filter): boolean => Boolean(filter.id?.startsWith('otel:'));
