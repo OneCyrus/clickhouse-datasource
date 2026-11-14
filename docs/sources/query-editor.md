@@ -27,11 +27,11 @@ This document explains how to use the ClickHouse query editor to build and run q
 
 The query editor appears in [Explore](https://grafana.com/docs/grafana/latest/visualizations/explore/) when you select the ClickHouse data source, or when you add or edit a panel and select ClickHouse. It includes the following elements.
 
-| Element         | Description                                                                                                                                                                                |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Editor type** | Switch between **SQL** (write raw SQL) and **Query builder** (build queries with drop-downs and filters).                                                                                  |
-| **Run Query**   | Runs the current query and refreshes the panel. In the SQL editor you can also use **Ctrl+Enter** (Windows/Linux) or **Cmd+Enter** (macOS).                                                |
-| **Query type**  | Choose the result format: **Table**, **Logs**, **Time series**, or **Traces**. This sets how Grafana interprets and visualizes the results. Available in both SQL and Query builder modes. |
+| Element          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Editor type**  | Switch between **SQL** (write raw SQL) and **Query builder** (build queries with drop-downs and filters).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Run Query**    | Runs the current query and refreshes the panel. In the SQL editor you can also use **Ctrl+Enter** (Windows/Linux) or **Cmd+Enter** (macOS).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Query type**   | Choose the result format: **Table**, **Logs**, **Time series**, or **Traces**. This sets how Grafana interprets and visualizes the results. Available in both SQL and Query builder modes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | **Min interval** | A lower bound for this query's interval, as one number plus a unit of `ms`, `s`, `m`, `h`, `d` or `w` (for example `10s`, `5m`, `1d`). It raises the interval Grafana derives from the time range and panel width, so `$__timeInterval`, `$__timeInterval_ms`, `$__interval_s`, `$__timeGroup`, `$__interval` and `$__interval_ms` never bucket finer than the value you set; it never lowers the interval. Leave it empty to use the interval Grafana picks. Explore has no panel-level **Min interval**, so this is the only way to control bucket size there. The floor applies in Explore, dashboard panels and alert rules alike, and to the Explore log volume histogram. Values outside that grammar, including `1M` and `1y`, are rejected in the editor and ignored by the backend. |
 
 **In SQL mode:**
@@ -53,11 +53,36 @@ If the data source is configured in **Single source** mode, the query builder us
 
 When a data source is configured in **Single source** mode for logs or traces, the query builder uses a compact editor focused on the configured source. The compact editor omits database, table, and query type controls because those values come from the data source configuration.
 
-For logs, use the search field to filter log message text. Use **Add filter** to add column filters, and use the advanced options to adjust sorting and the result limit.
+Every control below writes ordinary builder filters, so the generated SQL stays visible and you can keep editing it in the SQL editor.
 
-Compact filters use Grafana's selected time range automatically. The configured time fields are not shown in the filter field list because the query builder manages the time range filter for you.
+#### Logs
 
-Filter operators are tailored to the selected field type. Numeric fields offer comparison operators such as `>`, `<`, `>=`, `<=`, `=`, and `!=`. String fields offer text matching and equality operators such as **contains**, **does not contain**, `=`, and `!=`.
+- **Search**: finds log messages containing the text, ignoring case. The search reads `lower(Body)`, the expression the OpenTelemetry Collector ClickHouse exporter indexes (a `text` index since collector v0.151), so whole words of the search skip data that cannot match. Paste a trace ID instead to show the logs of that trace.
+- **Level**: one button per OpenTelemetry severity level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`). The logs volume chart's legend shows how many lines each level has. Levels filter on `SeverityNumber` ranges from the OpenTelemetry logs data model, so they work whatever text the application writes in `SeverityText`. Tables without a `SeverityNumber` column get a **Level** dropdown on the configured level column instead.
+- **Service**, **Environment** and **Namespace**: dropdowns listing the values in the time range with their counts. Tick values to include them, or switch to **Exclude**. Hover a value and pick **only** to select just that value. Environment and Namespace appear when the resource attributes hold `deployment.environment.name` (or the older `deployment.environment`) and `k8s.namespace.name`.
+
+#### Traces
+
+- **Traces / All spans**: **Traces** lists one row per trace (its root span) with the number of spans and failed spans in each trace. Filters then find traces holding a matching span anywhere, like TraceQL or Jaeger: for example, **Error** finds traces with any failing span, and a filter on `db.system.name` finds traces calling a database. Duration filters test the trace (root span) duration. **All spans** lists every span and applies all filters to each span.
+- **Status**: `Error`, `Ok` and `Unset` buttons. Hover them to see how many spans each has in the time range. Values written by older exporters (`STATUS_CODE_ERROR`) are matched too.
+- **Service**, **Span name**, **Kind** and **Environment**: dropdowns with value counts, as for logs.
+- **Duration**: minimum and maximum, written like `250ms`, `1.5s` or `800us`. A bare number is read as milliseconds.
+- **Search**: finds span names containing the text. Paste a trace ID to open that trace; **Back to search** returns to the list.
+
+#### Field filters
+
+Use **Add filter** to filter on any other field. The field list shows the table's columns under their OpenTelemetry names (`service.name`, `severity_number`, `status.code`) and every resource, log, span and scope attribute key seen in recent data, with well known semantic convention keys first. Then pick how to test it:
+
+- **is** / **is not**: tick one or more values from the ones in the time range (with counts), or type a value and press Enter.
+- **contains** / **not contains**: text, ignoring case.
+- **exists** / **missing**: whether the field has a value.
+- `>`, `>=`, `<`, `<=`: for numeric fields such as `http.response.status_code`. Attribute values are stored as strings, so the comparison converts them to numbers.
+
+Filters show as chips such as `http.route = /api/cart`. Click a chip to edit it, use its minus or plus icon to switch between including and excluding, or remove it. Filters added from a log line's details (**Filter for value**, **Filter out value**) show up as chips too. **Clear all** removes the search and every filter.
+
+Value counts load when you open a dropdown (or hover the status buttons), and follow the time range and the other filters of the query. On large tables a count stops after 50 million rows or 10 seconds and shows the counts so far. The attribute keys of the field list are looked up when you first open **Add filter** or a chip.
+
+Compact filters use Grafana's selected time range automatically. The configured time fields are not shown in the filter field list because the query builder manages the time range filter for you. Use **Options** to change the sort order, the result limit and the minimum interval. For traces, **Span counts** turns the span and failed span counts of the trace list off, which makes the list cheaper on large time ranges.
 
 The compact editor also includes a generated SQL preview. Use **Copy** to copy the generated query, or **Open in SQL editor** to switch to the SQL editor for manual customization.
 
@@ -68,13 +93,13 @@ When a data source is configured in **Single source** mode for **Metrics**, the 
 1. **Metric**: search all metrics with data in the dashboard time range. Each entry shows its type (gauge, counter, up-down counter, histogram, exponential histogram, summary), unit, and description.
 1. **Function**: what to compute for each series and time interval. The options depend on the metric type, and the most common one is preselected:
 
-   | Metric type             | Functions                                                    | Default  |
-   | ----------------------- | ------------------------------------------------------------ | -------- |
-   | Gauge                   | Average, Min, Max, Last                                      | Average  |
-   | Counter (monotonic sum) | Rate (per second), Increase (per interval)                   | Rate     |
-   | Up-down counter         | Last, Average, Min, Max                                      | Last     |
-   | Histogram               | Quantile, Rate, Increase, Sum rate, Average value, Heatmap   | Quantile |
-   | Exponential histogram   | Rate, Increase, Sum rate, Average value                      | Rate     |
+   | Metric type             | Functions                                                              | Default  |
+   | ----------------------- | ---------------------------------------------------------------------- | -------- |
+   | Gauge                   | Average, Min, Max, Last                                                | Average  |
+   | Counter (monotonic sum) | Rate (per second), Increase (per interval)                             | Rate     |
+   | Up-down counter         | Last, Average, Min, Max                                                | Last     |
+   | Histogram               | Quantile, Rate, Increase, Sum rate, Average value, Heatmap             | Quantile |
+   | Exponential histogram   | Rate, Increase, Sum rate, Average value                                | Rate     |
    | Summary                 | Quantile (reported quantiles), Rate, Increase, Sum rate, Average value | Quantile |
 
    Rates and increases handle counter resets and both cumulative and delta temporality. Histogram quantiles merge the bucket counts of all series in a group and interpolate within the bucket, like PromQL's `histogram_quantile`. Select several quantiles to get one value per quantile, for example `p50`, `p95`, and `p99`. Series with different bucket bounds (for example an SDK's defaults next to the Collector's own) are merged by bound.
@@ -111,14 +136,14 @@ When using the query builder, the available options depend on the selected **que
 
 Selecting **Aggregate** as the builder mode (available for the **Table** and **Logs** query types) computes aggregate functions with a `GROUP BY`. The builder exposes these fields:
 
-| Field           | Description                                                                                                                                    |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Columns**     | Plain columns to return alongside the aggregates.                                                                                               |
-| **Aggregates**  | One or more aggregate functions to compute, such as `count()`, `avg(Duration)`, or `sum(Bytes)`. Click **Aggregate** to add each one, and optionally alias it. |
-| **Group By**    | Columns to group the aggregates by. The drop-down lists every column in the selected table, so it can be long on wide tables.                   |
-| **Order By**    | Columns or aggregates to sort by, each ascending or descending.                                                                                |
-| **Limit**       | Maximum number of rows to return. Set to `0` to omit the `LIMIT` clause.                                                                        |
-| **Filters**     | `WHERE` conditions, combined with `AND` or `OR`.                                                                                                |
+| Field          | Description                                                                                                                                                    |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Columns**    | Plain columns to return alongside the aggregates.                                                                                                              |
+| **Aggregates** | One or more aggregate functions to compute, such as `count()`, `avg(Duration)`, or `sum(Bytes)`. Click **Aggregate** to add each one, and optionally alias it. |
+| **Group By**   | Columns to group the aggregates by. The drop-down lists every column in the selected table, so it can be long on wide tables.                                  |
+| **Order By**   | Columns or aggregates to sort by, each ascending or descending.                                                                                                |
+| **Limit**      | Maximum number of rows to return. Set to `0` to omit the `LIMIT` clause.                                                                                       |
+| **Filters**    | `WHERE` conditions, combined with `AND` or `OR`.                                                                                                               |
 
 The builder assembles these into a single query, selecting the grouped columns before the aggregate expressions. For example, grouping by `Datacenter` with a row count and average duration produces:
 
@@ -367,25 +392,25 @@ FROM test_data
 WHERE $__timeFilter(date_time)
 ```
 
-| Macro                                        | Description                                                                                      | Output example                                                                                                                        |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `$__dateFilter(columnName)`                  | Filters by the panel date range using the given column.                                          | `date >= toDate('2022-10-21') AND date <= toDate('2022-10-23')`                                                                       |
-| `$__timeFilter(columnName)`                  | Filters by the panel time range (seconds).                                                       | `time >= toDateTime(1415792726) AND time <= toDateTime(1447328726)`                                                                   |
-| `$__timeFilter_ms(columnName)`               | Filters by the panel time range (milliseconds).                                                  | `time >= fromUnixTimestamp64Milli(1415792726123) AND time <= fromUnixTimestamp64Milli(1447328726456)`                                 |
+| Macro                                        | Description                                                                                      | Output example                                                                                                                            |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `$__dateFilter(columnName)`                  | Filters by the panel date range using the given column.                                          | `date >= toDate('2022-10-21') AND date <= toDate('2022-10-23')`                                                                           |
+| `$__timeFilter(columnName)`                  | Filters by the panel time range (seconds).                                                       | `time >= toDateTime(1415792726) AND time <= toDateTime(1447328726)`                                                                       |
+| `$__timeFilter_ms(columnName)`               | Filters by the panel time range (milliseconds).                                                  | `time >= fromUnixTimestamp64Milli(1415792726123) AND time <= fromUnixTimestamp64Milli(1447328726456)`                                     |
 | `$__dateTimeFilter(dateColumn, timeColumn)`  | Combines date and time filters for separate Date and DateTime columns.                           | `(date >= toDate('2022-10-21') AND date <= toDate('2022-10-23')) AND (time >= toDateTime(1415792726) AND time <= toDateTime(1447328726))` |
-| `$__dt(dateColumn, timeColumn)`              | Shorthand alias for `$__dateTimeFilter`.                                                         | Same as `$__dateTimeFilter`.                                                                                                          |
-| `$__timeFrom(columnName)`                    | Filters at or after the range start. With no argument, the same as `$__fromTime`.                | `time >= toDateTime(1415792726)`                                                                                                      |
-| `$__timeTo(columnName)`                      | Filters at or before the range end. With no argument, the same as `$__toTime`.                   | `time <= toDateTime(1447328726)`                                                                                                      |
-| `$__timeGroup(columnName, period)`           | Buckets the time column into fixed intervals for grouping. Accepts a duration such as `5m`.      | `toStartOfInterval(toDateTime(column), INTERVAL 300 second)`                                                                        |
-| `$__fromTime`                                | Start of the panel time range as `DateTime`.                                                     | `toDateTime(1415792726)`                                                                                                              |
-| `$__toTime`                                  | End of the panel time range as `DateTime`.                                                       | `toDateTime(1447328726)`                                                                                                              |
-| `$__fromTime_ms`                             | Start of the panel time range as `DateTime64(3)`.                                                | `fromUnixTimestamp64Milli(1415792726123)`                                                                                             |
-| `$__toTime_ms`                               | End of the panel time range as `DateTime64(3)`.                                                  | `fromUnixTimestamp64Milli(1447328726456)`                                                                                             |
-| `$__interval_s`                              | Panel interval in seconds.                                                                       | `20`                                                                                                                                  |
-| `$__fromGrafanaInterval(interval)`           | Converts a Grafana dashboard interval variable to ClickHouse interval syntax.                    | `$__fromGrafanaInterval(5m)` → `5 minute`                                                                                              |
-| `$__timeInterval(columnName)`                | Interval from panel time range (seconds), for grouping.                                          | `toStartOfInterval(toDateTime(column), INTERVAL 20 second)`                                                                           |
-| `$__timeInterval_ms(columnName)`             | Interval from panel time range (milliseconds), for grouping.                                     | `toStartOfInterval(toDateTime64(column, 3), INTERVAL 20 millisecond)`                                                                 |
-| `$__conditionalAll(condition, $templateVar)` | Uses the first parameter when the template variable does not select all values; otherwise `1=1`. | `condition` or `1=1`                                                                                                                  |
+| `$__dt(dateColumn, timeColumn)`              | Shorthand alias for `$__dateTimeFilter`.                                                         | Same as `$__dateTimeFilter`.                                                                                                              |
+| `$__timeFrom(columnName)`                    | Filters at or after the range start. With no argument, the same as `$__fromTime`.                | `time >= toDateTime(1415792726)`                                                                                                          |
+| `$__timeTo(columnName)`                      | Filters at or before the range end. With no argument, the same as `$__toTime`.                   | `time <= toDateTime(1447328726)`                                                                                                          |
+| `$__timeGroup(columnName, period)`           | Buckets the time column into fixed intervals for grouping. Accepts a duration such as `5m`.      | `toStartOfInterval(toDateTime(column), INTERVAL 300 second)`                                                                              |
+| `$__fromTime`                                | Start of the panel time range as `DateTime`.                                                     | `toDateTime(1415792726)`                                                                                                                  |
+| `$__toTime`                                  | End of the panel time range as `DateTime`.                                                       | `toDateTime(1447328726)`                                                                                                                  |
+| `$__fromTime_ms`                             | Start of the panel time range as `DateTime64(3)`.                                                | `fromUnixTimestamp64Milli(1415792726123)`                                                                                                 |
+| `$__toTime_ms`                               | End of the panel time range as `DateTime64(3)`.                                                  | `fromUnixTimestamp64Milli(1447328726456)`                                                                                                 |
+| `$__interval_s`                              | Panel interval in seconds.                                                                       | `20`                                                                                                                                      |
+| `$__fromGrafanaInterval(interval)`           | Converts a Grafana dashboard interval variable to ClickHouse interval syntax.                    | `$__fromGrafanaInterval(5m)` → `5 minute`                                                                                                 |
+| `$__timeInterval(columnName)`                | Interval from panel time range (seconds), for grouping.                                          | `toStartOfInterval(toDateTime(column), INTERVAL 20 second)`                                                                               |
+| `$__timeInterval_ms(columnName)`             | Interval from panel time range (milliseconds), for grouping.                                     | `toStartOfInterval(toDateTime64(column, 3), INTERVAL 20 millisecond)`                                                                     |
+| `$__conditionalAll(condition, $templateVar)` | Uses the first parameter when the template variable does not select all values; otherwise `1=1`. | `condition` or `1=1`                                                                                                                      |
 
 You can also use brace notation `{}` when the macro parameter must contain a query or other expression.
 

@@ -1,4 +1,14 @@
-import { CoreApp, DataFrame, DataQueryRequest, DataQueryResponse, FieldConfig, FieldType, TimeRange } from '@grafana/data';
+import {
+  CoreApp,
+  DataFrame,
+  DataQueryRequest,
+  DataQueryResponse,
+  FieldConfig,
+  FieldType,
+  MappingType,
+  ThresholdsMode,
+  TimeRange,
+} from '@grafana/data';
 import {
   BuilderMode,
   ColumnHint,
@@ -160,6 +170,41 @@ const traceSearchFieldConfigs: Record<string, FieldConfig> = {
   },
   traceid: {
     displayName: 'Trace ID',
+  },
+  // Status, span and error counts of the single-table traces editor's results.
+  status: {
+    displayName: 'Status',
+    mappings: [
+      {
+        type: MappingType.ValueToText,
+        options: {
+          Error: { color: 'red', index: 0 },
+          STATUS_CODE_ERROR: { color: 'red', text: 'Error', index: 1 },
+          Ok: { color: 'green', index: 2 },
+          STATUS_CODE_OK: { color: 'green', text: 'Ok', index: 3 },
+          Unset: { color: 'text', index: 4 },
+          STATUS_CODE_UNSET: { color: 'text', text: 'Unset', index: 5 },
+        },
+      },
+    ],
+    color: { mode: 'fixed', fixedColor: 'text' },
+    custom: { width: 90, cellOptions: { type: 'color-text' } },
+  },
+  spans: {
+    displayName: 'Spans',
+    custom: { width: 80 },
+  },
+  errors: {
+    displayName: 'Errors',
+    color: { mode: 'thresholds' },
+    thresholds: {
+      mode: ThresholdsMode.Absolute,
+      steps: [
+        { value: -Infinity, color: 'text' },
+        { value: 1, color: 'red' },
+      ],
+    },
+    custom: { width: 80, cellOptions: { type: 'color-text' } },
   },
 };
 

@@ -1,0 +1,48 @@
+apiVersion: 1
+datasources:
+  - name: OTel Logs
+    uid: otel-logs
+    type: grafana-clickhouse-datasource
+    jsonData: &base
+      host: clickhouse
+      port: 9000
+      protocol: native
+      username: default
+      defaultDatabase: otel
+      configMode: single-table
+      signalType: logs
+      logs:
+        defaultDatabase: otel
+        defaultTable: otel_logs
+        otelEnabled: true
+        otelVersion: latest
+      traces:
+        defaultDatabase: otel
+        defaultTable: otel_traces
+        otelEnabled: true
+        otelVersion: latest
+        durationUnit: nanoseconds
+  - name: OTel Traces
+    uid: otel-traces
+    type: grafana-clickhouse-datasource
+    jsonData:
+      <<: *base
+      signalType: traces
+  - name: ClickHouse (classic)
+    uid: otel-classic
+    type: grafana-clickhouse-datasource
+    jsonData:
+      host: clickhouse
+      port: 9000
+      protocol: native
+      username: default
+      defaultDatabase: otel
+      logs: { defaultDatabase: otel, defaultTable: otel_logs, otelEnabled: true, otelVersion: latest }
+      traces:
+        {
+          defaultDatabase: otel,
+          defaultTable: otel_traces,
+          otelEnabled: true,
+          otelVersion: latest,
+          durationUnit: nanoseconds,
+        }
