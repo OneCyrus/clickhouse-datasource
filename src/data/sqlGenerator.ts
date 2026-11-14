@@ -159,11 +159,21 @@ const generateTraceListWithStats = (
   const timeConditions = getFilters({ ...options, filters: getTimeRangeFilters(options) });
   const traceId = escapeIdentifier(traceIdColumn);
   const status = escapeIdentifier(statusColumn);
+  // The listed traces are the newest ones, often minutes of a range of hours: when the root spans
+  // are cheap to find (no span filters), counting only spans from the oldest listed root on (less
+  // 5 minutes of clock skew between services) reads far less. With span filters finding the roots
+  // costs more than the narrower count saves, since the window needs them found once more.
+  const startColumn = getColumnByHint(options, ColumnHint.Time)?.name;
+  const windowCondition =
+    split.inner.length === 0 && startColumn
+      ? `${escapeIdentifier(startColumn)} >= (SELECT min(startTime) FROM __gf_roots) - INTERVAL 5 MINUTE`
+      : '';
   const stats = concatQueryParts([
     `SELECT ${traceId} as __gf_trace_id, count() as spans,`,
     `countIf(${status} IN ('Error', 'STATUS_CODE_ERROR')) as errors`,
     `FROM ${table} WHERE`,
     timeConditions ? `${timeConditions} AND` : '',
+    windowCondition ? `${windowCondition} AND` : '',
     `${traceId} IN (SELECT traceID FROM __gf_roots)`,
     'GROUP BY __gf_trace_id',
   ]);

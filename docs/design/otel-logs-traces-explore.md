@@ -98,6 +98,35 @@ A development stack in `dev/otel` runs the latest Grafana (13.3), ClickHouse (26
 errors, exceptions, correlated logs). The editors were exercised there in a browser with Playwright,
 and the repository's E2E specs for the compact editor run against it.
 
+## Query performance
+
+Measured with `dev/otel` scaled to 50M logs and 49M spans (about 1M log lines an hour), a 24 hour
+range, ClickHouse 26.10 on 4 cores, replaying the same browser scenario (levels, service and
+environment facets, search, a field filter; traces with status, service, all spans and duration) and
+reading `system.query_log`:
+
+|               | Queries | ClickHouse time |
+| ------------- | ------- | --------------- |
+| First version | 78      | 57.1 s          |
+| After round 1 | 29      | 7.0 s           |
+| After round 2 | 29      | 6.9 s           |
+
+- Value counts are debounced, keyed on the time range in 1/200 steps and reused for 60 s: level
+  counts went from 26 requests to 3 in the scenario.
+- Materialized resource attributes: environment facet 1.3 s / 7 GB to 116 ms / 199 MB.
+- Attribute key discovery samples rows: 313 ms / 1.1 GB to 30 ms / 43 MB.
+- Trace scope facets count spans, not `uniq(TraceId)`: 563 ms / 978 MB to 90 ms / 200 MB.
+- The default trace list (no span filters) counts spans from the oldest listed root on: 456 ms to
+  209 ms, same results.
+
+Tried and dropped: reading logs in sort key order (`ORDER BY toStartOfFiveMinutes(Timestamp)
+DESC, Timestamp DESC`) halves an unfiltered list but doubles a selective one; grouping levels by
+`intDiv(SeverityNumber + 3, 4)` instead of `multiIf` and dropping `toString()` in the volume query
+gain little; a materialized CTE (`enable_materialized_cte`, off by default in 26.x) or PREWHERE for
+the trace stats do not help. What remains is the scan of the time range itself: the logs list,
+volume and level counts take 0.15-0.3 s each and the trace list with span filters about 1 s at 24
+hours; a projection on the tables would be the next step, which the plugin cannot add itself.
+
 ## Not done
 
 - Using the exporter's `__otel_materialized_*` columns for filters on those attributes (faster

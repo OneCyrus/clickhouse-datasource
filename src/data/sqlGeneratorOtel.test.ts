@@ -204,6 +204,19 @@ describe('trace search in trace scope', () => {
     );
     expect(sql).toContain(`countIf("StatusCode" IN ('Error', 'STATUS_CODE_ERROR')) as errors`);
     expect(sql).toMatch(/ORDER BY __gf_o0 DESC, __gf_o1 DESC$/);
+    // Span filters make the roots costly to find again, so the count is not narrowed.
+    expect(sql).not.toContain('min(startTime)');
+  });
+
+  it('counts the spans of the listed traces from the oldest listed root on, without span filters', () => {
+    const sql = generateSql(
+      tracesOptions({
+        meta: { traceDurationUnit: TimeUnit.Nanoseconds, traceSearchScope: 'trace', showTraceStatus: true },
+      })
+    );
+    expect(sql).toContain(
+      `AND "Timestamp" >= (SELECT min(startTime) FROM __gf_roots) - INTERVAL 5 MINUTE AND "TraceId" IN (SELECT traceID FROM __gf_roots)`
+    );
   });
 
   it('keeps span semantics when listing all spans, without a scope, or with OR filters', () => {
