@@ -68,7 +68,9 @@ const columnField = (fields: OtelField[], column: string | undefined) =>
 
 /** The first attribute field among the keys, by preference. */
 const keyField = (fields: OtelField[], group: OtelField['group'], keys: string[]) =>
-  keys.map((k) => fields.find((f) => f.group === group && f.mapKey === k)).find(Boolean);
+  keys
+    .map((k) => fields.find((f) => f.group === group && (f.mapKey ?? (f.materializedFrom ? f.label : undefined)) === k))
+    .find(Boolean);
 
 /**
  * The logs and traces editor of a single-table data source: a search box, quick filters for the

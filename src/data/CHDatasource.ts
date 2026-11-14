@@ -1525,13 +1525,15 @@ export class Datasource
     const escapedColumn = escapeIdentifier(mapColumn);
     const tableIdentifier = `${escapeIdentifier(db)}.${escapeIdentifier(table)}`;
     const timeColumn = this.getMapKeyProbeTimeColumn(db, table);
-    const source = timeColumn
-      ? `${tableIdentifier} WHERE ${escapeIdentifier(timeColumn)} >= now() - ${ADHOC_PROBE_TIME_WINDOW}`
-      : `(SELECT ${escapedColumn} FROM ${tableIdentifier} LIMIT ${MAP_KEY_PROBE_ROW_SAMPLE})`;
-    // mapKeys() rather than the `.keys` sub-column: ClickHouse's old analyzer
-    // (the default before 24.3) cannot resolve sub-columns on subquery results
-    // and fails with UNKNOWN_IDENTIFIER, silently breaking key discovery.
-    const rawSql = `SELECT DISTINCT arrayJoin(mapKeys(${escapedColumn})) as keys FROM ${source} LIMIT 1000`;
+    const recent = timeColumn ? ` WHERE ${escapeIdentifier(timeColumn)} >= now() - ${ADHOC_PROBE_TIME_WINDOW}` : '';
+    // A bounded row sample of only the keys: a time window alone still reads every row of the map
+    // (on a busy table millions of maps, a gigabyte), and the values are never needed. mapKeys()
+    // inside the sample, not the `.keys` sub-column: ClickHouse's old analyzer (the default before
+    // 24.3) cannot resolve sub-columns on sub-query results, and newer versions read mapKeys() as
+    // the keys sub-column anyway.
+    const rawSql =
+      `SELECT DISTINCT arrayJoin(__keys) as keys FROM ` +
+      `(SELECT mapKeys(${escapedColumn}) AS __keys FROM ${tableIdentifier}${recent} LIMIT ${MAP_KEY_PROBE_ROW_SAMPLE}) LIMIT 1000`;
     return this.fetchData(rawSql);
   }
 

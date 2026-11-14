@@ -138,7 +138,7 @@ describe('field filter editor', () => {
 });
 
 describe('facets', () => {
-  it('count traces by any matching span in trace scope, leaving out the facet field', () => {
+  it('count spans matching the span filters in trace scope, leaving out the facet field', () => {
     const options = {
       database: 'otel',
       table: 'otel_traces',
@@ -166,10 +166,34 @@ describe('facets', () => {
       meta: { traceSearchScope: 'trace' as const },
     };
     const facet = getFacet(options, { column: 'StatusCode', columnType: 'String' });
-    expect(facet.countExpression).toBe('uniq("TraceId")');
-    expect(facet.where).toBe("( Timestamp >= $__fromTime AND Timestamp <= $__toTime ) AND ( ServiceName IN ('cart') )");
+    expect(facet.countExpression).toBeUndefined();
+    expect(facet.where).toBe(
+      `( Timestamp >= $__fromTime AND Timestamp <= $__toTime ) AND ( "ServiceName" IN ('cart') )`
+    );
 
     const own = getFacet(options, { column: 'ServiceName', columnType: 'String' });
     expect(own.where).toBe('( Timestamp >= $__fromTime AND Timestamp <= $__toTime )');
+  });
+});
+
+describe('materialized attributes', () => {
+  it("reads the exporter's materialized copy of a resource attribute instead of the map", () => {
+    const resource = {
+      name: 'ResourceAttributes',
+      type: 'Map(LowCardinality(String), String)',
+      label: '',
+      picklistValues: [],
+    };
+    const [pod, region] = getKeyFields(resource, ['k8s.pod.name', 'cloud.region'], logsColumns);
+    expect(pod).toMatchObject({
+      id: 'ResourceAttributes.k8s.pod.name',
+      label: 'k8s.pod.name',
+      column: '__otel_materialized_k8s.pod.name',
+      materializedFrom: 'ResourceAttributes',
+    });
+    expect(pod.mapKey).toBeUndefined();
+    expect(getFieldExpression(pod)).toBe('"__otel_materialized_k8s.pod.name"');
+    expect(getFieldPresenceCondition(pod)).toBe(`"__otel_materialized_k8s.pod.name" != ''`);
+    expect(region).toMatchObject({ column: 'ResourceAttributes', mapKey: 'cloud.region' });
   });
 });

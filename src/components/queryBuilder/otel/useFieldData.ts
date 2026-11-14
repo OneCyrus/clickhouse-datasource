@@ -1,13 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { TimeRange } from '@grafana/data';
 import { Datasource, FieldValueCount } from 'data/CHDatasource';
-import {
-  escapeIdentifier,
-  getColumnByHint,
-  getFilters,
-  getWhereConditions,
-  splitTraceSearchFilters,
-} from 'data/sqlGenerator';
+import { getColumnByHint, getFilters, getWhereConditions, splitTraceSearchFilters } from 'data/sqlGenerator';
 import { ColumnHint, FilterOperator, QueryBuilderOptions, TableColumn } from 'types/queryBuilder';
 import {
   filterTargetsField,
@@ -76,7 +70,7 @@ export const useOtelFields = (
   const fields = useMemo(
     () => [
       ...getColumnFields(columns, hiddenColumns, otelEnabled),
-      ...attributeColumns.flatMap((column) => getKeyFields(column, keys[column.name] || [])),
+      ...attributeColumns.flatMap((column) => getKeyFields(column, keys[column.name] || [], columns)),
     ],
     [columns, hiddenColumns, otelEnabled, attributeColumns, keys]
   );
@@ -89,20 +83,53 @@ export interface FieldValuesState {
   error?: string;
 }
 
-/** A key that changes when the time range does, so counts follow the picker and each run. */
-export const getRangeKey = (range?: TimeRange): string =>
-  range ? `${range.from.valueOf()}-${range.to.valueOf()}` : 'no-range';
+/**
+ * A key that changes when the time range does, so counts follow the picker. It moves in steps of
+ * 1/200 of the range (at least a second): a relative range ("last 24 hours") shifts with every run,
+ * and recounting millions of rows because the window moved a few seconds is not worth it.
+ */
+export const getRangeKey = (range?: TimeRange): string => {
+  if (!range) {
+    return 'no-range';
+  }
+  const from = range.from.valueOf();
+  const to = range.to.valueOf();
+  const step = Math.max(1000, Math.floor((to - from) / 200));
+  return `${Math.floor(from / step)}-${Math.floor(to / step)}@${step}`;
+};
+
+/** How long a count stays reusable, for facets reopened or remounted with the same query. */
+const COUNT_CACHE_MS = 60_000;
+/** Settling time before counting: filters often change twice in a row (a click, then a run). */
+const COUNT_DEBOUNCE_MS = 250;
+const countCache = new Map<string, { at: number; values: Promise<FieldValueCount[]> }>();
+
+/** The counts for a key, reusing a recent or running request for the same key. */
+const cachedCounts = (key: string, load: () => Promise<FieldValueCount[]>): Promise<FieldValueCount[]> => {
+  const now = Date.now();
+  const hit = countCache.get(key);
+  if (hit && now - hit.at < COUNT_CACHE_MS) {
+    return hit.values;
+  }
+  const values = load();
+  countCache.set(key, { at: now, values });
+  values.catch(() => countCache.delete(key));
+  if (countCache.size > 200) {
+    countCache.delete(countCache.keys().next().value!);
+  }
+  return values;
+};
 
 /**
  * The conditions of a facet: the rows the query matches, leaving out the query's own filters on the
  * field (so a facet lists the values the user can still switch to), and rows without the field.
  *
  * A traces search in trace scope (see splitTraceSearchFilters) matches traces by any of their spans,
- * so its facets count spans matching the span filters, by trace, rather than root spans.
+ * so its facets count the spans matching the span filters, rather than root spans.
  */
 export const getFacet = (
   options: QueryBuilderOptions,
-  field: Pick<OtelField, 'column' | 'columnType' | 'mapKey'> | undefined,
+  field: Pick<OtelField, 'column' | 'columnType' | 'mapKey' | 'materializedFrom'> | undefined,
   excludeFilterIds: readonly string[] = []
 ): { where: string; countExpression?: string } => {
   const keep = (f: NonNullable<QueryBuilderOptions['filters']>[number]) =>
@@ -116,10 +143,9 @@ export const getFacet = (
         f.operator === FilterOperator.WithInGrafanaTimeRange || f.operator === FilterOperator.OutsideGrafanaTimeRange
     );
     const where = getFilters({ ...options, filters: [...time, ...split.inner.filter(keep)] });
-    return {
-      where: [where, presence].filter(Boolean).join(' AND '),
-      countExpression: `uniq(${escapeIdentifier(traceId.name)})`,
-    };
+    // Counts are spans: counting traces (uniq of the trace ID) reads every trace ID of the range,
+    // several times the cost, for a number that only guides the choice.
+    return { where: [where, presence].filter(Boolean).join(' AND ') };
   }
   const conditions = getWhereConditions({ ...options, filters: (options.filters || []).filter(keep) });
   return { where: [conditions, presence].filter(Boolean).join(' AND ') };
@@ -132,7 +158,7 @@ export const getFacet = (
 export const useFieldValueCounts = (
   datasource: Datasource,
   options: QueryBuilderOptions,
-  field: Pick<OtelField, 'column' | 'columnType' | 'mapKey'> | undefined,
+  field: Pick<OtelField, 'column' | 'columnType' | 'mapKey' | 'materializedFrom'> | undefined,
   range: TimeRange | undefined,
   enabled: boolean,
   config: { expression?: string; excludeFilterIds?: string[]; limit?: number } = {}
@@ -152,26 +178,29 @@ export const useFieldValueCounts = (
     }
     let cancelled = false;
     setState((previous) => ({ values: previous.values, loading: true }));
-    Promise.resolve()
-      .then(() =>
-        datasource.fetchFieldValueCounts(
-          options.database,
-          options.table,
-          expression,
-          where,
-          range,
-          config.limit,
-          countExpression
+    const timer = setTimeout(() => {
+      cachedCounts(key, () =>
+        Promise.resolve().then(() =>
+          datasource.fetchFieldValueCounts(
+            options.database,
+            options.table,
+            expression,
+            where,
+            range,
+            config.limit,
+            countExpression
+          )
         )
-      )
-      .then(
+      ).then(
         (values) => !cancelled && setState({ values, loading: false }),
         (error: unknown) =>
           !cancelled &&
           setState({ values: [], loading: false, error: error instanceof Error ? error.message : String(error) })
       );
+    }, COUNT_DEBOUNCE_MS);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
     // The key captures everything the request depends on.
     // eslint-disable-next-line react-hooks/exhaustive-deps

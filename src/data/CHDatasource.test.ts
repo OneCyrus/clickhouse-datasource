@@ -909,7 +909,7 @@ describe('ClickHouseDatasource', () => {
       const mapKeysFrame = arrayToDataFrame([{ keys: 'http.method' }, { keys: 'http.status' }]);
       jest.spyOn(ds, 'query').mockImplementation((request) => {
         const sql = request.targets[0].rawSql ?? '';
-        if (sql.includes('arrayJoin(mapKeys("labels"))')) {
+        if (sql.includes('mapKeys("labels")')) {
           return of({ data: [mapKeysFrame] });
         }
         return of({ data: [columnsFrame] });
@@ -934,7 +934,7 @@ describe('ClickHouseDatasource', () => {
       const mapKeysFrame = arrayToDataFrame([{ keys: "weird'key" }]);
       jest.spyOn(ds, 'query').mockImplementation((request) => {
         const sql = request.targets[0].rawSql ?? '';
-        if (sql.includes('arrayJoin(mapKeys("labels"))')) {
+        if (sql.includes('mapKeys("labels")')) {
           return of({ data: [mapKeysFrame] });
         }
         return of({ data: [columnsFrame] });
@@ -967,7 +967,7 @@ describe('ClickHouseDatasource', () => {
 
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((request) => {
         const sql = request.targets[0].rawSql ?? '';
-        if (sql.includes('arrayJoin(mapKeys("labels"))')) {
+        if (sql.includes('mapKeys("labels")')) {
           return of({ data: [mapKeysFrame] });
         }
         if (sql.includes("labels['http.method']")) {
@@ -1035,7 +1035,7 @@ describe('ClickHouseDatasource', () => {
 
       jest.spyOn(ds, 'query').mockImplementation((request) => {
         const sql = request.targets[0].rawSql ?? '';
-        if (sql.includes('arrayJoin(mapKeys("labels"))')) {
+        if (sql.includes('mapKeys("labels")')) {
           return of({ data: [mapKeysFrame] });
         }
         if (sql.includes("labels['region']")) {
@@ -1062,7 +1062,7 @@ describe('ClickHouseDatasource', () => {
 
       const spyOnQuery = jest.spyOn(ds, 'query').mockImplementation((request) => {
         const sql = request.targets[0].rawSql ?? '';
-        if (sql.includes('arrayJoin(mapKeys("labels"))')) {
+        if (sql.includes('mapKeys("labels")')) {
           return of({ data: [mapKeysFrame] });
         }
         if (sql.includes("labels['weird\\'key']")) {
@@ -1314,7 +1314,7 @@ describe('ClickHouseDatasource', () => {
       expect(result).toEqual(['a', 'b']);
       const sql = spy.mock.calls[0][0].targets[0].rawSql!;
       expect(sql).toBe(
-        'SELECT DISTINCT arrayJoin(mapKeys("labels")) as keys FROM (SELECT "labels" FROM "db"."events" LIMIT 100000) LIMIT 1000'
+        'SELECT DISTINCT arrayJoin(__keys) as keys FROM (SELECT mapKeys("labels") AS __keys FROM "db"."events" LIMIT 100000) LIMIT 1000'
       );
     });
 
@@ -1341,7 +1341,7 @@ describe('ClickHouseDatasource', () => {
       for (const call of spy.mock.calls) {
         const sql = call[0].targets[0].rawSql!;
         expect(sql).not.toContain('.keys');
-        expect(sql).toContain('arrayJoin(mapKeys(');
+        expect(sql).toContain('(SELECT mapKeys(');
       }
     });
 
@@ -2322,7 +2322,7 @@ describe('ClickHouseDatasource', () => {
         expect(result?.rawSql).toEqual(
           'SELECT toStartOfInterval("created_at", INTERVAL 1 DAY) as "time", count(*) as logs ' +
             'FROM "default"."logs" ' +
-            "WHERE ( Body ILIKE '%found%' ) " +
+            'WHERE ( "Body" ILIKE \'%found%\' ) ' +
             'GROUP BY time ' +
             'ORDER BY time ASC'
         );
@@ -2682,7 +2682,7 @@ describe('ClickHouseDatasource', () => {
           },
         }) as CHBuilderQuery;
         expect(result).toBeDefined();
-        expect(result.rawSql).toContain("( Body ILIKE '%found%' )");
+        expect(result.rawSql).toContain('( "Body" ILIKE \'%found%\' )');
         // real column name, not the "body" alias
         expect(result.rawSql).not.toContain('body ILIKE');
         const appended = result.builderOptions.filters?.find((f) => f.key === 'Body');

@@ -1057,6 +1057,9 @@ export const getFilters = (options: QueryBuilderOptions): string => {
     if (hintedColumn) {
       column = hintedColumn.alias || hintedColumn.name;
       type = hintedColumn.type || type;
+    } else if (filter.literal && column) {
+      // Field filters name a real column, which may hold dots (`__otel_materialized_k8s.pod.name`).
+      column = escapeIdentifier(column);
     }
 
     if (!column) {

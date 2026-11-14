@@ -37,7 +37,7 @@ describe('field filters', () => {
     const value = "Mozilla/5.0 (Macintosh) it's";
     const base = { filterType: 'custom', key: 'UserAgent', type: 'String', condition: 'AND' } as const;
     expect(filterSql({ ...base, operator: FilterOperator.Equals, value, literal: true })).toBe(
-      "( UserAgent = 'Mozilla/5.0 (Macintosh) it\\'s' )"
+      `( "UserAgent" = 'Mozilla/5.0 (Macintosh) it\\'s' )`
     );
     // Without the flag, parentheses mark a SQL expression (kept for template variables and SQL).
     expect(filterSql({ ...base, operator: FilterOperator.Equals, value })).toBe(`( UserAgent = ${value} )`);
@@ -54,7 +54,7 @@ describe('field filters', () => {
         value: "50%_off isn't",
         literal: true,
       })
-    ).toBe("( Body ILIKE '%50\\\\%\\\\_off isn\\'t%' )");
+    ).toBe(`( "Body" ILIKE '%50\\\\%\\\\_off isn\\'t%' )`);
   });
 
   it('quotes each value of a literal IN filter', () => {
@@ -68,7 +68,7 @@ describe('field filters', () => {
         value: ['cart', "o'reilly"],
         literal: true,
       })
-    ).toBe("( ServiceName IN ('cart', 'o\\'reilly') )");
+    ).toBe(`( "ServiceName" IN ('cart', 'o\\'reilly') )`);
   });
 
   it('lists numbers of a numeric IN filter unquoted, dropping anything else', () => {
@@ -96,7 +96,7 @@ describe('field filters', () => {
         value: 500,
         literal: true,
       })
-    ).toBe("( toFloat64OrNull(SpanAttributes['http.response.status_code']) >= 500 )");
+    ).toBe(`( toFloat64OrNull("SpanAttributes"['http.response.status_code']) >= 500 )`);
   });
 
   it('escapes the attribute key', () => {
@@ -111,7 +111,7 @@ describe('field filters', () => {
         value: 'x',
         literal: true,
       })
-    ).toBe("( LogAttributes['it\\'s'] = 'x' )");
+    ).toBe(`( "LogAttributes"['it\\'s'] = 'x' )`);
   });
 });
 
@@ -183,10 +183,10 @@ describe('trace search in trace scope', () => {
 
     const sql = generateSql(options);
     expect(sql).toContain(
-      `("TraceId" IN (SELECT "TraceId" FROM "otel"."otel_traces" WHERE ( Timestamp >= $__fromTime AND Timestamp <= $__toTime ) AND ( StatusCode IN ('Error') )))`
+      `("TraceId" IN (SELECT "TraceId" FROM "otel"."otel_traces" WHERE ( Timestamp >= $__fromTime AND Timestamp <= $__toTime ) AND ( "StatusCode" IN ('Error') )))`
     );
     expect(sql).toContain("( ParentSpanId = '' )");
-    expect(sql).toContain('( Duration >= 100000000 )');
+    expect(sql).toContain('( "Duration" >= 100000000 )');
     expect(sql).toMatch(/LIMIT 50$/);
   });
 
@@ -229,7 +229,7 @@ describe('trace search in trace scope', () => {
     );
     expect(sql).toContain("WHERE traceID = 'abc'");
     expect(sql).not.toContain('ParentSpanId =');
-    expect(sql).not.toContain('StatusCode IN');
+    expect(sql).not.toContain('( "StatusCode" IN (\'Error\') )');
   });
 
   it('orders plain trace searches as before', () => {

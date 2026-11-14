@@ -28,6 +28,11 @@ export interface OtelField {
   /** The column's type: for an attribute field, the type of the attribute column. */
   columnType: string;
   mapKey?: string;
+  /**
+   * The attribute column the field's column is a materialized copy of: the exporter materializes
+   * some resource attributes (`__otel_materialized_k8s.pod.name`), which read far less data.
+   */
+  materializedFrom?: string;
   /** How the field's values compare. */
   valueKind: 'string' | 'number';
 }
@@ -186,22 +191,44 @@ export const getColumnFields = (
 };
 
 /** The keys of an attribute column as fields, well known keys first. */
-export const getKeyFields = (column: TableColumn, keys: readonly string[]): OtelField[] => {
+export const getKeyFields = (
+  column: TableColumn,
+  keys: readonly string[],
+  tableColumns: readonly TableColumn[] = []
+): OtelField[] => {
   const group = getAttributeGroup(column.name);
   const rank = (key: string) => wellKnownRank.get(key) ?? wellKnownKeys.length;
   return [...new Set(keys)]
     .filter((key) => key !== '')
     .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
-    .map((key) => ({
-      id: `${column.name}.${key}`,
-      label: key,
-      group,
-      column: column.name,
-      columnType: column.type,
-      mapKey: key,
-      valueKind: numericKeys.has(key) ? 'number' : 'string',
-    }));
+    .map((key) => {
+      const materialized = getMaterializedColumn(column, key, tableColumns);
+      return {
+        id: `${column.name}.${key}`,
+        label: key,
+        group,
+        valueKind: numericKeys.has(key) ? 'number' : 'string',
+        ...(materialized
+          ? { column: materialized.name, columnType: materialized.type, materializedFrom: column.name }
+          : { column: column.name, columnType: column.type, mapKey: key }),
+      };
+    });
 };
+
+/**
+ * The exporter's materialized copy of a resource attribute, when the table has one. Since collector
+ * v0.151 the logs table materializes the k8s and environment resource attributes into
+ * `__otel_materialized_<key>` LowCardinality columns: reading one instead of
+ * `ResourceAttributes['<key>']` avoids reading the whole map, about 50 times less data.
+ */
+export const getMaterializedColumn = (
+  column: TableColumn,
+  key: string,
+  tableColumns: readonly TableColumn[]
+): TableColumn | undefined =>
+  column.name === 'ResourceAttributes' && isMapType(column.type)
+    ? tableColumns.find((c) => c.name === `__otel_materialized_${key}` && !isCollectionType(c.type))
+    : undefined;
 
 /** The SQL expression reading a field's value. */
 export const getFieldExpression = (field: Pick<OtelField, 'column' | 'columnType' | 'mapKey'>): string => {
@@ -216,7 +243,13 @@ export const getFieldExpression = (field: Pick<OtelField, 'column' | 'columnType
 };
 
 /** The condition rows need to hold the field at all: attribute fields only exist on some rows. */
-export const getFieldPresenceCondition = (field: Pick<OtelField, 'column' | 'columnType' | 'mapKey'>): string => {
+export const getFieldPresenceCondition = (
+  field: Pick<OtelField, 'column' | 'columnType' | 'mapKey' | 'materializedFrom'>
+): string => {
+  if (field.materializedFrom) {
+    // A materialized attribute holds '' for rows without it, as the map lookup does.
+    return `${escapeIdentifier(field.column)} != ''`;
+  }
   if (!field.mapKey) {
     return '';
   }
