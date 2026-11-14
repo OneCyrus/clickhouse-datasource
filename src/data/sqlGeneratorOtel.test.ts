@@ -240,27 +240,3 @@ describe('trace search in trace scope', () => {
     expect(sql).not.toContain('as status');
   });
 });
-
-describe('message templates', () => {
-  const templated = (meta: QueryBuilderOptions['meta'], attributesType?: string) =>
-    logsOptions({
-      columns: [
-        { name: 'Timestamp', hint: ColumnHint.Time },
-        { name: 'Body', hint: ColumnHint.LogMessage },
-        { name: 'LogAttributes', hint: ColumnHint.LogAttributes, type: attributesType },
-      ],
-      meta,
-    });
-
-  it('fills placeholders of the message from the log attributes when asked', () => {
-    const sql = generateSql(templated({ renderMessageTemplates: true }));
-    expect(sql).toContain(`as "body"`);
-    expect(sql).toContain(`splitByRegexp('\\\\{[@$]?[A-Za-z_][A-Za-z0-9_.]*(?:[,:][^{}]*)?\\\\}', "Body")`);
-    expect(sql).toContain(`mapContains("LogAttributes", replaceRegexpOne(`);
-  });
-
-  it('shows the message as stored otherwise, or with JSON attributes', () => {
-    expect(generateSql(templated({}))).toContain('Body as "body"');
-    expect(generateSql(templated({ renderMessageTemplates: true }, 'JSON'))).toContain('Body as "body"');
-  });
-});

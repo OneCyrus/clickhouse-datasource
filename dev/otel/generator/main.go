@@ -30,10 +30,10 @@ import (
 
 type service struct {
 	name, version, lang string
-	tracer              trace.Tracer
-	logger              otellog.Logger
-	tp                  *sdktrace.TracerProvider
-	lp                  *sdklog.LoggerProvider
+	tracer             trace.Tracer
+	logger             otellog.Logger
+	tp                 *sdktrace.TracerProvider
+	lp                 *sdklog.LoggerProvider
 }
 
 var (
@@ -240,11 +240,7 @@ func routes() []route {
 		{"GET", "/api/cart", 25, func(ctx context.Context, c *clock, r *request) {
 			grpcCall(ctx, fe, cart, c, "oteldemo.CartService", "GetCart", func(ctx context.Context) (codes.Code, string) {
 				dbSpan(ctx, cart, c, "redis", "HGETALL", "cart", "HGETALL cart:"+r.user, 0.1, 2, 0)
-				// cart is a .NET service: with the SDK defaults (IncludeFormattedMessage=false) the
-				// OTLP exporter sends the ILogger message template as Body and the template
-				// parameters as attributes named after the placeholders.
-				cart.emit(ctx, c.t, otellog.SeverityInfo, "GetCart called for user {UserId}", attribute.String("UserId", r.user),
-					attribute.String("event.name", "GetCart"))
+				cart.emit(ctx, c.t, otellog.SeverityInfo, "GetCart called for user "+r.user, attribute.String("app.user.id", r.user))
 				return codes.Unset, ""
 			})
 		}},
@@ -252,13 +248,8 @@ func routes() []route {
 			grpcCall(ctx, fe, cart, c, "oteldemo.CartService", "AddItem", func(ctx context.Context) (codes.Code, string) {
 				q := 1 + rand.Intn(4)
 				dbSpan(ctx, cart, c, "redis", "HSET", "cart", fmt.Sprintf("HSET cart:%s %s %d", r.user, r.product, q), 0.1, 2, 0)
-				cart.emit(ctx, c.t, otellog.SeverityInfo, "AddItem called with user {UserId}, product {ProductId}, quantity {Quantity}",
-					attribute.String("UserId", r.user), attribute.String("ProductId", r.product), attribute.Int("Quantity", q),
-					attribute.String("event.name", "AddItem"))
-				if q == 4 {
-					cart.emit(ctx, c.t, otellog.SeverityWarn, "Cart for user {UserId} holds {ItemCount} items, above the soft limit of {Limit}",
-						attribute.String("UserId", r.user), attribute.Int("ItemCount", 20+rand.Intn(10)), attribute.Int("Limit", 20))
-				}
+				cart.emit(ctx, c.t, otellog.SeverityInfo, fmt.Sprintf("AddItem called with user %s, product %s, quantity %d", r.user, r.product, q),
+					attribute.String("app.user.id", r.user), attribute.String("product.id", r.product), attribute.Int("app.product.quantity", q))
 				return codes.Unset, ""
 			})
 		}},
@@ -364,8 +355,7 @@ func handle(ctx context.Context, rts []route, total int, at time.Time) {
 func background(ctx context.Context, at time.Time) {
 	switch rand.Intn(12) {
 	case 0:
-		services["cart"].emit(ctx, at, otellog.SeverityDebug, "Redis pool stats: active={Active} idle={Idle} waits={Waits}",
-			attribute.Int("Active", rand.Intn(8)), attribute.Int("Idle", 4+rand.Intn(12)), attribute.Int("Waits", 0))
+		services["cart"].emit(ctx, at, otellog.SeverityDebug, "redis pool stats: active=4 idle=12 waits=0")
 	case 1:
 		services["product-catalog"].emit(ctx, at, otellog.SeverityInfo, "refreshed product cache with 10 entries", attribute.Int("cache.size", 10))
 	case 2:

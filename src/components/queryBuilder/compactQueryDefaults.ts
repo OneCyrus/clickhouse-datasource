@@ -334,7 +334,6 @@ const buildCompactLogsDefaults = (
     meta: {
       otelEnabled: Boolean(otelVersion),
       otelVersion,
-      ...(otelVersion ? { renderMessageTemplates: true } : {}),
     },
   };
 };

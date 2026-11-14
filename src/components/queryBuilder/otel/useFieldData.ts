@@ -135,14 +135,11 @@ export const useFieldValueCounts = (
   field: Pick<OtelField, 'column' | 'columnType' | 'mapKey'> | undefined,
   range: TimeRange | undefined,
   enabled: boolean,
-  config: { expression?: string; excludeFilterIds?: string[]; limit?: number; condition?: string } = {}
+  config: { expression?: string; excludeFilterIds?: string[]; limit?: number } = {}
 ): FieldValuesState => {
   const [state, setState] = useState<FieldValuesState>({ values: [], loading: false });
   const expression = config.expression || (field ? getFieldExpression(field) : '');
-  const facet = getFacet(options, field, config.excludeFilterIds);
-  const countExpression = facet.countExpression;
-  // An extra condition narrows the rows counted, such as messages that are templates.
-  const where = [facet.where, config.condition].filter(Boolean).join(' AND ');
+  const { where, countExpression } = getFacet(options, field, config.excludeFilterIds);
   const rangeKey = getRangeKey(range);
   const key =
     enabled && expression

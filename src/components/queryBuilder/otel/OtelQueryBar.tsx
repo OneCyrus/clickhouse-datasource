@@ -3,7 +3,7 @@ import { css } from '@emotion/css';
 import { GrafanaTheme2, TimeRange } from '@grafana/data';
 import { Button, Icon, Input, RadioButtonGroup, Tooltip, useStyles2 } from '@grafana/ui';
 import { Datasource } from 'data/CHDatasource';
-import { escapeIdentifier, getColumnByHint, MESSAGE_PLACEHOLDER_REGEX } from 'data/sqlGenerator';
+import { getColumnByHint } from 'data/sqlGenerator';
 import { ColumnHint, Filter, FilterOperator, QueryBuilderOptions, TableColumn, TimeUnit } from 'types/queryBuilder';
 import { SignalType } from 'types/config';
 import { getDefaultTraceFilters } from '../defaultQueryOptions';
@@ -19,8 +19,6 @@ import {
   isQuickFilter,
   isRootSpanFilter,
   isTraceIdLike,
-  messageTemplateKeys,
-  getPlaceholderNames,
   OtelField,
   quickFilterIds,
   severityLevels,
@@ -242,16 +240,6 @@ export const OtelQueryBar = (props: OtelQueryBarProps) => {
         )}
       </div>
       <div className={styles.row}>
-        {isLogs && (
-          <TemplateFilters
-            datasource={datasource}
-            options={options}
-            range={range}
-            columns={columns}
-            fields={fields}
-            onFiltersChange={setFilters}
-          />
-        )}
         <FilterChips
           datasource={datasource}
           options={options}
@@ -508,117 +496,6 @@ const TraceQuickFilters = (props: QuickFiltersProps) => {
         storedUnit={options.meta?.traceDurationUnit || TimeUnit.Nanoseconds}
         onFiltersChange={onFiltersChange}
       />
-    </>
-  );
-};
-
-/**
- * Filters on message templates, as .NET (ILogger, Serilog, NLog) and optionally Java log: the
- * Template facet, then one facet per placeholder of the picked templates (`UserId`, `ProductId`),
- * listing that attribute's values for those templates. Templates belong to one service and only
- * some services have them, so they sit with the field filters, not with level and service.
- */
-const TemplateFilters = (props: QuickFiltersProps & { columns: readonly TableColumn[] }) => {
-  const { datasource, options, range, fields, columns, onFiltersChange } = props;
-  const filters = options.filters || [];
-
-  // Message templates: an attribute holding them, or else messages that are templates themselves
-  // (.NET's default), found by probing recent rows.
-  const templateAttribute = fields.find(
-    (f) => f.group === 'attributes' && f.mapKey !== undefined && messageTemplateKeys.includes(f.mapKey)
-  );
-  const messageColumn = getColumnByHint(options, ColumnHint.LogMessage)?.name;
-  const [templatedMessages, setTemplatedMessages] = useState(false);
-  useEffect(() => {
-    if (templateAttribute || !messageColumn || !options.database || !options.table) {
-      setTemplatedMessages(false);
-      return;
-    }
-    let cancelled = false;
-    Promise.resolve()
-      .then(() => datasource.hasMessageTemplates(options.database, options.table, messageColumn))
-      .then(
-        (found) => !cancelled && setTemplatedMessages(found),
-        () => !cancelled && setTemplatedMessages(false)
-      );
-    return () => {
-      cancelled = true;
-    };
-  }, [datasource, options.database, options.table, messageColumn, templateAttribute]);
-  const templateField = templateAttribute || (templatedMessages ? columnField(fields, messageColumn) : undefined);
-  const templateCondition =
-    !templateAttribute && messageColumn
-      ? `match(${escapeIdentifier(messageColumn)}, '${MESSAGE_PLACEHOLDER_REGEX}')`
-      : undefined;
-
-  if (!templateField) {
-    return null;
-  }
-
-  const templateFilterId = quickFilterIds.facet(templateField.id);
-  const templateFilter = filters.find((f) => f.id === templateFilterId);
-  const pickedTemplates =
-    templateFilter && templateFilter.operator === FilterOperator.In ? getFilterValues(templateFilter) : [];
-  const placeholders = [...new Set(pickedTemplates.flatMap(getPlaceholderNames))];
-  const attributesColumn = getColumnByHint(options, ColumnHint.LogAttributes)?.name || 'LogAttributes';
-  const attributesType =
-    columns.find((c) => c.name === attributesColumn)?.type || 'Map(LowCardinality(String), String)';
-  const placeholderField = (name: string): OtelField =>
-    fields.find((f) => f.column === attributesColumn && f.mapKey === name) ||
-    fields.find((f) => f.column === attributesColumn && f.mapKey === name.replace(/^[@$]/, '')) || {
-      id: `${attributesColumn}.${name}`,
-      label: name,
-      group: 'attributes',
-      column: attributesColumn,
-      columnType: attributesType,
-      mapKey: name,
-      valueKind: 'string',
-    };
-
-  // Placeholder filters only make sense with their templates: changing the templates drops the
-  // filters on placeholders the new templates do not have.
-  const onTemplateChange = (next: Filter[]) => {
-    const nextTemplate = next.find((f) => f.id === templateFilterId);
-    const nextNames = new Set(
-      nextTemplate && nextTemplate.operator === FilterOperator.In
-        ? getFilterValues(nextTemplate).flatMap(getPlaceholderNames)
-        : []
-    );
-    onFiltersChange(
-      next.filter(
-        (f) =>
-          !f.id?.startsWith(quickFilterIds.placeholderPrefix) ||
-          nextNames.has(f.id.slice(quickFilterIds.placeholderPrefix.length))
-      )
-    );
-  };
-
-  return (
-    <>
-      <FacetFilter
-        datasource={datasource}
-        options={options}
-        range={range}
-        field={templateField}
-        name="Template"
-        condition={templateCondition}
-        searchPlaceholder="Search message templates"
-        wide
-        onFiltersChange={onTemplateChange}
-      />
-      {placeholders.map((name) => (
-        <FacetFilter
-          key={name}
-          datasource={datasource}
-          options={options}
-          range={range}
-          field={placeholderField(name)}
-          filterId={quickFilterIds.placeholder(name)}
-          name={`{${name}}`}
-          searchPlaceholder={`Search ${name} values`}
-          onFiltersChange={onFiltersChange}
-        />
-      ))}
     </>
   );
 };

@@ -89,7 +89,6 @@ import {
   isStringType,
   logAliasToColumnHints,
   escapeCHStringLiteral,
-  MESSAGE_PLACEHOLDER_REGEX,
 } from './sqlGenerator';
 
 // Re-exported for existing imports; the implementation lives with the other SQL escaping helpers.
@@ -1640,32 +1639,6 @@ export class Datasource
       }
       throw err;
     }
-  }
-
-  private messageTemplateProbes = new Map<string, Promise<boolean>>();
-
-  /**
-   * True when recent log messages of the table hold message template placeholders (`{UserId}`), as
-   * .NET's OTLP exporter sends them by default. Probes a sample of recent rows once per table.
-   */
-  hasMessageTemplates(database: string, table: string, messageColumn: string): Promise<boolean> {
-    const key = `${database}.${table}.${messageColumn}`;
-    let probe = this.messageTemplateProbes.get(key);
-    if (!probe) {
-      const tableIdentifier = `${escapeIdentifier(database)}.${escapeIdentifier(table)}`;
-      const column = escapeIdentifier(messageColumn);
-      const timeColumn = this.getMapKeyProbeTimeColumn(database, table);
-      const recent = timeColumn ? ` WHERE ${escapeIdentifier(timeColumn)} >= now() - ${ADHOC_PROBE_TIME_WINDOW}` : '';
-      const rawSql =
-        `SELECT count() AS templated FROM (SELECT ${column} FROM ${tableIdentifier}${recent} LIMIT ${MAP_KEY_PROBE_ROW_SAMPLE}) ` +
-        `WHERE match(${column}, '${MESSAGE_PLACEHOLDER_REGEX}')`;
-      probe = this.fetchData(rawSql).then(
-        (values) => Number(values[0] ?? 0) > 0,
-        () => false
-      );
-      this.messageTemplateProbes.set(key, probe);
-    }
-    return probe;
   }
 
   async fetchEntities() {

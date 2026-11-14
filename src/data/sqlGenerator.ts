@@ -495,8 +495,7 @@ const generateLogsQuery = (_options: QueryBuilderOptions): string => {
   if (logMessage !== undefined) {
     // Must be second column in list.
     logMessage.alias = logColumnHintsToAlias.get(ColumnHint.LogMessage);
-    const rendered = getRenderedMessageSelect(options, logMessage.name);
-    selectParts.push(rendered ? `${rendered} as "${logMessage.alias}"` : getColumnIdentifier(logMessage));
+    selectParts.push(getColumnIdentifier(logMessage));
   }
 
   const logLevel = getColumnByHint(options, ColumnHint.LogLevel);
@@ -869,41 +868,6 @@ const escapeValue = (value: string | number | boolean): string => {
   }
 
   return `'${value}'`;
-};
-
-/**
- * A message template placeholder: `{Name}`, with an optional `@`/`$` (destructuring) prefix and an
- * alignment or format (`{Elapsed,8:0.00}`). Braces around anything else, such as JSON, are not one.
- */
-export const MESSAGE_PLACEHOLDER_REGEX = '\\\\{[@$]?[A-Za-z_][A-Za-z0-9_.]*(?:[,:][^{}]*)?\\\\}';
-
-/**
- * `message` with each placeholder replaced by the attribute of the same name, when the row has it;
- * placeholders without an attribute stay as written. .NET's OTLP exporter sends the ILogger message
- * template as the body by default (`AddItem called with user {UserId}`) and the values as attributes
- * named after the placeholders, so this shows the message the application logged.
- */
-export const getRenderedMessageExpression = (message: string, attributes: string): string => {
-  const name = (placeholder: string) => `replaceRegexpOne(${placeholder}, '^\\\\{[@$]?([^,:}]+).*$', '\\\\1')`;
-  const ph = `extractAll(${message}, '${MESSAGE_PLACEHOLDER_REGEX}')`;
-  return (
-    `arrayStringConcat(arrayMap((__gf_part, __gf_i) -> concat(__gf_part, if(__gf_i <= length(${ph}), ` +
-    `if(mapContains(${attributes}, ${name(`${ph}[__gf_i]`)}), ${attributes}[${name(`${ph}[__gf_i]`)}], ${ph}[__gf_i]), '')), ` +
-    `splitByRegexp('${MESSAGE_PLACEHOLDER_REGEX}', ${message}), arrayEnumerate(splitByRegexp('${MESSAGE_PLACEHOLDER_REGEX}', ${message}))))`
-  );
-};
-
-/**
- * The SELECT expression filling the message's placeholders from the log attributes, when the query
- * asks for it (`meta.renderMessageTemplates`) and the attributes are a Map column. The expression
- * only runs on the rows returned, and leaves messages without placeholders unchanged.
- */
-const getRenderedMessageSelect = (options: QueryBuilderOptions, messageColumn: string): string | undefined => {
-  const attributes = getColumnByHint(options, ColumnHint.LogAttributes);
-  if (!options.meta?.renderMessageTemplates || !attributes || attributes.type?.toUpperCase().startsWith('JSON')) {
-    return undefined;
-  }
-  return getRenderedMessageExpression(escapeIdentifier(messageColumn), escapeIdentifier(attributes.name));
 };
 
 /** A string literal holding `value` as written. */

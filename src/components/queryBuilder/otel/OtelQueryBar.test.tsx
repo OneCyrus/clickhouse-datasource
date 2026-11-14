@@ -11,7 +11,6 @@ const makeDatasource = () =>
   ({
     fetchUniqueMapKeys: jest.fn(() => Promise.resolve(['deployment.environment.name', 'k8s.pod.name'])),
     fetchUniqueJSONPathsForAdhoc: jest.fn(() => Promise.resolve([])),
-    hasMessageTemplates: jest.fn(() => Promise.resolve(true)),
     fetchFieldValueCounts: jest.fn((_db: string, _table: string, expression: string) =>
       Promise.resolve(
         expression.startsWith('multiIf')
@@ -182,91 +181,5 @@ describe('OtelQueryBar', () => {
         onChange.mock.calls[1][0].filters.some((f: { hint?: ColumnHint }) => f.hint === ColumnHint.TraceParentSpanId)
       ).toBe(false)
     );
-  });
-
-  it('offers a template filter on messages that are templates (.NET default)', async () => {
-    const datasource = makeDatasource();
-    render(
-      <OtelQueryBar
-        datasource={datasource}
-        signalType="logs"
-        options={logsOptions}
-        columns={logsColumns}
-        onChange={jest.fn()}
-        advanced={null}
-      />
-    );
-    expect(await screen.findByTestId('otel-facet-Body')).toHaveTextContent('Template');
-    expect(datasource.hasMessageTemplates).toHaveBeenCalledWith('otel', 'otel_logs', 'Body');
-  });
-
-  it('prefers the {OriginalFormat} attribute when logs carry it', async () => {
-    const datasource = makeDatasource();
-    (datasource.fetchUniqueMapKeys as jest.Mock).mockImplementation((column: string) =>
-      Promise.resolve(column === 'LogAttributes' ? ['{OriginalFormat}', 'UserId'] : [])
-    );
-    render(
-      <OtelQueryBar
-        datasource={datasource}
-        signalType="logs"
-        options={logsOptions}
-        columns={[...logsColumns, column('LogAttributes', 'Map(LowCardinality(String), String)')]}
-        onChange={jest.fn()}
-        advanced={null}
-      />
-    );
-    expect(await screen.findByTestId('otel-facet-LogAttributes.{OriginalFormat}')).toHaveTextContent('Template');
-    expect(screen.queryByTestId('otel-facet-Body')).not.toBeInTheDocument();
-  });
-
-  it('offers the placeholders of the picked template as filters, and drops them with the template', async () => {
-    const onChange = jest.fn();
-    const template = 'AddItem called with user {UserId}, quantity {Quantity:N0}';
-    const options: QueryBuilderOptions = {
-      ...logsOptions,
-      columns: [...logsOptions.columns!, { name: 'LogAttributes', hint: ColumnHint.LogAttributes }],
-      filters: [
-        ...getDefaultLogsFilters(),
-        {
-          filterType: 'custom',
-          key: 'Body',
-          type: 'String',
-          condition: 'AND',
-          operator: FilterOperator.In,
-          value: [template],
-          literal: true,
-          id: 'otel:facet:Body',
-        },
-        {
-          filterType: 'custom',
-          key: 'LogAttributes',
-          mapKey: 'Quantity',
-          type: 'Map(LowCardinality(String), String)',
-          condition: 'AND',
-          operator: FilterOperator.In,
-          value: ['4'],
-          literal: true,
-          id: 'otel:placeholder:Quantity',
-        },
-      ],
-    };
-    render(
-      <OtelQueryBar
-        datasource={makeDatasource()}
-        signalType="logs"
-        options={options}
-        columns={[...logsColumns, column('LogAttributes', 'Map(LowCardinality(String), String)')]}
-        onChange={onChange}
-        advanced={null}
-      />
-    );
-    expect(await screen.findByTestId('otel-facet-LogAttributes.UserId')).toHaveTextContent('{UserId}');
-    expect(screen.getByTestId('otel-facet-LogAttributes.Quantity')).toHaveTextContent('{Quantity}:4');
-
-    fireEvent.click(screen.getByTestId('otel-facet-Body'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Clear' }));
-    const { filters } = onChange.mock.calls[onChange.mock.calls.length - 1][0];
-    expect(filters.some((f: { id?: string }) => f.id === 'otel:facet:Body')).toBe(false);
-    expect(filters.some((f: { id?: string }) => f.id === 'otel:placeholder:Quantity')).toBe(false);
   });
 });
