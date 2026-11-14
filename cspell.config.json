@@ -11,7 +11,8 @@
     "mage_output_file.go",
     "test-results/**",
     "test_summary.json",
-    "playwright-report/**"
+    "playwright-report/**",
+    "dev/otel/generator/**"
   ],
   "words": [
     "k8sattributes",
@@ -158,6 +159,8 @@
     "dsconfig",
     "struct",
     "Struct",
-    "behaviour"
+    "behaviour",
+    "sqltemplates",
+    "tokenbf"
   ]
 }

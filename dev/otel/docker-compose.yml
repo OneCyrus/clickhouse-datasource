@@ -1,0 +1,39 @@
+# Development stack for the logs and traces editors against real OpenTelemetry data:
+# the latest Grafana, ClickHouse and OpenTelemetry Collector (ClickHouse exporter), fed by
+# ./generator. See README.md.
+name: ch-otel-dev
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-latest}
+    ports: ['8123:8123', '9000:9000']
+    environment:
+      - CLICKHOUSE_SKIP_USER_SETUP=1
+    healthcheck:
+      test: ['CMD', 'clickhouse-client', '--query', 'SELECT 1']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:${OTELCOL_VERSION:-latest}
+    command: ['--config=/etc/otelcol/config.yaml']
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports: ['4317:4317', '4318:4318']
+    depends_on:
+      clickhouse: { condition: service_healthy }
+
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION:-latest}
+    ports: ['3000:3000']
+    environment:
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=grafana-clickhouse-datasource
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_FEATURE_TOGGLES_splashScreen=false
+      - GF_NEWS_NEWS_FEED_ENABLED=false
+    volumes:
+      - ../../dist:/var/lib/grafana/plugins/grafana-clickhouse-datasource
+      - ./provisioning:/etc/grafana/provisioning
+    depends_on:
+      clickhouse: { condition: service_healthy }

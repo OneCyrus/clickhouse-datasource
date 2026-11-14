@@ -135,6 +135,17 @@ const MAP_KEY_PROBE_ROW_SAMPLE = 100000;
 // Recent-data window used to bound attribute-discovery/value probes on a table
 // with a known time column, so they prune instead of scanning the full column.
 const ADHOC_PROBE_TIME_WINDOW = 'INTERVAL 6 HOUR';
+
+/** Rows a field value count reads at most before it returns the counts so far. */
+const FACET_MAX_ROWS = 50_000_000;
+/** Seconds a field value count runs at most before it returns the counts so far. */
+const FACET_MAX_SECONDS = 10;
+
+/** A value of a field and the number of rows holding it. */
+export interface FieldValueCount {
+  value: string;
+  count: number;
+}
 const JSON_PATH_SUGGESTION_LIMIT = 5000;
 
 function getAttributeColumnByDisplayPrefix(
@@ -458,8 +469,10 @@ export class Datasource
       key: logMessageColumn.name,
       type: 'string',
       filterType: 'custom',
-      operator: FilterOperator.Like,
+      // Case-insensitive and matched as written, like the logs query's search condition.
+      operator: FilterOperator.ILike,
       value: logMessageLike,
+      literal: true,
     };
   }
 
@@ -1512,13 +1525,15 @@ export class Datasource
     const escapedColumn = escapeIdentifier(mapColumn);
     const tableIdentifier = `${escapeIdentifier(db)}.${escapeIdentifier(table)}`;
     const timeColumn = this.getMapKeyProbeTimeColumn(db, table);
-    const source = timeColumn
-      ? `${tableIdentifier} WHERE ${escapeIdentifier(timeColumn)} >= now() - ${ADHOC_PROBE_TIME_WINDOW}`
-      : `(SELECT ${escapedColumn} FROM ${tableIdentifier} LIMIT ${MAP_KEY_PROBE_ROW_SAMPLE})`;
-    // mapKeys() rather than the `.keys` sub-column: ClickHouse's old analyzer
-    // (the default before 24.3) cannot resolve sub-columns on subquery results
-    // and fails with UNKNOWN_IDENTIFIER, silently breaking key discovery.
-    const rawSql = `SELECT DISTINCT arrayJoin(mapKeys(${escapedColumn})) as keys FROM ${source} LIMIT 1000`;
+    const recent = timeColumn ? ` WHERE ${escapeIdentifier(timeColumn)} >= now() - ${ADHOC_PROBE_TIME_WINDOW}` : '';
+    // A bounded row sample of only the keys: a time window alone still reads every row of the map
+    // (on a busy table millions of maps, a gigabyte), and the values are never needed. mapKeys()
+    // inside the sample, not the `.keys` sub-column: ClickHouse's old analyzer (the default before
+    // 24.3) cannot resolve sub-columns on sub-query results, and newer versions read mapKeys() as
+    // the keys sub-column anyway.
+    const rawSql =
+      `SELECT DISTINCT arrayJoin(__keys) as keys FROM ` +
+      `(SELECT mapKeys(${escapedColumn}) AS __keys FROM ${tableIdentifier}${recent} LIMIT ${MAP_KEY_PROBE_ROW_SAMPLE}) LIMIT 1000`;
     return this.fetchData(rawSql);
   }
 
@@ -1573,6 +1588,59 @@ export class Datasource
     const escapedMapKey = `'${escapeCHStringLiteral(mapKey)}'`;
     const rawSql = `SELECT DISTINCT ${escapedMapColumn}[${escapedMapKey}] FROM ${escapeIdentifier(db)}.${escapeIdentifier(table)} WHERE mapContains(${escapedMapColumn}, ${escapedMapKey}) LIMIT 1000`;
     return this.fetchData(rawSql);
+  }
+
+  /**
+   * The most common values of `expression` among the rows matching `where`, with their counts. It
+   * feeds the field filters of the logs and traces editors, so the conditions normally hold the time
+   * range macros and the other filters of the query (a facet).
+   *
+   * Counting is bounded so a facet never costs more than the query it refines: past
+   * FACET_MAX_ROWS rows or FACET_MAX_SECONDS seconds ClickHouse stops reading and the counts are a
+   * sample. A user whose profile forbids changing settings (readonly=1) gets the unbounded query.
+   */
+  async fetchFieldValueCounts(
+    database: string,
+    table: string,
+    expression: string,
+    where: string,
+    range?: TimeRange,
+    limit = 50,
+    countExpression = 'count()'
+  ): Promise<FieldValueCount[]> {
+    const base = [
+      `SELECT toString(${expression}) AS value, ${countExpression} AS count`,
+      `FROM ${escapeIdentifier(database)}.${escapeIdentifier(table)}`,
+      where ? `WHERE ${where}` : '',
+      `GROUP BY value ORDER BY count DESC, value LIMIT ${limit}`,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const bounded = `${base} SETTINGS max_rows_to_read = ${FACET_MAX_ROWS}, read_overflow_mode = 'break', max_execution_time = ${FACET_MAX_SECONDS}, timeout_overflow_mode = 'break'`;
+    const run = async (rawSql: string) => {
+      const response = await firstValueFrom(
+        this.query({
+          targets: [{ rawSql, format: 1, refId: 'field-values' }],
+          range: range || (getTemplateSrv() as any).timeRange,
+        } as DataQueryRequest<CHQuery>)
+      );
+      const error = response.errors?.[0];
+      if (error) {
+        throw new Error(error.message || 'Query failed');
+      }
+      const frame: DataFrame = response.data[0] || { fields: [], length: 0 };
+      const values = frame.fields.find((f) => f.name === 'value')?.values ?? [];
+      const counts = frame.fields.find((f) => f.name === 'count')?.values ?? [];
+      return values.map((value, i) => ({ value: String(value ?? ''), count: Number(counts[i] ?? 0) }));
+    };
+    try {
+      return await run(bounded);
+    } catch (err) {
+      if (err instanceof Error && /readonly|Cannot modify|setting/i.test(err.message)) {
+        return run(base);
+      }
+      throw err;
+    }
   }
 
   async fetchEntities() {

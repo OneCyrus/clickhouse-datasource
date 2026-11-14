@@ -1,7 +1,7 @@
 import React from 'react';
 import { css } from '@emotion/css';
 import { GrafanaTheme2 } from '@grafana/data';
-import { Combobox, ComboboxOption, Input, useStyles2 } from '@grafana/ui';
+import { Combobox, ComboboxOption, InlineSwitch, Input, Tooltip, useStyles2 } from '@grafana/ui';
 import { OrderBy, OrderByDirection, QueryBuilderOptions, TableColumn } from 'types/queryBuilder';
 import labels from 'labels';
 import { selectors } from 'selectors';
@@ -14,6 +14,8 @@ interface CompactAdvancedProps {
   onOrderByChange: (orderBy: OrderBy[]) => void;
   onLimitChange: (limit: number) => void;
   onMinIntervalChange?: (minInterval: string) => void;
+  /** Shown for traces: the span and error count columns of the trace list. */
+  onSpanCountsChange?: (show: boolean) => void;
 }
 
 const getStyles = (theme: GrafanaTheme2) => ({
@@ -38,7 +40,15 @@ const getStyles = (theme: GrafanaTheme2) => ({
 });
 
 export const CompactAdvanced = (props: CompactAdvancedProps) => {
-  const { builderOptions, allColumns, minInterval, onOrderByChange, onLimitChange, onMinIntervalChange } = props;
+  const {
+    builderOptions,
+    allColumns,
+    minInterval,
+    onOrderByChange,
+    onLimitChange,
+    onMinIntervalChange,
+    onSpanCountsChange,
+  } = props;
   const styles = useStyles2(getStyles);
   const orderBy = builderOptions.orderBy || [];
   const limit = builderOptions.limit || 1000;
@@ -97,6 +107,19 @@ export const CompactAdvanced = (props: CompactAdvancedProps) => {
           }}
         />
       </div>
+
+      {onSpanCountsChange && (
+        <div className={styles.item}>
+          <Tooltip content="Adds the number of spans and failed spans of each trace to the trace list. Turn off to make the list cheaper on large time ranges.">
+            <span className={styles.label}>Span counts</span>
+          </Tooltip>
+          <InlineSwitch
+            aria-label="Span counts"
+            value={!builderOptions.meta?.hideTraceSpanCounts}
+            onChange={(e) => onSpanCountsChange(e.currentTarget.checked)}
+          />
+        </div>
+      )}
 
       {onMinIntervalChange && (
         <div className={styles.item}>

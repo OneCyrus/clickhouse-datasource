@@ -354,6 +354,8 @@ const buildCompactTracesDefaults = (datasource: Datasource, fallbackTable: strin
       otelEnabled: Boolean(otelVersion),
       otelVersion,
       traceDurationUnit: datasource.getDefaultTraceDurationUnit(),
+      showTraceStatus: true,
+      traceSearchScope: 'trace',
       flattenNested: datasource.getDefaultTraceFlattenNested(),
       traceEventsColumnPrefix: datasource.getDefaultTraceEventsColumnPrefix(),
       traceLinksColumnPrefix: datasource.getDefaultTraceLinksColumnPrefix(),
