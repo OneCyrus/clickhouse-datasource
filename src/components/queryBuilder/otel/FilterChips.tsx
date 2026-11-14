@@ -85,6 +85,10 @@ interface FilterChipsProps {
   onFiltersChange: (filters: Filter[]) => void;
   /** Called when a filter editor opens, so the field list can load then. */
   onEditorOpen?: () => void;
+  /** Narrows the values counted in the editors to rows matching this SQL condition. */
+  condition?: string;
+  /** Names a filter's field when the field list has no field for it. */
+  getDisplayName?: (filter: Filter) => string;
 }
 
 /**
@@ -92,7 +96,17 @@ interface FilterChipsProps {
  * it, flip it between include and exclude, or remove it.
  */
 export const FilterChips = (props: FilterChipsProps) => {
-  const { datasource, options, range, fields, fieldsLoading, onFiltersChange, onEditorOpen } = props;
+  const {
+    datasource,
+    options,
+    range,
+    fields,
+    fieldsLoading,
+    onFiltersChange,
+    onEditorOpen,
+    condition,
+    getDisplayName,
+  } = props;
   const styles = useStyles2(getStyles);
   const [editing, setEditing] = useState<number>();
   const filters = options.filters || [];
@@ -115,7 +129,10 @@ export const FilterChips = (props: FilterChipsProps) => {
         }
         const field = fields.find((f) => filterTargetsField(filter, f, options.columns));
         const column = getFilterColumn(filter, options.columns);
-        const name = field?.label || (filter.mapKey ? `${column}.${filter.mapKey}` : column || filter.hint || '?');
+        const name =
+          field?.label ||
+          getDisplayName?.(filter) ||
+          (filter.mapKey ? `${column}.${filter.mapKey}` : column || filter.hint || '?');
         const negative = isNegativeOperator(filter.operator);
         const negated = negatedOperators[filter.operator];
         const operator = operatorWords[filter.operator] || filter.operator;
@@ -141,6 +158,7 @@ export const FilterChips = (props: FilterChipsProps) => {
                   fields={fields}
                   fieldsLoading={fieldsLoading}
                   initial={filter}
+                  condition={condition}
                   onApply={(next) => {
                     replaceAt(index, next);
                     setEditing(undefined);
@@ -175,7 +193,8 @@ export const FilterChips = (props: FilterChipsProps) => {
 export const AddFilterButton = (
   props: Omit<FilterChipsProps, 'onFiltersChange'> & { onAdd: (filter: Filter) => void }
 ) => {
-  const { onAdd, onEditorOpen, ...rest } = props;
+  const { onAdd, onEditorOpen, getDisplayName: _unused, ...rest } = props;
+  void _unused;
   const styles = useStyles2(getStyles);
   const [open, setOpen] = useState(false);
   return (

@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Datasource } from 'data/CHDatasource';
 import {
@@ -194,8 +194,9 @@ describe('MetricsQueryEditor', () => {
       },
     };
     renderEditor(options);
-    await userEvent.click(screen.getByTestId(editorSelectors.addFilterButton));
-    expect(screen.getByTestId(editorSelectors.filterEditor)).toBeInTheDocument();
+    await userEvent.click(within(screen.getByTestId(editorSelectors.addFilterButton)).getByRole('button'));
+    // The same field filter editor as the logs and traces editors.
+    expect(await screen.findByTestId('otel-field-filter-editor')).toBeInTheDocument();
     expect(screen.getByTestId(editorSelectors.aggregationPicker)).toBeInTheDocument();
   });
 });
@@ -224,6 +225,8 @@ describe('Min interval', () => {
         onMinIntervalChange={jest.fn()}
       />
     );
+    // The minimum interval sits under Options.
+    await userEvent.click(screen.getByRole('button', { name: 'Options' }));
     expect(await screen.findByPlaceholderText('auto (≥ 20s)')).toBeInTheDocument();
   });
 });

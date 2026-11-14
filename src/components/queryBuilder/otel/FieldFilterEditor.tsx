@@ -125,6 +125,8 @@ interface FieldFilterEditorProps {
   initial?: Filter;
   onApply: (filter: Filter) => void;
   onCancel: () => void;
+  /** Narrows the values counted to rows matching this SQL condition. */
+  condition?: string;
 }
 
 /**
@@ -150,7 +152,9 @@ export const FieldFilterEditor = (props: FieldFilterEditorProps) => {
     () => (initial ? { ...options, filters: (options.filters || []).filter((f) => f !== initial) } : options),
     [options, initial]
   );
-  const counts = useFieldValueCounts(datasource, countOptions, field, range, Boolean(field) && wantsValues);
+  const counts = useFieldValueCounts(datasource, countOptions, field, range, Boolean(field) && wantsValues, {
+    condition: props.condition,
+  });
 
   const fieldOptions = useMemo<Array<ComboboxOption<string>>>(
     () =>

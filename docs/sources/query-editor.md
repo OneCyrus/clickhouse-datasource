@@ -91,7 +91,7 @@ The compact editor also includes a generated SQL preview. Use **Copy** to copy t
 When a data source is configured in **Single source** mode for **Metrics**, the query builder works like a metrics browser for the OpenTelemetry ClickHouse exporter tables. You never pick a table: the metric decides which table is read.
 
 1. **Metric**: search all metrics with data in the dashboard time range. Each entry shows its type (gauge, counter, up-down counter, histogram, exponential histogram, summary), unit, and description.
-1. **Function**: what to compute for each series and time interval. The options depend on the metric type, and the most common one is preselected:
+1. **Function**: the buttons under the metric pick what to compute for each series and time interval. The options depend on the metric type, and the most common one is preselected:
 
    | Metric type             | Functions                                                              | Default  |
    | ----------------------- | ---------------------------------------------------------------------- | -------- |
@@ -102,16 +102,16 @@ When a data source is configured in **Single source** mode for **Metrics**, the 
    | Exponential histogram   | Rate, Increase, Sum rate, Average value                                | Rate     |
    | Summary                 | Quantile (reported quantiles), Rate, Increase, Sum rate, Average value | Quantile |
 
-   Rates and increases handle counter resets and both cumulative and delta temporality. Histogram quantiles merge the bucket counts of all series in a group and interpolate within the bucket, like PromQL's `histogram_quantile`. Select several quantiles to get one value per quantile, for example `p50`, `p95`, and `p99`. Series with different bucket bounds (for example an SDK's defaults next to the Collector's own) are merged by bound.
+   Rates and increases handle counter resets and both cumulative and delta temporality. Histogram quantiles merge the bucket counts of all series in a group and interpolate within the bucket, like PromQL's `histogram_quantile`. Toggle several quantile buttons to get one value per quantile, for example `p50`, `p95`, and `p99`; for histograms, type any other quantile (such as `p99.9`) in the field next to them. Series with different bucket bounds (for example an SDK's defaults next to the Collector's own) are merged by bound.
 
    **Heatmap** returns the observations per bucket and interval of all series as one histogram, for the **Heatmap** panel: one row per bucket, named by its upper bound (`le`), the last one `+Inf`. Group by doesn't apply. Choose the Heatmap visualization; it reads the buckets as they are, with no **Calculate from data** needed.
 
 1. **Aggregate … by**: how the series of each group are combined (`sum`, `avg`, `min`, `max`, `count`), and which labels form the groups. Labels are listed from the metric's data point attributes, resource attributes (such as `service.name` or `k8s.pod.name`), and scope attributes, plus the `ServiceName` and `ScopeName` columns. Leave the labels empty for a single series.
-1. **Filters**: narrow the series by label, with value suggestions for the selected metric. Dashboard variables are offered as values too; see [Metrics variables](/docs/plugins/grafana-clickhouse-datasource/<CLICKHOUSE_PLUGIN_VERSION>/template-variables/#metrics-variables).
+1. **Filters**: the **Service** and **Environment** dropdowns list the values of the selected metric in the time range with their counts; tick values to include or exclude them. **Add filter** filters on any label of the metric, listed under its OpenTelemetry name, with the same value counts, text matching, and numeric comparisons as the logs and traces editors. Filters show as chips you can edit, flip between include and exclude, or remove. Dashboard variables can be typed as values; see [Metrics variables](/docs/plugins/grafana-clickhouse-datasource/<CLICKHOUSE_PLUGIN_VERSION>/template-variables/#metrics-variables).
 
 Like PromQL, values are computed per series first (a series is one combination of resource, scope, and data point attributes) and then aggregated per group, so a gauge reported every 10 seconds is not counted several times when summed across pods. Rates divide each increase by the time it actually covers, so they stay correct at any zoom level.
 
-When you pick a metric, the editor detects how often it's exported and never uses time buckets shorter than twice that interval (shown as the **Min interval** placeholder), so every instance has a point in each bucket and sums across instances don't jump. The generated SQL shows this as `greatest($__interval_s, <seconds>)`.
+When you pick a metric, the editor detects how often it's exported and never uses time buckets shorter than twice that interval (shown as the **Min interval** placeholder under **Options**), so every instance has a point in each bucket and sums across instances don't jump. The generated SQL shows this as `greatest($__interval_s, <seconds>)`.
 
 OpenTelemetry requires every instance to have a unique identity, usually `service.instance.id`. When several instances send a metric with identical resource attributes, their points mix in one series and rates and averages become wrong. The editor detects this and shows a warning with the number of affected series. Fix it at the source, for example with the Collector's `k8sattributes` or `resourcedetection` processor.
 

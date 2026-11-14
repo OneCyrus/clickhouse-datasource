@@ -161,6 +161,7 @@ export const Components = {
       aggregationPicker: 'query-builder__metrics-editor__aggregation-picker',
       groupByPicker: 'query-builder__metrics-editor__group-by-picker',
       addFilterButton: 'query-builder__metrics-editor__add-filter-button',
+      filters: 'query-builder__metrics-editor__filters',
       filterEditor: 'query-builder__metrics-editor__filter-editor',
       identityWarning: 'query-builder__metrics-editor__identity-warning',
     },

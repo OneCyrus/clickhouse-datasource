@@ -28,6 +28,14 @@ datasources:
     jsonData:
       <<: *base
       signalType: traces
+  - name: OTel Metrics
+    uid: otel-metrics
+    type: grafana-clickhouse-datasource
+    jsonData:
+      <<: *base
+      signalType: metrics
+      metrics:
+        defaultDatabase: otel
   - name: ClickHouse (classic)
     uid: otel-classic
     type: grafana-clickhouse-datasource
