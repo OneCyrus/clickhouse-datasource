@@ -116,7 +116,7 @@
         "current": {
           "selected": true,
           "text": "",
-          "value": "${DS_ONECYRUS_CLICKHOUSE_DATASOURCE}"
+          "value": "${DS_AISSENTIALS_CLICKHOUSE_OTEL_DATASOURCE}"
         },
         "hide": 0,
         "includeAll": false,
@@ -124,7 +124,7 @@
         "multi": false,
         "name": "datasource",
         "options": [],
-        "query": "onecyrus-clickhouse-datasource",
+        "query": "aissentials-clickhouse-otel-datasource",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
