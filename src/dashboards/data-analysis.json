@@ -2316,7 +2316,7 @@
         "label": "ClickHouse instance",
         "name": "datasource",
         "options": [],
-        "query": "onecyrus-clickhouse-datasource",
+        "query": "aissentials-clickhouse-otel-datasource",
         "refresh": 1,
         "regex": "",
         "type": "datasource"

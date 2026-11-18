@@ -1446,7 +1446,7 @@
         "multi": false,
         "name": "datasource",
         "options": [],
-        "query": "onecyrus-clickhouse-datasource",
+        "query": "aissentials-clickhouse-otel-datasource",
         "queryValue": "",
         "refresh": 1,
         "regex": "",
