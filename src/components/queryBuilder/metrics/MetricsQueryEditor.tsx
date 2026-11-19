@@ -197,6 +197,8 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
   const rangeKey = range ? `${String(range.raw.from)}|${String(range.raw.to)}` : '';
   const [reloadKey, setReloadKey] = useState(0);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  // Unit and description of a picked metric the list had none for.
+  const [pickedInfo, setPickedInfo] = useState<{ name: string; unit: string; description: string }>();
 
   const tables = useMetricTables(datasource);
   const catalog = useMetricCatalog(datasource, rangeKey, reloadKey);
@@ -275,7 +277,9 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     const table = tables.value[type] ?? datasource.getConfiguredMetricTables()[type];
     const features: MetricTableFeatures = await datasource.getMetricTableFeatures(database, table).catch(() => ({}));
     const jsonAttributes = Boolean(features.jsonAttributes);
-    const [labels, reportedQuantiles, metricHealth] = await Promise.all([
+    // The metric list reads units and descriptions from the last minutes of the range only.
+    const needsInfo = !entry.unit && !entry.description;
+    const [labels, reportedQuantiles, metricHealth, info] = await Promise.all([
       metric?.name
         ? datasource.fetchMetricLabelKeys(database, table, name, jsonAttributes).catch(() => [])
         : Promise.resolve([]),
@@ -283,13 +287,20 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
         ? datasource.fetchSummaryQuantiles(database, table, name).catch(() => [])
         : Promise.resolve([]),
       datasource.fetchMetricHealth(database, table, name, type, features).catch(() => undefined),
+      needsInfo ? datasource.fetchMetricInfo(database, table, name).catch(() => undefined) : Promise.resolve(undefined),
     ]);
     if (pick !== lastPick.current) {
       return;
     }
 
     const current = latest.current.builderOptions;
-    const nextMetric = buildMetricQuery(entry, current.metric?.name ? current.metric : undefined);
+    if (info) {
+      setPickedInfo({ name, ...info });
+    }
+    const nextMetric = buildMetricQuery(
+      info ? { ...entry, ...info } : entry,
+      current.metric?.name ? current.metric : undefined
+    );
     if (nextMetric.fn === MetricFunction.Quantile && type === MetricType.Summary) {
       nextMetric.quantiles = pickSummaryQuantiles(nextMetric.quantiles || [], reportedQuantiles);
     }
@@ -319,9 +330,13 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
       })),
     [catalog.value]
   );
-  const currentEntry = metric?.name
+  const listedEntry = metric?.name
     ? catalog.value.find((e) => e.name === metric.name && e.type === metric.type)
     : undefined;
+  const currentEntry =
+    listedEntry && !listedEntry.description && pickedInfo?.name === listedEntry.name
+      ? { ...listedEntry, description: pickedInfo.description }
+      : listedEntry;
 
   const labelOptions = useMemo(() => {
     const selected = [...(metric?.groupBy || [])];

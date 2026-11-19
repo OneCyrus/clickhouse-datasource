@@ -141,8 +141,22 @@ toStartOfHour(TimeUnix), ...`) and daily partitions: a metric reads only its own
   2.6 s at 1 minute, 1.6 s at 15 minutes). A materialized series id column would cut it 2-5x, but
   needs a schema change, which is out of scope: the plugin works on the exporter's tables as they
   are.
-- Editor lookups read at most 6 hours (metric list, label keys and values) or the last 15 minutes
-  (export interval and shared series check).
+- Editor lookups cover the whole range, so every metric and label of the range is offered, but read
+  only cheap columns: the metric list groups the `LowCardinality` metric name (names, types and
+  monotonicity) and joins units and descriptions from the last 10 minutes only (a picked metric
+  without one gets them from a lookup on that metric); label keys read the maps' `keys`
+  sub-columns. On 20.3M points over 24 hours the list went from 408 MB read / 20 MB of memory (6 hour
+  window) to 123 MB / 18 MB for the full range, label keys from 950 MB to 123 MB. The export interval
+  and shared series check still reads the last 15 minutes.
+- Lookups run with the data source's lookup settings: at most 50M rows and 10 seconds (or the user
+  profile's lower limits) with `read_overflow_mode = 'break'`, 2 threads and 1 GB of memory with
+  GROUP BY spilling past half of it. A user whose profile limits rows gets a partial list instead of
+  an error. Dashboard variables keep reading at most the last 6 hours, since they run as plain
+  queries on every dashboard load.
+- The heaviest query is the chart itself: a histogram quantile over 24 hours at 1 minute buckets
+  (about 800 series) reads 1.7 GB and peaks at 1.5 GB of memory in the per-series window stage.
+  Spilling (`max_bytes_before_external_group_by`) halves the memory at 40% more time; fewer threads
+  do not help.
 
 ### Dashboard variables
 

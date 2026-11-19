@@ -61,6 +61,7 @@ import {
   getConfiguredMetricTables,
   getMetricCatalogSql,
   getMetricHealthSql,
+  getMetricInfoSql,
   getMetricLabelKeysSql,
   getMetricTableFeatures,
   getMetricLabelValuesSql,
@@ -1526,6 +1527,16 @@ export class Datasource
       getMetricLabelValuesSql(database, table, metricName, label, jsonAttributes)
     );
     return column('value').map(String);
+  }
+
+  /** The unit and description of one metric, for a metric the metric list has none for. */
+  async fetchMetricInfo(
+    database: string,
+    table: string,
+    metricName: string
+  ): Promise<{ unit: string; description: string }> {
+    const column = await this.fetchMetricsColumns(getMetricInfoSql(database, table, metricName));
+    return { unit: String(column('unit')[0] ?? ''), description: String(column('description')[0] ?? '') };
   }
 
   async fetchSummaryQuantiles(database: string, table: string, metricName: string): Promise<number[]> {

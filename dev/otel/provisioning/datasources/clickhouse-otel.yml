@@ -36,6 +36,15 @@ datasources:
       signalType: metrics
       metrics:
         defaultDatabase: otel
+  - name: OTel Metrics (limited)
+    uid: otel-metrics-limited
+    type: grafana-clickhouse-datasource
+    jsonData:
+      <<: *base
+      username: grafana_limited
+      signalType: metrics
+      metrics:
+        defaultDatabase: otel
   - name: ClickHouse (classic)
     uid: otel-classic
     type: grafana-clickhouse-datasource
