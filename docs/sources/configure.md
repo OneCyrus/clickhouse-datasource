@@ -83,6 +83,25 @@ ALTER SETTINGS PROFILE grafana_reader
   SETTINGS max_execution_time CHANGEABLE_IN_READONLY;
 ```
 
+#### Optional settings for the query editors
+
+The logs, traces and metrics editors run their own small queries: metric lists, label keys, and value counts in the filter drop-downs. They pass the following settings when the user may change them, so these queries return partial results instead of failing on the profile's read limits, and stay small next to the panel queries: `max_rows_to_read`, `read_overflow_mode`, `timeout_overflow_mode`, `max_threads`, `max_memory_usage`, `max_bytes_before_external_group_by`, and `max_bytes_before_external_sort`. They never raise a limit the profile sets. A user who may change none of them still works; the editors' queries then run with the profile's settings as they are.
+
+To let a `readonly = 1` user apply them, make them changeable as well:
+
+```sql
+ALTER SETTINGS PROFILE grafana_reader
+  SETTINGS readonly = 1,
+  SETTINGS max_execution_time CHANGEABLE_IN_READONLY,
+  SETTINGS max_rows_to_read CHANGEABLE_IN_READONLY,
+  SETTINGS read_overflow_mode CHANGEABLE_IN_READONLY,
+  SETTINGS timeout_overflow_mode CHANGEABLE_IN_READONLY,
+  SETTINGS max_threads CHANGEABLE_IN_READONLY,
+  SETTINGS max_memory_usage CHANGEABLE_IN_READONLY,
+  SETTINGS max_bytes_before_external_group_by CHANGEABLE_IN_READONLY,
+  SETTINGS max_bytes_before_external_sort CHANGEABLE_IN_READONLY;
+```
+
 If you see errors such as `DB::Exception: Cannot modify 'max_execution_time': Setting is locked` at query time, the user is missing this permission. Refer to [Troubleshoot ClickHouse data source issues](/docs/plugins/grafana-clickhouse-datasource/<CLICKHOUSE_PLUGIN_VERSION>/troubleshooting/) for more details.
 
 {{< admonition type="note" >}}
@@ -120,19 +139,19 @@ After adding the data source, configure the following settings.
 
 ### Server settings
 
-| Setting               | Description                                                                                                                                             |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Name**              | The name used to refer to the data source in panels and queries.                                                                                        |
-| **Default**           | Toggle to make this the default data source for new panels.                                                                                             |
-| **Server address**    | The ClickHouse server host (for example, `localhost`).                                                                                                  |
-| **Protocol**          | **Native** or **HTTP**.                                                                                                                                 |
-| **Port**              | Port number; depends on protocol and whether TLS is enabled (see default ports above).                                                                  |
-| **Secure connection** | Enable when your ClickHouse server uses TLS. When enabled, update the **Port** to a TLS-enabled port and configure [TLS settings](#tls-settings) below. |
-| **Username**          | ClickHouse user name. Use a [read-only user](#clickhouse-user-and-permissions).                                                                         |
-| **Password**          | ClickHouse user password.                                                                                                                               |
+| Setting                    | Description                                                                                                                                                                                                                                                                     |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Name**                   | The name used to refer to the data source in panels and queries.                                                                                                                                                                                                                |
+| **Default**                | Toggle to make this the default data source for new panels.                                                                                                                                                                                                                     |
+| **Server address**         | The ClickHouse server host (for example, `localhost`).                                                                                                                                                                                                                          |
+| **Protocol**               | **Native** or **HTTP**.                                                                                                                                                                                                                                                         |
+| **Port**                   | Port number; depends on protocol and whether TLS is enabled (see default ports above).                                                                                                                                                                                          |
+| **Secure connection**      | Enable when your ClickHouse server uses TLS. When enabled, update the **Port** to a TLS-enabled port and configure [TLS settings](#tls-settings) below.                                                                                                                         |
+| **Username**               | ClickHouse user name. Use a [read-only user](#clickhouse-user-and-permissions).                                                                                                                                                                                                 |
+| **Password**               | ClickHouse user password.                                                                                                                                                                                                                                                       |
 | **Forward OAuth Identity** | Forward the logged-in Grafana user's OAuth token to ClickHouse as a JWT instead of authenticating with the configured username and password. ClickHouse Cloud only; requires a [secure (TLS) connection](#tls-settings). See [Forward OAuth Identity](#forward-oauth-identity). |
-| **Default database**  | The database the query builder uses when no database is selected. If left blank, the plugin defaults to `default`.                                      |
-| **Default table**     | The default table used by the query builder.                                                                                                            |
+| **Default database**       | The database the query builder uses when no database is selected. If left blank, the plugin defaults to `default`.                                                                                                                                                              |
+| **Default table**          | The default table used by the query builder.                                                                                                                                                                                                                                    |
 
 ### Default database guidance
 
@@ -173,22 +192,22 @@ Use **Configuration mode** to choose how the data source is used by the query bu
 | Mode              | Description                                                                                                                                                  |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **All databases** | Allows queries against any database and table the ClickHouse user can read. Use this mode for general exploration and dashboards that query multiple tables. |
-| **Single source** | Focuses the data source on one logs, traces, or metrics source. Choose a **Signal type**, then configure the database and tables for that source.             |
+| **Single source** | Focuses the data source on one logs, traces, or metrics source. Choose a **Signal type**, then configure the database and tables for that source.            |
 
 Use **Single source** when the data source is dedicated to one logs table, traces table, or set of OTel metrics tables, such as an OpenTelemetry table. This keeps the logs or traces schema settings with the selected source and avoids reconfiguring column mappings in each query. Single source data sources use the [compact query mode](/docs/plugins/grafana-clickhouse-datasource/<CLICKHOUSE_PLUGIN_VERSION>/query-editor/#compact-query-mode) in the query editor.
 
 ### Additional settings
 
-| Setting              | Description                                                           |
-| -------------------- | --------------------------------------------------------------------- |
-| **Dial Timeout**             | Timeout in seconds for establishing a connection. Default: `10`.                                                                                                                                                                                                                                                                                       |
-| **Query Timeout**            | Timeout in seconds for read queries. Default: `60`.                                                                                                                                                                                                                                                                                                    |
-| **Connection Max Lifetime**  | Maximum lifetime of a pooled connection, in minutes. Default: `5`.                                                                                                                                                                                                                                                                                     |
-| **Max Idle Connections**     | Maximum number of idle connections kept in the pool. Default: `25`.                                                                                                                                                                                                                                                                                    |
-| **Max Open Connections**     | Maximum number of open connections in the pool. Default: `50`.                                                                                                                                                                                                                                                                                         |
-| **Validate SQL**             | When enabled, validates SQL syntax in the query editor.                                                                                                                                                                                                                                                                                                |
-| **Enable row limit**         | The plugin always limits query results to the Grafana row limit setting (default `1000000` rows). When enabled, the plugin also applies the limit on the ClickHouse server, so excess rows are not sent over the network.                                                                                                                               |
-| **Row Capacity Hint**        | Optional expected row count for pre-allocating result frames. When set, the plugin pre-sizes each response frame to this many rows, which avoids repeated memory allocation on large results. Leave at `0` (the default, disabled) unless queries from this data source reliably return a similar, large number of rows. A value larger than the typical result wastes memory. Values above `1000000` are clamped. |
+| Setting                             | Description                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Dial Timeout**                    | Timeout in seconds for establishing a connection. Default: `10`.                                                                                                                                                                                                                                                                                                                                                         |
+| **Query Timeout**                   | Timeout in seconds for read queries. Default: `60`.                                                                                                                                                                                                                                                                                                                                                                      |
+| **Connection Max Lifetime**         | Maximum lifetime of a pooled connection, in minutes. Default: `5`.                                                                                                                                                                                                                                                                                                                                                       |
+| **Max Idle Connections**            | Maximum number of idle connections kept in the pool. Default: `25`.                                                                                                                                                                                                                                                                                                                                                      |
+| **Max Open Connections**            | Maximum number of open connections in the pool. Default: `50`.                                                                                                                                                                                                                                                                                                                                                           |
+| **Validate SQL**                    | When enabled, validates SQL syntax in the query editor.                                                                                                                                                                                                                                                                                                                                                                  |
+| **Enable row limit**                | The plugin always limits query results to the Grafana row limit setting (default `1000000` rows). When enabled, the plugin also applies the limit on the ClickHouse server, so excess rows are not sent over the network.                                                                                                                                                                                                |
+| **Row Capacity Hint**               | Optional expected row count for pre-allocating result frames. When set, the plugin pre-sizes each response frame to this many rows, which avoids repeated memory allocation on large results. Leave at `0` (the default, disabled) unless queries from this data source reliably return a similar, large number of rows. A value larger than the typical result wastes memory. Values above `1000000` are clamped.       |
 | **Suggest Map keys and JSON paths** | When enabled, the filter editor probes `Map(...)` and `JSON` columns for distinct keys and paths, and the SQL editor suggests the paths inside `JSON` columns. Each JSON path lookup reads a sample of at most 100,000 rows. On large tables with high-cardinality maps or JSON these probes can read many rows, so disable it to suppress them (you can still type Map keys and JSON paths manually). Default: enabled. |
 
 ### Custom ClickHouse settings
@@ -333,6 +352,7 @@ To enable it, turn on **Forward OAuth Identity** in the **Database credentials**
   {{< admonition type="warning" >}}
   Enabling **Allow service account fallback** lets alert rules and other backend queries fall back to the configured username and password. Those queries then authenticate as the shared service account and are **not** subject to the per-user [row policies](https://clickhouse.com/docs/en/operations/access-rights/#row-policies), quotas, or query-log attribution that OAuth pass-through enforces for interactive queries. As a result, an alert may read rows a given dashboard user could not see interactively. Scope the configured service account to the least privilege your alert queries require. The plugin emits a backend warning log each time this fallback is exercised.
   {{< /admonition >}}
+
 - **Connections are keyed per user.** Enabling JWT authentication automatically turns on header forwarding, so each Grafana user opens a separate ClickHouse connection. See [Connection pool implications](#connection-pool-implications) for sizing guidance.
 
 ## Verify the connection

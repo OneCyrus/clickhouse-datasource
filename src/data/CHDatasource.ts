@@ -151,8 +151,8 @@ const LOOKUP_MAX_MEMORY = 1_000_000_000;
 
 /** What the connecting user's settings profile allows editor lookups to do. */
 interface ReadLimits {
-  /** False for readonly=1 users, who cannot pass settings with a query. */
-  canSetSettings: boolean;
+  /** The settings the user may change with a query (readonly = 1 profiles allow only some, if any). */
+  changeable: ReadonlySet<string>;
   /** The profile's max_rows_to_read, 0 when unlimited. */
   maxRows: number;
   /** The profile's max_execution_time in seconds, 0 when unlimited. */
@@ -160,6 +160,18 @@ interface ReadLimits {
   /** The profile's max_memory_usage in bytes, 0 when unlimited. */
   maxMemory: number;
 }
+
+/** The settings editor lookups pass, when the user may change them. */
+const LOOKUP_SETTINGS = [
+  'max_rows_to_read',
+  'read_overflow_mode',
+  'max_execution_time',
+  'timeout_overflow_mode',
+  'max_threads',
+  'max_memory_usage',
+  'max_bytes_before_external_group_by',
+  'max_bytes_before_external_sort',
+];
 
 /** True for an error about passing settings the user may not change. */
 const isSettingsError = (err: unknown): boolean =>
@@ -1369,20 +1381,26 @@ export class Datasource
    */
   private getReadLimits(): Promise<ReadLimits> {
     if (!this.readLimits) {
-      const rawSql =
-        "SELECT getSetting('readonly') AS readonly, getSetting('max_rows_to_read') AS max_rows, " +
-        "getSetting('max_execution_time') AS max_seconds, getSetting('max_memory_usage') AS max_memory";
+      // system.settings tells, per setting, whether this user may change it: a readonly = 1 profile
+      // that only allows max_execution_time (the plugin's documented setup) still gets that one.
+      const rawSql = `SELECT name, value, readonly FROM system.settings WHERE name IN (${LOOKUP_SETTINGS.map((n) => `'${n}'`).join(', ')})`;
       this.readLimits = this.runLookup(rawSql, 'read-limits', undefined, false).then(
         (frame) => {
-          const value = (name: string) => Number(frame.fields.find((f) => f.name === name)?.values[0] ?? 0);
+          const names = frame.fields.find((f) => f.name === 'name')?.values ?? [];
+          const values = frame.fields.find((f) => f.name === 'value')?.values ?? [];
+          const locked = frame.fields.find((f) => f.name === 'readonly')?.values ?? [];
+          const value = (name: string) => {
+            const n = Number(values[names.indexOf(name)]);
+            return Number.isFinite(n) ? n : 0;
+          };
           return {
-            canSetSettings: value('readonly') !== 1,
-            maxRows: value('max_rows'),
-            maxSeconds: value('max_seconds'),
-            maxMemory: value('max_memory'),
+            changeable: new Set(names.filter((_, i) => Number(locked[i]) === 0).map(String)),
+            maxRows: value('max_rows_to_read'),
+            maxSeconds: value('max_execution_time'),
+            maxMemory: value('max_memory_usage'),
           };
         },
-        () => ({ canSetSettings: false, maxRows: 0, maxSeconds: 0, maxMemory: 0 })
+        () => ({ changeable: new Set<string>(), maxRows: 0, maxSeconds: 0, maxMemory: 0 })
       );
     }
     return this.readLimits;
@@ -1398,20 +1416,21 @@ export class Datasource
    */
   private async getLookupSettings(): Promise<string> {
     const limits = await this.getReadLimits();
-    if (!limits.canSetSettings) {
-      return '';
-    }
     const atMost = (profile: number, cap: number) => (profile > 0 ? Math.min(profile, cap) : cap);
-    const rows = atMost(limits.maxRows, LOOKUP_MAX_ROWS);
-    const seconds = atMost(limits.maxSeconds, LOOKUP_MAX_SECONDS);
     const memory = atMost(limits.maxMemory, LOOKUP_MAX_MEMORY);
     const spill = Math.floor(memory / 2);
-    return (
-      ` SETTINGS max_rows_to_read = ${rows}, read_overflow_mode = 'break', ` +
-      `max_execution_time = ${seconds}, timeout_overflow_mode = 'break', max_threads = ${LOOKUP_MAX_THREADS}, ` +
-      `max_memory_usage = ${memory}, max_bytes_before_external_group_by = ${spill}, ` +
-      `max_bytes_before_external_sort = ${spill}`
-    );
+    const wanted: Array<[string, string | number]> = [
+      ['max_rows_to_read', atMost(limits.maxRows, LOOKUP_MAX_ROWS)],
+      ['read_overflow_mode', "'break'"],
+      ['max_execution_time', atMost(limits.maxSeconds, LOOKUP_MAX_SECONDS)],
+      ['timeout_overflow_mode', "'break'"],
+      ['max_threads', LOOKUP_MAX_THREADS],
+      ['max_memory_usage', memory],
+      ['max_bytes_before_external_group_by', spill],
+      ['max_bytes_before_external_sort', spill],
+    ];
+    const settings = wanted.filter(([name]) => limits.changeable.has(name)).map(([name, v]) => `${name} = ${v}`);
+    return settings.length ? ` SETTINGS ${settings.join(', ')}` : '';
   }
 
   /**

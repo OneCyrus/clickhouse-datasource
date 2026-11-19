@@ -4559,3 +4559,59 @@ describe('ClickHouseDatasource', () => {
     });
   });
 });
+
+describe('editor lookup settings', () => {
+  const settingsFrame = (rows: Array<{ name: string; value: string; readonly: number }>) => arrayToDataFrame(rows);
+  const run = async (settings: Array<{ name: string; value: string; readonly: number }>) => {
+    const ds = cloneDeep(mockDatasource);
+    const sent: string[] = [];
+    jest.spyOn(ds, 'query').mockImplementation((request) => {
+      const sql = request.targets[0].rawSql!;
+      sent.push(sql);
+      if (sql.includes('system.settings')) {
+        return of({ data: [settingsFrame(settings)] });
+      }
+      return of({ data: [arrayToDataFrame([{ value: 'cart', count: 3 }])] });
+    });
+    const values = await ds.fetchFieldValueCounts('otel', 'otel_logs', '"ServiceName"', '');
+    return { values, sql: sent[sent.length - 1] };
+  };
+  const all = (readonly: number, overrides: Record<string, string> = {}) =>
+    [
+      'max_rows_to_read',
+      'read_overflow_mode',
+      'max_execution_time',
+      'timeout_overflow_mode',
+      'max_threads',
+      'max_memory_usage',
+      'max_bytes_before_external_group_by',
+      'max_bytes_before_external_sort',
+    ].map((name) => ({ name, value: overrides[name] ?? '0', readonly }));
+
+  it('caps rows, time, threads and memory when the user may change settings', async () => {
+    const { values, sql } = await run(all(0));
+    expect(values).toEqual([{ value: 'cart', count: 3 }]);
+    expect(sql).toContain(
+      "SETTINGS max_rows_to_read = 50000000, read_overflow_mode = 'break', max_execution_time = 10, " +
+        "timeout_overflow_mode = 'break', max_threads = 2, max_memory_usage = 1000000000, " +
+        'max_bytes_before_external_group_by = 500000000, max_bytes_before_external_sort = 500000000'
+    );
+  });
+
+  it("never raises the profile's own limits", async () => {
+    const { sql } = await run(all(0, { max_rows_to_read: '2000000', max_memory_usage: '400000000' }));
+    expect(sql).toContain('max_rows_to_read = 2000000');
+    expect(sql).toContain('max_memory_usage = 400000000');
+  });
+
+  it('passes only the settings a readonly = 1 profile allows', async () => {
+    const settings = all(1).map((s) => (s.name === 'max_execution_time' ? { ...s, readonly: 0 } : s));
+    const { sql } = await run(settings);
+    expect(sql).toMatch(/ SETTINGS max_execution_time = 10$/);
+  });
+
+  it('passes no settings when none may change', async () => {
+    const { sql } = await run(all(1));
+    expect(sql).not.toContain('SETTINGS');
+  });
+});
