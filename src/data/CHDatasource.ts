@@ -140,6 +140,13 @@ const ADHOC_PROBE_TIME_WINDOW = 'INTERVAL 6 HOUR';
 const LOOKUP_MAX_ROWS = 50_000_000;
 /** Seconds an editor lookup runs at most. */
 const LOOKUP_MAX_SECONDS = 10;
+/**
+ * Threads an editor lookup uses. Lookups are small and several run at once; every thread holds its
+ * own read buffers and aggregation state, so the default (one per core) multiplies their memory.
+ */
+const LOOKUP_MAX_THREADS = 2;
+/** Memory an editor lookup may use; past half of it GROUP BY and DISTINCT spill to disk. */
+const LOOKUP_MAX_MEMORY = 1_000_000_000;
 
 /** What the connecting user's settings profile allows editor lookups to do. */
 interface ReadLimits {
@@ -149,6 +156,8 @@ interface ReadLimits {
   maxRows: number;
   /** The profile's max_execution_time in seconds, 0 when unlimited. */
   maxSeconds: number;
+  /** The profile's max_memory_usage in bytes, 0 when unlimited. */
+  maxMemory: number;
 }
 
 /** True for an error about passing settings the user may not change. */
@@ -1361,7 +1370,7 @@ export class Datasource
     if (!this.readLimits) {
       const rawSql =
         "SELECT getSetting('readonly') AS readonly, getSetting('max_rows_to_read') AS max_rows, " +
-        "getSetting('max_execution_time') AS max_seconds";
+        "getSetting('max_execution_time') AS max_seconds, getSetting('max_memory_usage') AS max_memory";
       this.readLimits = this.runLookup(rawSql, 'read-limits', undefined, false).then(
         (frame) => {
           const value = (name: string) => Number(frame.fields.find((f) => f.name === name)?.values[0] ?? 0);
@@ -1369,30 +1378,38 @@ export class Datasource
             canSetSettings: value('readonly') !== 1,
             maxRows: value('max_rows'),
             maxSeconds: value('max_seconds'),
+            maxMemory: value('max_memory'),
           };
         },
-        () => ({ canSetSettings: false, maxRows: 0, maxSeconds: 0 })
+        () => ({ canSetSettings: false, maxRows: 0, maxSeconds: 0, maxMemory: 0 })
       );
     }
     return this.readLimits;
   }
 
   /**
-   * The SETTINGS clause that keeps an editor lookup within bounds: at most LOOKUP_MAX_ROWS rows (or
-   * the profile's lower limit) and LOOKUP_MAX_SECONDS, returning what it read so far instead of
-   * failing. 'break' also applies to the profile's max_bytes_to_read, so a user whose profile
-   * limits reads gets partial lists rather than "Limit for rows or bytes to read exceeded".
+   * The SETTINGS clause that keeps an editor lookup within bounds: at most LOOKUP_MAX_ROWS rows and
+   * LOOKUP_MAX_SECONDS (or the profile's lower limits), returning what it read so far instead of
+   * failing, on LOOKUP_MAX_THREADS threads and within LOOKUP_MAX_MEMORY, spilling GROUP BY and ORDER
+   * BY to disk past half of it, so lookups cannot push the server to its total memory limit.
+   * 'break' also applies to the profile's max_bytes_to_read, so a user whose profile limits reads
+   * gets partial lists rather than "Limit for rows or bytes to read exceeded".
    */
   private async getLookupSettings(): Promise<string> {
     const limits = await this.getReadLimits();
     if (!limits.canSetSettings) {
       return '';
     }
-    const rows = limits.maxRows > 0 ? Math.min(limits.maxRows, LOOKUP_MAX_ROWS) : LOOKUP_MAX_ROWS;
-    const seconds = limits.maxSeconds > 0 ? Math.min(limits.maxSeconds, LOOKUP_MAX_SECONDS) : LOOKUP_MAX_SECONDS;
+    const atMost = (profile: number, cap: number) => (profile > 0 ? Math.min(profile, cap) : cap);
+    const rows = atMost(limits.maxRows, LOOKUP_MAX_ROWS);
+    const seconds = atMost(limits.maxSeconds, LOOKUP_MAX_SECONDS);
+    const memory = atMost(limits.maxMemory, LOOKUP_MAX_MEMORY);
+    const spill = Math.floor(memory / 2);
     return (
       ` SETTINGS max_rows_to_read = ${rows}, read_overflow_mode = 'break', ` +
-      `max_execution_time = ${seconds}, timeout_overflow_mode = 'break'`
+      `max_execution_time = ${seconds}, timeout_overflow_mode = 'break', max_threads = ${LOOKUP_MAX_THREADS}, ` +
+      `max_memory_usage = ${memory}, max_bytes_before_external_group_by = ${spill}, ` +
+      `max_bytes_before_external_sort = ${spill}`
     );
   }
 
