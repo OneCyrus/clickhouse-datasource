@@ -12,8 +12,8 @@ import {
   Input,
   MultiCombobox,
   RadioButtonGroup,
-  Stack,
   Text,
+  Tooltip,
   useStyles2,
 } from '@grafana/ui';
 import { Datasource } from 'data/CHDatasource';
@@ -48,11 +48,14 @@ import {
 } from 'types/queryBuilder';
 import { selectors } from 'selectors';
 import { buildCompactMetricsDefaults } from '../compactQueryDefaults';
-import { FilterTagBar } from '../FilterTagBar';
+import { AddFilterButton, FilterChips } from '../otel/FilterChips';
+import { FacetFilter } from '../otel/QuickFilters';
+import { getMetricCondition, getMetricFields } from './metricFields';
+import { QuantilePicker } from './QuantilePicker';
 import { SqlPreview } from '../SqlPreview';
 import { useMinIntervalDraft } from 'components/MinIntervalEditor';
 import labels from 'labels';
-import { getMetricLabelOptions, MetricLabelFilterEditor } from './MetricLabelFilterEditor';
+import { getMetricLabelOptions } from './MetricLabelFilterEditor';
 import {
   useMetricCatalog,
   useMetricHealth,
@@ -91,9 +94,18 @@ const parseMetricOptionValue = (value: string): { type: MetricType; name: string
   return { type: value.slice(0, separator) as MetricType, name: value.slice(separator + 1) };
 };
 
-const describeMetric = (entry: Pick<MetricCatalogEntry, 'type' | 'unit' | 'description' | 'isMonotonic'>): string => {
+const describeMetric = (
+  entry: Pick<MetricCatalogEntry, 'type' | 'unit' | 'description' | 'isMonotonic' | 'hasInfo'>
+): string => {
+  // Without info the list cannot tell a counter from an up-down counter yet.
   const kind =
-    entry.type === MetricType.Sum ? (entry.isMonotonic ? 'Counter' : 'Up-down counter') : metricTypeLabels[entry.type];
+    entry.type === MetricType.Sum
+      ? entry.hasInfo === false
+        ? metricTypeLabels[entry.type]
+        : entry.isMonotonic
+          ? 'Counter'
+          : 'Up-down counter'
+      : metricTypeLabels[entry.type];
   return [kind, entry.unit && `unit ${entry.unit}`, entry.description].filter(Boolean).join(' · ');
 };
 
@@ -138,27 +150,31 @@ export const pickSummaryQuantiles = (wanted: number[], reported: number[]): numb
   return [belowMax.length ? Math.max(...belowMax) : Math.max(...reported)];
 };
 
-/** Parses a typed quantile: `0.95`, `95`, `p95` or `p99.9`. */
-export const parseQuantile = (text: string): number | undefined => {
-  const trimmed = text.trim().toLowerCase();
-  const percent = trimmed.startsWith('p');
-  let value = Number(percent ? trimmed.slice(1) : trimmed);
-  if (!Number.isFinite(value)) {
-    return undefined;
-  }
-  if (percent || value > 1) {
-    value = value / 100;
-  }
-  return value >= 0 && value <= 1 ? value : undefined;
-};
+export { parseQuantile } from './QuantilePicker';
 
 const getStyles = (theme: GrafanaTheme2) => ({
-  section: css`
+  row: css`
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: ${theme.spacing(1)};
     padding: ${theme.spacing(0.5)} 0;
+  `,
+  grow: css`
+    flex: 1;
+    min-width: 260px;
+  `,
+  groupBy: css`
+    min-width: 200px;
+  `,
+  divider: css`
+    width: 1px;
+    align-self: stretch;
+    background: ${theme.colors.border.weak};
+  `,
+  label: css`
+    font-size: ${theme.typography.bodySmall.fontSize};
+    color: ${theme.colors.text.secondary};
   `,
   description: css`
     padding-bottom: ${theme.spacing(0.5)};
@@ -189,7 +205,14 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
   const metric = builderOptions.metric;
   const rangeKey = range ? `${String(range.raw.from)}|${String(range.raw.to)}` : '';
   const [reloadKey, setReloadKey] = useState(0);
-  const [showFilterEditor, setShowFilterEditor] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  // Unit and description of a picked metric the list had none for.
+  const [pickedInfo, setPickedInfo] = useState<{
+    name: string;
+    unit: string;
+    description: string;
+    isMonotonic: boolean;
+  }>();
 
   const tables = useMetricTables(datasource);
   const catalog = useMetricCatalog(datasource, rangeKey, reloadKey);
@@ -268,7 +291,9 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     const table = tables.value[type] ?? datasource.getConfiguredMetricTables()[type];
     const features: MetricTableFeatures = await datasource.getMetricTableFeatures(database, table).catch(() => ({}));
     const jsonAttributes = Boolean(features.jsonAttributes);
-    const [labels, reportedQuantiles, metricHealth] = await Promise.all([
+    // The metric list reads units and descriptions from the last minutes of the range only.
+    const needsInfo = entry.hasInfo === false;
+    const [labels, reportedQuantiles, metricHealth, info] = await Promise.all([
       metric?.name
         ? datasource.fetchMetricLabelKeys(database, table, name, jsonAttributes).catch(() => [])
         : Promise.resolve([]),
@@ -276,13 +301,22 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
         ? datasource.fetchSummaryQuantiles(database, table, name).catch(() => [])
         : Promise.resolve([]),
       datasource.fetchMetricHealth(database, table, name, type, features).catch(() => undefined),
+      needsInfo
+        ? datasource.fetchMetricInfo(database, table, name, type).catch(() => undefined)
+        : Promise.resolve(undefined),
     ]);
     if (pick !== lastPick.current) {
       return;
     }
 
     const current = latest.current.builderOptions;
-    const nextMetric = buildMetricQuery(entry, current.metric?.name ? current.metric : undefined);
+    if (info) {
+      setPickedInfo({ name, ...info });
+    }
+    const nextMetric = buildMetricQuery(
+      info ? { ...entry, ...info } : entry,
+      current.metric?.name ? current.metric : undefined
+    );
     if (nextMetric.fn === MetricFunction.Quantile && type === MetricType.Summary) {
       nextMetric.quantiles = pickSummaryQuantiles(nextMetric.quantiles || [], reportedQuantiles);
     }
@@ -312,18 +346,33 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
       })),
     [catalog.value]
   );
-  const currentEntry = metric?.name
+  const listedEntry = metric?.name
     ? catalog.value.find((e) => e.name === metric.name && e.type === metric.type)
     : undefined;
+  const currentEntry =
+    listedEntry && listedEntry.hasInfo === false && pickedInfo?.name === listedEntry.name
+      ? { ...listedEntry, ...pickedInfo, hasInfo: true }
+      : listedEntry;
 
   const labelOptions = useMemo(() => {
     const selected = [...(metric?.groupBy || [])];
     return getMetricLabelOptions([...metricColumnLabels, ...labelKeys.value, ...selected]);
   }, [labelKeys.value, metric?.groupBy]);
 
+  const metricFields = useMemo(
+    () => getMetricFields(labelKeys.value, metric?.jsonAttributes),
+    [labelKeys.value, metric?.jsonAttributes]
+  );
+
   if (!metric) {
     return null;
   }
+
+  const metricCondition = metric.name ? getMetricCondition(metric.name) : undefined;
+  const serviceField = metricFields.find((f) => f.column === 'ServiceName' && !f.mapKey);
+  const environmentField = ['deployment.environment.name', 'deployment.environment']
+    .map((key) => metricFields.find((f) => f.group === 'resource' && f.mapKey === key))
+    .find(Boolean);
 
   const functions = metric.name ? getMetricFunctions(metric.type, metric.isMonotonic) : [];
   const functionOptions = functions.map((fn) => ({
@@ -381,35 +430,46 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
           </Alert>
         )}
 
-        <div className={styles.section}>
-          <InlineField label="Metric" labelWidth={14} grow>
-            <div data-testid={editorSelectors.metricPicker}>
-              <Combobox
-                aria-label="Metric"
-                options={metricOptions}
-                value={
-                  metric.name
-                    ? { value: metricOptionValue(metric), label: metric.name, description: currentEntry?.description }
-                    : null
-                }
-                onChange={(option) => onMetricChange(option.value)}
-                loading={catalog.loading}
-                placeholder={catalog.loading ? 'Loading metrics...' : `Search ${metricOptions.length} metrics`}
-                width={60}
-              />
-            </div>
-          </InlineField>
+        <div className={styles.row}>
+          <div className={styles.grow} data-testid={editorSelectors.metricPicker}>
+            <Combobox
+              aria-label="Metric"
+              options={metricOptions}
+              value={
+                metric.name
+                  ? { value: metricOptionValue(metric), label: metric.name, description: currentEntry?.description }
+                  : null
+              }
+              onChange={(option) => option && onMetricChange(option.value)}
+              loading={catalog.loading}
+              placeholder={catalog.loading ? 'Loading metrics...' : `Search ${metricOptions.length} metrics`}
+              prefixIcon="search"
+            />
+          </div>
+          {metric.name && (
+            <Badge
+              color={metric.type === MetricType.Gauge ? 'blue' : metric.type === MetricType.Sum ? 'green' : 'purple'}
+              text={describeMetric({ ...metric, unit: '', description: '', isMonotonic: Boolean(metric.isMonotonic) })}
+            />
+          )}
           <IconButton
             name="sync"
             tooltip="Reload the metric list"
             aria-label="Reload metrics"
             onClick={() => setReloadKey((key) => key + 1)}
           />
-          {metric.name && (
-            <Badge
-              color={metric.type === MetricType.Gauge ? 'blue' : metric.type === MetricType.Sum ? 'green' : 'purple'}
-              text={describeMetric({ ...metric, unit: '', description: '', isMonotonic: Boolean(metric.isMonotonic) })}
-            />
+          {metric.name && onMinIntervalChange && (
+            <Button
+              size="sm"
+              variant="secondary"
+              fill={optionsOpen ? 'solid' : 'outline'}
+              icon="sliders-v-alt"
+              aria-expanded={optionsOpen}
+              onClick={() => setOptionsOpen(!optionsOpen)}
+              tooltip="Minimum interval"
+            >
+              Options
+            </Button>
           )}
         </div>
         {metric.name && (currentEntry?.description || metric.unit) && (
@@ -439,60 +499,42 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
 
         {metric.name && (
           <>
-            <div className={styles.section}>
-              <InlineField label="Function" labelWidth={14}>
-                <div data-testid={editorSelectors.functionPicker}>
-                  <Combobox
-                    aria-label="Function"
-                    options={functionOptions}
-                    value={metric.fn}
-                    onChange={(option) => onFunctionChange(option.value)}
-                    width={24}
-                  />
-                </div>
-              </InlineField>
+            <div className={styles.row} aria-label="What to compute" role="group">
+              <div data-testid={editorSelectors.functionPicker}>
+                <RadioButtonGroup
+                  size="sm"
+                  options={functionOptions}
+                  value={metric.fn}
+                  onChange={(fn) => onFunctionChange(fn)}
+                />
+              </div>
               {showQuantiles && (
-                <InlineField label="Quantiles" tooltip="Type a custom quantile such as 0.75 or p99.9">
-                  <div data-testid={editorSelectors.quantilesPicker}>
-                    <MultiCombobox
-                      aria-label="Quantiles"
-                      options={quantileOptions}
-                      value={(metric.quantiles || []).map(String)}
-                      onChange={(options) => {
-                        const quantiles = options
-                          .map((option) => parseQuantile(option.value))
-                          .filter((q): q is number => q !== undefined);
-                        updateMetric({ quantiles: Array.from(new Set(quantiles)).sort((a, b) => a - b) });
-                      }}
-                      createCustomValue={metric.type === MetricType.Histogram}
-                      width="auto"
-                      minWidth={20}
-                    />
-                  </div>
-                </InlineField>
+                <QuantilePicker
+                  options={quantileOptions.map((option) => Number(option.value))}
+                  value={metric.quantiles || []}
+                  allowCustom={metric.type === MetricType.Histogram}
+                  onChange={(quantiles) => updateMetric({ quantiles })}
+                />
               )}
-            </div>
-
-            {usesGroupBy(metric.fn) && (
-              <div className={styles.section}>
-                {usesSeriesAggregation(metric.type, metric.fn) && (
-                  <InlineField label="Aggregate" labelWidth={14}>
+              {usesGroupBy(metric.fn) && (
+                <>
+                  <div className={styles.divider} />
+                  {usesSeriesAggregation(metric.type, metric.fn) && (
                     <div data-testid={editorSelectors.aggregationPicker}>
                       <RadioButtonGroup
+                        size="sm"
                         options={aggregationOptions}
                         value={metric.aggregation}
                         onChange={(aggregation) => updateMetric({ aggregation })}
                       />
                     </div>
-                  </InlineField>
-                )}
-                <InlineField
-                  label={usesSeriesAggregation(metric.type, metric.fn) ? 'by' : 'Group by'}
-                  labelWidth={usesSeriesAggregation(metric.type, metric.fn) ? undefined : 14}
-                  tooltip="One series per combination of these labels. Leave empty for a single series."
-                  grow
-                >
-                  <div data-testid={editorSelectors.groupByPicker}>
+                  )}
+                  <Tooltip content="One series per combination of these labels. Leave empty for a single series.">
+                    <span className={styles.label}>
+                      {usesSeriesAggregation(metric.type, metric.fn) ? 'by' : 'Group by'}
+                    </span>
+                  </Tooltip>
+                  <div className={styles.groupBy} data-testid={editorSelectors.groupByPicker}>
                     <MultiCombobox
                       aria-label="Group by"
                       options={labelOptions}
@@ -501,57 +543,73 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
                       loading={labelKeys.loading}
                       placeholder="Labels"
                       width="auto"
-                      minWidth={30}
+                      minWidth={24}
                     />
                   </div>
-                </InlineField>
-              </div>
-            )}
-
-            <div className={styles.section}>
-              <InlineField label="Filters" labelWidth={14}>
-                <Stack direction="row" alignItems="center" gap={0.5} wrap="wrap">
-                  <FilterTagBar
-                    filters={filters}
-                    showLabel={false}
-                    getDisplayName={getMetricFilterDisplayName}
-                    onRemoveFilter={(index) => onFiltersChange(filters.filter((_, i) => i !== index))}
-                  />
-                  <Button
-                    data-testid={editorSelectors.addFilterButton}
-                    icon="plus"
-                    variant="secondary"
-                    size="sm"
-                    fill="text"
-                    onClick={() => setShowFilterEditor(!showFilterEditor)}
-                  >
-                    Add filter
-                  </Button>
-                </Stack>
-              </InlineField>
+                </>
+              )}
             </div>
-            {showFilterEditor && (
-              <MetricLabelFilterEditor
-                datasource={datasource}
-                database={builderOptions.database}
-                table={builderOptions.table}
-                metricName={metric.name}
-                jsonAttributes={metric.jsonAttributes}
-                labelOptions={labelOptions}
-                onAdd={(filter) => onFiltersChange([...filters, filter])}
-                onClose={() => setShowFilterEditor(false)}
-              />
-            )}
 
-            <div className={styles.section}>
-              {onMinIntervalChange && (
+            <div className={styles.row} data-testid={editorSelectors.filters}>
+              {serviceField && (
+                <FacetFilter
+                  datasource={datasource}
+                  options={builderOptions}
+                  range={range}
+                  field={serviceField}
+                  name="Service"
+                  condition={metricCondition}
+                  onFiltersChange={onFiltersChange}
+                />
+              )}
+              {environmentField && (
+                <FacetFilter
+                  datasource={datasource}
+                  options={builderOptions}
+                  range={range}
+                  field={environmentField}
+                  name="Environment"
+                  condition={metricCondition}
+                  onFiltersChange={onFiltersChange}
+                />
+              )}
+              <FilterChips
+                datasource={datasource}
+                options={builderOptions}
+                range={range}
+                fields={metricFields}
+                fieldsLoading={labelKeys.loading}
+                condition={metricCondition}
+                getDisplayName={getMetricFilterDisplayName}
+                onFiltersChange={onFiltersChange}
+              />
+              <div data-testid={editorSelectors.addFilterButton}>
+                <AddFilterButton
+                  datasource={datasource}
+                  options={builderOptions}
+                  range={range}
+                  fields={metricFields}
+                  fieldsLoading={labelKeys.loading}
+                  condition={metricCondition}
+                  onAdd={(filter) => onFiltersChange([...filters, filter])}
+                />
+              </div>
+              {filters.length > 0 && (
+                <Button size="sm" variant="secondary" fill="text" icon="times" onClick={() => onFiltersChange([])}>
+                  Clear all
+                </Button>
+              )}
+            </div>
+
+            {optionsOpen && onMinIntervalChange && (
+              <div className={styles.row}>
                 <MetricMinInterval
                   minInterval={minInterval}
                   onMinIntervalChange={onMinIntervalChange}
                   minStep={metric.minStep}
                 />
-              )}
-            </div>
+              </div>
+            )}
           </>
         )}
       </div>

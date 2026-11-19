@@ -16,6 +16,7 @@ import {
   getConfiguredMetricTables,
   getDefaultSeriesAggregation,
   getMetricCatalogSql,
+  getMetricInfoSql,
   getMetricFunctions,
   getMetricHealthSql,
   getMetricTableFeatures,
@@ -412,34 +413,54 @@ describe('generateMetricsQuery', () => {
 });
 
 describe('discovery queries', () => {
-  it('lists metrics across existing tables', () => {
+  it('lists metrics across existing tables from the primary index', () => {
     const sql = getMetricCatalogSql('otel', { gauge: 'g', sum: 's' });
-    expect(sql).toBe(
-      'SELECT name, type, unit, description, monotonic FROM (' +
-        "SELECT MetricName AS name, 'gauge' AS type, any(MetricUnit) AS unit, any(MetricDescription) AS description, toUInt8(0) AS monotonic " +
-        'FROM "otel"."g" WHERE TimeUnix >= greatest($__fromTime, subtractHours($__toTime, 6)) AND TimeUnix <= $__toTime GROUP BY MetricName UNION ALL ' +
-        "SELECT MetricName AS name, 'sum' AS type, any(MetricUnit) AS unit, any(MetricDescription) AS description, max(toUInt8(IsMonotonic)) AS monotonic " +
-        'FROM "otel"."s" WHERE TimeUnix >= greatest($__fromTime, subtractHours($__toTime, 6)) AND TimeUnix <= $__toTime GROUP BY MetricName' +
-        ') ORDER BY name ASC, type ASC LIMIT 10000'
+    // Pairs of the index entries in the range's hours...
+    const pairs =
+      "SELECT DISTINCT ServiceName, MetricName FROM mergeTreeIndex('otel', 'g') " +
+      'WHERE `toStartOfHour(TimeUnix)` >= toStartOfHour($__fromTime) AND `toStartOfHour(TimeUnix)` <= $__toTime';
+    expect(sql).toContain(`SELECT MetricName AS name FROM (${pairs})`);
+    // ...plus the metrics inside granules where the pair changes.
+    expect(sql).toContain(
+      `SELECT DISTINCT MetricName AS name FROM "otel"."g" WHERE TimeUnix >= $__fromTime AND TimeUnix <= $__toTime AND (ServiceName, MetricName) NOT IN (${pairs})`
     );
+    // Units, descriptions and monotonicity from the last 10 minutes.
+    expect(sql).toContain(
+      `LEFT JOIN (SELECT MetricName AS name, any(MetricUnit) AS unit, any(MetricDescription) AS description, toUInt8(0) AS monotonic, toUInt8(1) AS has_info FROM "otel"."g" WHERE TimeUnix >= greatest($__fromTime, subtractMinutes($__toTime, 10)) AND TimeUnix <= $__toTime GROUP BY MetricName) AS __info`
+    );
+    expect(sql).toContain('max(toUInt8(IsMonotonic)) AS monotonic, toUInt8(1) AS has_info FROM "otel"."s"');
+    expect(sql).toMatch(/ORDER BY name ASC, type ASC LIMIT 10000$/);
     expect(getMetricCatalogSql('otel', {})).toBe('');
+  });
+
+  it('lists metrics from the metric name column without the index', () => {
+    const sql = getMetricCatalogSql('otel', { gauge: 'g' }, false);
+    expect(sql).not.toContain('mergeTreeIndex');
+    expect(sql).toContain(
+      '(SELECT MetricName AS name FROM "otel"."g" WHERE TimeUnix >= $__fromTime AND TimeUnix <= $__toTime GROUP BY MetricName) AS __names'
+    );
+  });
+
+  it('reads the info of one metric from its first point', () => {
+    expect(getMetricInfoSql('otel', 's', 'requests', MetricType.Sum)).toBe(
+      'SELECT MetricUnit AS unit, MetricDescription AS description, toUInt8(IsMonotonic) AS monotonic FROM "otel"."s" ' +
+        "WHERE MetricName = 'requests' AND TimeUnix >= $__fromTime AND TimeUnix <= $__toTime LIMIT 1"
+    );
   });
 
   it('lists label keys by source', () => {
     const sql = getMetricLabelKeysSql('otel', 'g', 'cpu');
-    expect(sql).toContain("arrayMap(k -> ('attribute', k), groupUniqArrayArray(1000)(mapKeys(Attributes)))");
-    expect(sql).toContain("arrayMap(k -> ('resource', k), groupUniqArrayArray(1000)(mapKeys(ResourceAttributes)))");
-    expect(sql).toContain("arrayMap(k -> ('scope', k), groupUniqArrayArray(1000)(mapKeys(ScopeAttributes)))");
-    expect(sql).toContain(
-      "WHERE MetricName = 'cpu' AND TimeUnix >= greatest($__fromTime, subtractHours($__toTime, 6))"
-    );
+    expect(sql).toContain("arrayMap(k -> ('attribute', k), groupUniqArrayArray(1000)(Attributes.keys))");
+    expect(sql).toContain("arrayMap(k -> ('resource', k), groupUniqArrayArray(1000)(ResourceAttributes.keys))");
+    expect(sql).toContain("arrayMap(k -> ('scope', k), groupUniqArrayArray(1000)(ScopeAttributes.keys))");
+    expect(sql).toContain("WHERE MetricName = 'cpu' AND TimeUnix >= $__fromTime AND TimeUnix <= $__toTime");
     expect(getMetricLabelKeysSql('otel', 'g', 'cpu', true)).toContain('JSONAllPaths(Attributes)');
   });
 
   it('lists label values', () => {
     expect(getMetricLabelValuesSql('otel', 'g', 'cpu', route)).toBe(
       'SELECT DISTINCT toString(Attributes[\'http.route\']) AS value FROM "otel"."g" ' +
-        "WHERE MetricName = 'cpu' AND TimeUnix >= greatest($__fromTime, subtractHours($__toTime, 6)) AND TimeUnix <= $__toTime AND value != '' ORDER BY value ASC LIMIT 1000"
+        "WHERE MetricName = 'cpu' AND TimeUnix >= $__fromTime AND TimeUnix <= $__toTime AND value != '' ORDER BY value ASC LIMIT 1000"
     );
   });
 

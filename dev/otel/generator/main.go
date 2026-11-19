@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/metric"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -30,10 +31,15 @@ import (
 
 type service struct {
 	name, version, lang string
-	tracer             trace.Tracer
-	logger             otellog.Logger
-	tp                 *sdktrace.TracerProvider
-	lp                 *sdklog.LoggerProvider
+	tracer              trace.Tracer
+	logger              otellog.Logger
+	tp                  *sdktrace.TracerProvider
+	lp                  *sdklog.LoggerProvider
+	mp                  interface {
+		ForceFlush(context.Context) error
+		Shutdown(context.Context) error
+	}
+	m *meters
 }
 
 var (
@@ -73,7 +79,8 @@ func newService(ctx context.Context, name, version, lang, env, pod string) *serv
 	tp := sdktrace.NewTracerProvider(sdktrace.WithResource(res), sdktrace.WithBatcher(te, sdktrace.WithMaxQueueSize(100000), sdktrace.WithMaxExportBatchSize(2000)))
 	lp := sdklog.NewLoggerProvider(sdklog.WithResource(res), sdklog.WithProcessor(sdklog.NewBatchProcessor(le, sdklog.WithMaxQueueSize(100000), sdklog.WithExportMaxBatchSize(2000))))
 	scope := "shop/" + name
-	return &service{name: name, version: version, lang: lang, tp: tp, lp: lp,
+	mp, ms := newMeterProvider(ctx, res, name)
+	return &service{name: name, version: version, lang: lang, tp: tp, lp: lp, mp: mp, m: ms,
 		tracer: tp.Tracer(scope, trace.WithInstrumentationVersion("1.4.0")),
 		logger: lp.Logger(scope, otellog.WithInstrumentationVersion("1.4.0"))}
 }
@@ -175,14 +182,27 @@ func dbSpan(ctx context.Context, s *service, c *clock, system, op, table, stmt s
 		attribute.String("server.address", system+".shop.svc.cluster.local"),
 		attribute.Int("server.port", map[string]int{"postgresql": 5432, "redis": 6379}[system]),
 	)
+	began := c.t
+	record := func(end time.Time, errType string) {
+		if live {
+			attrs := []attribute.KeyValue{attribute.String("db.system.name", system), attribute.String("db.operation.name", op),
+				attribute.String("db.collection.name", table)}
+			if errType != "" {
+				attrs = append(attrs, attribute.String("error.type", errType))
+			}
+			s.m.dbDuration.Record(ctx, end.Sub(began).Seconds(), metric.WithAttributes(attrs...))
+		}
+	}
 	end := c.adv(ms(lo, hi))
 	if rand.Float64() < failP {
 		end = c.adv(ms(500, 3000))
 		fail(sp, end, "context.DeadlineExceeded", "context deadline exceeded", "goroutine 1 [running]:\nmain.query()\n\t/app/db.go:88 +0x1b2")
 		sp.End(trace.WithTimestamp(end))
+		record(end, "context.DeadlineExceeded")
 		return false
 	}
 	sp.End(trace.WithTimestamp(end))
+	record(end, "")
 	return true
 }
 
@@ -190,7 +210,8 @@ func grpcCall(ctx context.Context, from, to *service, c *clock, svc, method stri
 	cctx, client := start(ctx, from, svc+"/"+method, trace.SpanKindClient, c.adv(ms(0.3, 1)),
 		attribute.String("rpc.system", "grpc"), attribute.String("rpc.service", svc), attribute.String("rpc.method", method),
 		attribute.String("server.address", to.name), attribute.Int("server.port", 8080))
-	sctx, server := start(cctx, to, svc+"/"+method, trace.SpanKindServer, c.adv(ms(0.2, 1.5)),
+	serverStart := c.adv(ms(0.2, 1.5))
+	sctx, server := start(cctx, to, svc+"/"+method, trace.SpanKindServer, serverStart,
 		attribute.String("rpc.system", "grpc"), attribute.String("rpc.service", svc), attribute.String("rpc.method", method))
 	code, msg := body(sctx)
 	rpcCode := 0
@@ -201,7 +222,13 @@ func grpcCall(ctx context.Context, from, to *service, c *clock, svc, method stri
 	}
 	server.SetAttributes(attribute.Int("rpc.grpc.status_code", rpcCode))
 	client.SetAttributes(attribute.Int("rpc.grpc.status_code", rpcCode))
-	server.End(trace.WithTimestamp(c.adv(ms(0.1, 1))))
+	serverEnd := c.adv(ms(0.1, 1))
+	server.End(trace.WithTimestamp(serverEnd))
+	if live {
+		to.m.rpcDuration.Record(ctx, serverEnd.Sub(serverStart).Seconds(), metric.WithAttributes(
+			attribute.String("rpc.system", "grpc"), attribute.String("rpc.service", svc), attribute.String("rpc.method", method),
+			attribute.Int("rpc.grpc.status_code", rpcCode)))
+	}
 	client.End(trace.WithTimestamp(c.adv(ms(0.2, 1.5))))
 	return code, msg
 }
@@ -329,8 +356,25 @@ func handle(ctx context.Context, rts []route, total int, at time.Time) {
 	if rt.method == "POST" {
 		req.status = 201
 	}
+	if live {
+		fe.m.httpActive.Add(ctx, 1, metric.WithAttributes(attribute.String("http.request.method", rt.method)))
+	}
 	rt.handler(sctx, c, req)
 	end := c.adv(ms(0.3, 3))
+	if live {
+		fe.m.httpActive.Add(ctx, -1, metric.WithAttributes(attribute.String("http.request.method", rt.method)))
+		fe.m.httpDuration.Record(ctx, end.Sub(at).Seconds(), metric.WithAttributes(
+			attribute.String("http.request.method", rt.method), attribute.String("http.route", rt.route),
+			attribute.Int("http.response.status_code", req.status), attribute.String("url.scheme", "https")))
+		if rt.route == "/api/checkout" {
+			chk := services["checkout"]
+			if req.status == 201 {
+				chk.m.orders.Add(ctx, 1, metric.WithAttributes(attribute.String("app.payment.currency", "EUR")))
+			} else if req.status == 402 {
+				services["payment"].m.declined.Add(ctx, 1, metric.WithAttributes(attribute.String("app.payment.card_type", pick("visa", "mastercard", "amex"))))
+			}
+		}
+	}
 	sp.SetAttributes(attribute.Int("http.response.status_code", req.status), attribute.String("app.user.id", req.user))
 	if req.status >= 500 {
 		sp.SetStatus(codes.Error, "")
@@ -411,10 +455,12 @@ func main() {
 		for _, s := range services {
 			_ = s.tp.ForceFlush(ctx)
 			_ = s.lp.ForceFlush(ctx)
+			_ = s.mp.ForceFlush(ctx)
 		}
 	}
 	flush()
 	log.Printf("backfill done")
+	live = true
 	if *rps > 0 {
 		t := time.NewTicker(time.Duration(float64(time.Second) / *rps))
 		defer t.Stop()
@@ -432,5 +478,6 @@ func main() {
 	for _, s := range services {
 		_ = s.tp.Shutdown(context.Background())
 		_ = s.lp.Shutdown(context.Background())
+		_ = s.mp.Shutdown(context.Background())
 	}
 }

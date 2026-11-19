@@ -61,6 +61,7 @@ import {
   getConfiguredMetricTables,
   getMetricCatalogSql,
   getMetricHealthSql,
+  getMetricInfoSql,
   getMetricLabelKeysSql,
   getMetricTableFeatures,
   getMetricLabelValuesSql,
@@ -136,10 +137,45 @@ const MAP_KEY_PROBE_ROW_SAMPLE = 100000;
 // with a known time column, so they prune instead of scanning the full column.
 const ADHOC_PROBE_TIME_WINDOW = 'INTERVAL 6 HOUR';
 
-/** Rows a field value count reads at most before it returns the counts so far. */
-const FACET_MAX_ROWS = 50_000_000;
-/** Seconds a field value count runs at most before it returns the counts so far. */
-const FACET_MAX_SECONDS = 10;
+/** Rows an editor lookup (value counts, metric list, label keys) reads at most. */
+const LOOKUP_MAX_ROWS = 50_000_000;
+/** Seconds an editor lookup runs at most. */
+const LOOKUP_MAX_SECONDS = 10;
+/**
+ * Threads an editor lookup uses. Lookups are small and several run at once; every thread holds its
+ * own read buffers and aggregation state, so the default (one per core) multiplies their memory.
+ */
+const LOOKUP_MAX_THREADS = 2;
+/** Memory an editor lookup may use; past half of it GROUP BY and DISTINCT spill to disk. */
+const LOOKUP_MAX_MEMORY = 1_000_000_000;
+
+/** What the connecting user's settings profile allows editor lookups to do. */
+interface ReadLimits {
+  /** The settings the user may change with a query (readonly = 1 profiles allow only some, if any). */
+  changeable: ReadonlySet<string>;
+  /** The profile's max_rows_to_read, 0 when unlimited. */
+  maxRows: number;
+  /** The profile's max_execution_time in seconds, 0 when unlimited. */
+  maxSeconds: number;
+  /** The profile's max_memory_usage in bytes, 0 when unlimited. */
+  maxMemory: number;
+}
+
+/** The settings editor lookups pass, when the user may change them. */
+const LOOKUP_SETTINGS = [
+  'max_rows_to_read',
+  'read_overflow_mode',
+  'max_execution_time',
+  'timeout_overflow_mode',
+  'max_threads',
+  'max_memory_usage',
+  'max_bytes_before_external_group_by',
+  'max_bytes_before_external_sort',
+];
+
+/** True for an error about passing settings the user may not change. */
+const isSettingsError = (err: unknown): boolean =>
+  err instanceof Error && /readonly|Cannot modify|Cannot override|setting .* should|constraint/i.test(err.message);
 
 /** A value of a field and the number of rows holding it. */
 export interface FieldValueCount {
@@ -1334,17 +1370,101 @@ export class Datasource
    * nothing empty gets cached.
    */
   private async fetchMetricsFrame(rawSql: string): Promise<DataFrame> {
-    const response = await firstValueFrom(
-      this.query({
-        targets: [{ rawSql, format: 1, refId: 'metrics-metadata' }],
-        range: (getTemplateSrv() as any).timeRange,
-      } as DataQueryRequest<CHQuery>)
-    );
-    const error = response.errors?.[0];
-    if (error) {
-      throw new Error(error.message || 'Query failed');
+    return this.runLookup(rawSql, 'metrics-metadata');
+  }
+
+  private readLimits?: Promise<ReadLimits>;
+
+  /**
+   * The read limits of the connecting user, looked up once. Lookups never raise them: an
+   * administrator's max_rows_to_read stays the ceiling.
+   */
+  private getReadLimits(): Promise<ReadLimits> {
+    if (!this.readLimits) {
+      // system.settings tells, per setting, whether this user may change it: a readonly = 1 profile
+      // that only allows max_execution_time (the plugin's documented setup) still gets that one.
+      const rawSql = `SELECT name, value, readonly FROM system.settings WHERE name IN (${LOOKUP_SETTINGS.map((n) => `'${n}'`).join(', ')})`;
+      this.readLimits = this.runLookup(rawSql, 'read-limits', undefined, false).then(
+        (frame) => {
+          const names = frame.fields.find((f) => f.name === 'name')?.values ?? [];
+          const values = frame.fields.find((f) => f.name === 'value')?.values ?? [];
+          const locked = frame.fields.find((f) => f.name === 'readonly')?.values ?? [];
+          const value = (name: string) => {
+            const n = Number(values[names.indexOf(name)]);
+            return Number.isFinite(n) ? n : 0;
+          };
+          return {
+            changeable: new Set(names.filter((_, i) => Number(locked[i]) === 0).map(String)),
+            maxRows: value('max_rows_to_read'),
+            maxSeconds: value('max_execution_time'),
+            maxMemory: value('max_memory_usage'),
+          };
+        },
+        () => ({ changeable: new Set<string>(), maxRows: 0, maxSeconds: 0, maxMemory: 0 })
+      );
     }
-    return response.data[0] || { fields: [], length: 0 };
+    return this.readLimits;
+  }
+
+  /**
+   * The SETTINGS clause that keeps an editor lookup within bounds: at most LOOKUP_MAX_ROWS rows and
+   * LOOKUP_MAX_SECONDS (or the profile's lower limits), returning what it read so far instead of
+   * failing, on LOOKUP_MAX_THREADS threads and within LOOKUP_MAX_MEMORY, spilling GROUP BY and ORDER
+   * BY to disk past half of it, so lookups cannot push the server to its total memory limit.
+   * 'break' also applies to the profile's max_bytes_to_read, so a user whose profile limits reads
+   * gets partial lists rather than "Limit for rows or bytes to read exceeded".
+   */
+  private async getLookupSettings(): Promise<string> {
+    const limits = await this.getReadLimits();
+    const atMost = (profile: number, cap: number) => (profile > 0 ? Math.min(profile, cap) : cap);
+    const memory = atMost(limits.maxMemory, LOOKUP_MAX_MEMORY);
+    const spill = Math.floor(memory / 2);
+    const wanted: Array<[string, string | number]> = [
+      ['max_rows_to_read', atMost(limits.maxRows, LOOKUP_MAX_ROWS)],
+      ['read_overflow_mode', "'break'"],
+      ['max_execution_time', atMost(limits.maxSeconds, LOOKUP_MAX_SECONDS)],
+      ['timeout_overflow_mode', "'break'"],
+      ['max_threads', LOOKUP_MAX_THREADS],
+      ['max_memory_usage', memory],
+      ['max_bytes_before_external_group_by', spill],
+      ['max_bytes_before_external_sort', spill],
+    ];
+    const settings = wanted.filter(([name]) => limits.changeable.has(name)).map(([name, v]) => `${name} = ${v}`);
+    return settings.length ? ` SETTINGS ${settings.join(', ')}` : '';
+  }
+
+  /**
+   * Runs a query of the editor itself (not a panel query) as a table, bounded by
+   * getLookupSettings. A failed query rejects instead of resolving with no rows, so the editor
+   * shows the error rather than an empty list. When the profile refuses the settings, the query
+   * runs without them.
+   */
+  private async runLookup(rawSql: string, refId: string, range?: TimeRange, bounded = true): Promise<DataFrame> {
+    const run = async (sql: string) => {
+      const response = await firstValueFrom(
+        this.query({
+          targets: [{ rawSql: sql, format: 1, refId }],
+          range: range || (getTemplateSrv() as any).timeRange,
+        } as DataQueryRequest<CHQuery>)
+      );
+      const error = response.errors?.[0];
+      if (error) {
+        throw new Error(error.message || 'Query failed');
+      }
+      return response.data[0] || { fields: [], length: 0 };
+    };
+    const settings = bounded && !/^\s*SHOW\b/i.test(rawSql) ? await this.getLookupSettings() : '';
+    if (!settings) {
+      return run(rawSql);
+    }
+    try {
+      return await run(rawSql + settings);
+    } catch (err) {
+      if (isSettingsError(err)) {
+        return run(rawSql);
+      }
+      throw err;
+    }
   }
 
   /** The values of a metadata query's column, by name. */
@@ -1380,18 +1500,34 @@ export class Datasource
 
   /** The metrics with data in the dashboard time range, across every metric table. */
   async fetchMetricCatalog(): Promise<MetricCatalogEntry[]> {
-    const rawSql = getMetricCatalogSql(this.getDefaultMetricsDatabase(), await this.resolveMetricTables());
-    if (!rawSql) {
+    const database = this.getDefaultMetricsDatabase();
+    const tables = await this.resolveMetricTables();
+    if (!getMetricCatalogSql(database, tables)) {
       return [];
     }
-    const column = await this.fetchMetricsColumns(rawSql);
-    const [types, units, descriptions, monotonic] = ['type', 'unit', 'description', 'monotonic'].map(column);
+    // The primary index lists the metrics without reading their points. ClickHouse before 24.4 has
+    // no mergeTreeIndex(), and tables sorted another way have no such index columns: those list the
+    // metrics from a scan of the metric name column instead.
+    let column: (name: string) => unknown[];
+    try {
+      column = await this.fetchMetricsColumns(getMetricCatalogSql(database, tables, true));
+    } catch {
+      column = await this.fetchMetricsColumns(getMetricCatalogSql(database, tables, false));
+    }
+    const [types, units, descriptions, monotonic, hasInfo] = [
+      'type',
+      'unit',
+      'description',
+      'monotonic',
+      'has_info',
+    ].map(column);
     return column('name').map((name, i) => ({
       name: String(name),
       type: types[i] as MetricType,
       unit: String(units[i] ?? ''),
       description: String(descriptions[i] ?? ''),
       isMonotonic: Boolean(Number(monotonic[i])),
+      hasInfo: Boolean(Number(hasInfo[i] ?? 1)),
     }));
   }
 
@@ -1426,6 +1562,21 @@ export class Datasource
       getMetricLabelValuesSql(database, table, metricName, label, jsonAttributes)
     );
     return column('value').map(String);
+  }
+
+  /** The unit, description and monotonicity of one metric, for a metric the list has none for. */
+  async fetchMetricInfo(
+    database: string,
+    table: string,
+    metricName: string,
+    type: MetricType
+  ): Promise<{ unit: string; description: string; isMonotonic: boolean }> {
+    const column = await this.fetchMetricsColumns(getMetricInfoSql(database, table, metricName, type));
+    return {
+      unit: String(column('unit')[0] ?? ''),
+      description: String(column('description')[0] ?? ''),
+      isMonotonic: Boolean(Number(column('monotonic')[0] ?? 0)),
+    };
   }
 
   async fetchSummaryQuantiles(database: string, table: string, metricName: string): Promise<number[]> {
@@ -1595,9 +1746,9 @@ export class Datasource
    * feeds the field filters of the logs and traces editors, so the conditions normally hold the time
    * range macros and the other filters of the query (a facet).
    *
-   * Counting is bounded so a facet never costs more than the query it refines: past
-   * FACET_MAX_ROWS rows or FACET_MAX_SECONDS seconds ClickHouse stops reading and the counts are a
-   * sample. A user whose profile forbids changing settings (readonly=1) gets the unbounded query.
+   * Counting is bounded (see getLookupSettings): past the row or time limit ClickHouse stops
+   * reading and the counts are a sample. A user whose profile forbids changing settings (readonly=1)
+   * gets the unbounded query.
    */
   async fetchFieldValueCounts(
     database: string,
@@ -1616,31 +1767,10 @@ export class Datasource
     ]
       .filter(Boolean)
       .join(' ');
-    const bounded = `${base} SETTINGS max_rows_to_read = ${FACET_MAX_ROWS}, read_overflow_mode = 'break', max_execution_time = ${FACET_MAX_SECONDS}, timeout_overflow_mode = 'break'`;
-    const run = async (rawSql: string) => {
-      const response = await firstValueFrom(
-        this.query({
-          targets: [{ rawSql, format: 1, refId: 'field-values' }],
-          range: range || (getTemplateSrv() as any).timeRange,
-        } as DataQueryRequest<CHQuery>)
-      );
-      const error = response.errors?.[0];
-      if (error) {
-        throw new Error(error.message || 'Query failed');
-      }
-      const frame: DataFrame = response.data[0] || { fields: [], length: 0 };
-      const values = frame.fields.find((f) => f.name === 'value')?.values ?? [];
-      const counts = frame.fields.find((f) => f.name === 'count')?.values ?? [];
-      return values.map((value, i) => ({ value: String(value ?? ''), count: Number(counts[i] ?? 0) }));
-    };
-    try {
-      return await run(bounded);
-    } catch (err) {
-      if (err instanceof Error && /readonly|Cannot modify|setting/i.test(err.message)) {
-        return run(base);
-      }
-      throw err;
-    }
+    const frame = await this.runLookup(base, 'field-values', range);
+    const values = frame.fields.find((f) => f.name === 'value')?.values ?? [];
+    const counts = frame.fields.find((f) => f.name === 'count')?.values ?? [];
+    return values.map((value, k) => ({ value: String(value ?? ''), count: Number(counts[k] ?? 0) }));
   }
 
   async fetchEntities() {

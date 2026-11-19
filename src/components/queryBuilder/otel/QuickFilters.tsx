@@ -96,6 +96,8 @@ interface FacetFilterProps {
   name: string;
   onFiltersChange: (filters: Filter[]) => void;
   formatValue?: (value: string) => string;
+  /** Narrows the values counted to rows matching this SQL condition. */
+  condition?: string;
 }
 
 /**
@@ -111,7 +113,10 @@ export const FacetFilter = (props: FacetFilterProps) => {
   const current = filters.find((f) => f.id === id);
   const selected = current ? getFilterValues(current) : [];
   const exclude = current?.operator === FilterOperator.NotIn;
-  const counts = useFieldValueCounts(datasource, options, field, range, open, { excludeFilterIds: [id] });
+  const counts = useFieldValueCounts(datasource, options, field, range, open, {
+    excludeFilterIds: [id],
+    condition: props.condition,
+  });
 
   const apply = (values: string[], excluded: boolean) => {
     const next = values.length

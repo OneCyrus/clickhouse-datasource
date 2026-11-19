@@ -103,11 +103,25 @@ export const metricTimeColumn = 'TimeUnix';
 const timeRangeCondition = `${metricTimeColumn} >= $__fromTime AND ${metricTimeColumn} <= $__toTime`;
 
 /**
- * The editor's lookups (metric list, label keys and values) read at most the last 6 hours of the
- * dashboard range, like the plugin's other key discovery probes. On a 30 day range they would
- * otherwise read every row of every metric table just to fill a drop-down.
+ * The editor's lookups (metric list, label keys and values) cover the whole dashboard range, so
+ * every metric and label of the range is offered. They read only cheap columns (the metric name, the
+ * keys of the attribute maps) and run with the lookup settings of the data source, which cap rows,
+ * time, threads and memory.
  */
-const discoveryTimeCondition = `${metricTimeColumn} >= greatest($__fromTime, subtractHours($__toTime, 6)) AND ${metricTimeColumn} <= $__toTime`;
+const discoveryTimeCondition = timeRangeCondition;
+
+/**
+ * Dashboard variables read at most the last 6 hours of the range: they run as plain queries on
+ * every dashboard load, without the editor's lookup settings.
+ */
+const variableTimeCondition = `${metricTimeColumn} >= greatest($__fromTime, subtractHours($__toTime, 6)) AND ${metricTimeColumn} <= $__toTime`;
+
+/**
+ * Units and descriptions are the same on every point of a metric, so the metric list reads them
+ * from the last 10 minutes of the range only: the text columns are most of what the list would
+ * otherwise read. Metrics without a point there get theirs when picked (getMetricInfoSql).
+ */
+const descriptionTimeCondition = `${metricTimeColumn} >= greatest($__fromTime, subtractMinutes($__toTime, 10)) AND ${metricTimeColumn} <= $__toTime`;
 
 /**
  * Counters need the point before each bucket to compute its increase, so rows are read from a
@@ -806,30 +820,66 @@ export interface MetricCatalogEntry {
   unit: string;
   description: string;
   isMonotonic: boolean;
+  /**
+   * False when the list has no unit, description and monotonicity for the metric (it has no point
+   * in the last minutes of the range): they are looked up when the metric is picked.
+   */
+  hasInfo?: boolean;
 }
 
 /**
- * Lists the metrics with data in the last 6 hours of the dashboard range, across every metric table. MetricName
- * is the second sorting key of the exporter tables and a LowCardinality column, so this reads
- * little data.
+ * Lists the metrics with data in the dashboard range, across every metric table, without reading
+ * their points:
+ *
+ * - The exporter tables are sorted by `(ServiceName, MetricName, toStartOfHour(TimeUnix), ...)`, and
+ *   the primary index holds those values at the start of every granule (8192 rows).
+ *   `mergeTreeIndex()` reads the index, one entry per granule, for the range's hours.
+ * - A metric can only be missing from the index when all its rows sit inside one granule that
+ *   starts with another metric. Those granules are read with `(ServiceName, MetricName) NOT IN`
+ *   the pairs of the index: ClickHouse skips every granule whose pair is the same throughout and
+ *   known, so only granules where the pair changes are read, whatever the number of rows.
+ * - Units, descriptions and monotonicity come from the last 10 minutes of the range.
+ *
+ * With `useIndex` false (ClickHouse before 24.4, or tables sorted another way) the names come from
+ * a scan of the `LowCardinality` MetricName column over the range.
  */
-export const getMetricCatalogSql = (database: string, tables: MetricTables): string => {
+export const getMetricCatalogSql = (database: string, tables: MetricTables, useIndex = true): string => {
   const selects = metricTypes
     .filter((type) => tables[type])
     .map((type) => {
+      const table = getTableIdentifier(database, tables[type]!);
+      const indexPairs =
+        `SELECT DISTINCT ServiceName, MetricName FROM mergeTreeIndex(${quoteString(database)}, ${quoteString(tables[type]!)}) ` +
+        `WHERE \`toStartOfHour(TimeUnix)\` >= toStartOfHour($__fromTime) AND \`toStartOfHour(TimeUnix)\` <= $__toTime`;
+      const names = useIndex
+        ? `SELECT DISTINCT name FROM (SELECT MetricName AS name FROM (${indexPairs}) UNION ALL ` +
+          `SELECT DISTINCT MetricName AS name FROM ${table} WHERE ${discoveryTimeCondition} ` +
+          `AND (ServiceName, MetricName) NOT IN (${indexPairs}))`
+        : `SELECT MetricName AS name FROM ${table} WHERE ${discoveryTimeCondition} GROUP BY MetricName`;
       const monotonic = type === MetricType.Sum ? 'max(toUInt8(IsMonotonic))' : 'toUInt8(0)';
       return (
-        `SELECT MetricName AS name, ${quoteString(type)} AS type, any(MetricUnit) AS unit, ` +
-        `any(MetricDescription) AS description, ${monotonic} AS monotonic ` +
-        `FROM ${getTableIdentifier(database, tables[type]!)} WHERE ${discoveryTimeCondition} GROUP BY MetricName`
+        `SELECT __names.name AS name, ${quoteString(type)} AS type, __info.unit AS unit, ` +
+        `__info.description AS description, __info.monotonic AS monotonic, __info.has_info AS has_info FROM ` +
+        `(${names}) AS __names LEFT JOIN (SELECT MetricName AS name, any(MetricUnit) AS unit, ` +
+        `any(MetricDescription) AS description, ${monotonic} AS monotonic, toUInt8(1) AS has_info ` +
+        `FROM ${table} WHERE ${descriptionTimeCondition} GROUP BY MetricName) AS __info ON __names.name = __info.name`
       );
     });
 
   if (!selects.length) {
     return '';
   }
-  return `SELECT name, type, unit, description, monotonic FROM (${selects.join(' UNION ALL ')}) ORDER BY name ASC, type ASC LIMIT 10000`;
+  return `SELECT name, type, unit, description, monotonic, has_info FROM (${selects.join(' UNION ALL ')}) ORDER BY name ASC, type ASC LIMIT 10000`;
 };
+
+/**
+ * The unit, description and monotonicity of one metric in the range, for a metric the list has
+ * none for. The first matching row is enough: they are the same on every point.
+ */
+export const getMetricInfoSql = (database: string, table: string, metricName: string, type: MetricType): string =>
+  `SELECT MetricUnit AS unit, MetricDescription AS description, ` +
+  `${type === MetricType.Sum ? 'toUInt8(IsMonotonic)' : 'toUInt8(0)'} AS monotonic FROM ${getTableIdentifier(database, table)} ` +
+  `WHERE MetricName = ${quoteString(metricName)} AND ${discoveryTimeCondition} LIMIT 1`;
 
 /**
  * Lists the attribute keys of a metric, labelled with their source, so the editor offers exactly
@@ -842,7 +892,8 @@ export const getMetricLabelKeysSql = (
   metricName: string,
   jsonAttributes = false
 ): string => {
-  const keys = (column: string) => (jsonAttributes ? `JSONAllPaths(${column})` : `mapKeys(${column})`);
+  // The keys sub-column of a map, read from the table itself: the values are never needed.
+  const keys = (column: string) => (jsonAttributes ? `JSONAllPaths(${column})` : `${column}.keys`);
   const sources = (Object.keys(metricAttributeColumns) as Array<keyof typeof metricAttributeColumns>).map(
     (source) =>
       `arrayMap(k -> (${quoteString(source)}, k), groupUniqArrayArray(1000)(${keys(metricAttributeColumns[source])}))`
@@ -930,7 +981,7 @@ export const getMetricNamesVariableSql = (database: string, tables: readonly str
   }
   const selects = tables.map(
     (table) =>
-      `SELECT MetricName AS name FROM ${getTableIdentifier(database, table)} WHERE ${discoveryTimeCondition} GROUP BY name`
+      `SELECT MetricName AS name FROM ${getTableIdentifier(database, table)} WHERE ${variableTimeCondition} GROUP BY name`
   );
   return `SELECT DISTINCT name FROM (${selects.join(' UNION ALL ')}) ORDER BY name ASC`;
 };
@@ -949,7 +1000,7 @@ export const getMetricLabelValuesVariableSql = (
   if (!tables.length || !label.key) {
     return '';
   }
-  const conditions = [discoveryTimeCondition];
+  const conditions = [variableTimeCondition];
   if (options.metricName) {
     conditions.unshift(`MetricName = ${quoteString(options.metricName)}`);
   }

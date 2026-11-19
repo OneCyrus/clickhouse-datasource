@@ -140,6 +140,22 @@ the trace stats do not help. What remains is the scan of the time range itself: 
 volume and level counts take 0.15-0.3 s each and the trace list with span filters about 1 s at 24
 hours; a projection on the tables would be the next step, which the plugin cannot add itself.
 
+## Metrics editor
+
+The metrics editor (see `otel-metrics-single-table.md`) keeps its query model and math and takes the
+same layout and controls as the logs and traces editors: the metric search on the first row with the
+type, unit and an **Options** button (minimum interval); the function and quantiles as buttons
+(p50, p90, p95, p99, and any other quantile typed for histograms), then the aggregation and group by;
+then **Service** and **Environment** facets, filter chips and **Add filter** with the metric's labels
+under their OpenTelemetry names. Value counts are read for the picked metric and time range only
+(`MetricName = ... AND TimeUnix` range, which the sorting key prunes), on demand.
+
+Measured on 20.5M data points over 24 hours (40 instances per service): the editor's own lookups
+stay small (metric list 99 ms, label keys 226 ms per metric, facets 16-96 ms when opened), while a
+histogram quantile over the whole range reads 1.7 GB in about 2.3 s, mostly computing series
+identities from the attribute maps; a materialized series id would be the next step and needs a
+schema change.
+
 ## Not done
 
 - Using the exporter's `__otel_materialized_*` columns for filters on those attributes (faster
