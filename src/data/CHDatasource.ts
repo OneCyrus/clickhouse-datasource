@@ -1481,18 +1481,34 @@ export class Datasource
 
   /** The metrics with data in the dashboard time range, across every metric table. */
   async fetchMetricCatalog(): Promise<MetricCatalogEntry[]> {
-    const rawSql = getMetricCatalogSql(this.getDefaultMetricsDatabase(), await this.resolveMetricTables());
-    if (!rawSql) {
+    const database = this.getDefaultMetricsDatabase();
+    const tables = await this.resolveMetricTables();
+    if (!getMetricCatalogSql(database, tables)) {
       return [];
     }
-    const column = await this.fetchMetricsColumns(rawSql);
-    const [types, units, descriptions, monotonic] = ['type', 'unit', 'description', 'monotonic'].map(column);
+    // The primary index lists the metrics without reading their points. ClickHouse before 24.4 has
+    // no mergeTreeIndex(), and tables sorted another way have no such index columns: those list the
+    // metrics from a scan of the metric name column instead.
+    let column: (name: string) => unknown[];
+    try {
+      column = await this.fetchMetricsColumns(getMetricCatalogSql(database, tables, true));
+    } catch {
+      column = await this.fetchMetricsColumns(getMetricCatalogSql(database, tables, false));
+    }
+    const [types, units, descriptions, monotonic, hasInfo] = [
+      'type',
+      'unit',
+      'description',
+      'monotonic',
+      'has_info',
+    ].map(column);
     return column('name').map((name, i) => ({
       name: String(name),
       type: types[i] as MetricType,
       unit: String(units[i] ?? ''),
       description: String(descriptions[i] ?? ''),
       isMonotonic: Boolean(Number(monotonic[i])),
+      hasInfo: Boolean(Number(hasInfo[i] ?? 1)),
     }));
   }
 
@@ -1529,14 +1545,19 @@ export class Datasource
     return column('value').map(String);
   }
 
-  /** The unit and description of one metric, for a metric the metric list has none for. */
+  /** The unit, description and monotonicity of one metric, for a metric the list has none for. */
   async fetchMetricInfo(
     database: string,
     table: string,
-    metricName: string
-  ): Promise<{ unit: string; description: string }> {
-    const column = await this.fetchMetricsColumns(getMetricInfoSql(database, table, metricName));
-    return { unit: String(column('unit')[0] ?? ''), description: String(column('description')[0] ?? '') };
+    metricName: string,
+    type: MetricType
+  ): Promise<{ unit: string; description: string; isMonotonic: boolean }> {
+    const column = await this.fetchMetricsColumns(getMetricInfoSql(database, table, metricName, type));
+    return {
+      unit: String(column('unit')[0] ?? ''),
+      description: String(column('description')[0] ?? ''),
+      isMonotonic: Boolean(Number(column('monotonic')[0] ?? 0)),
+    };
   }
 
   async fetchSummaryQuantiles(database: string, table: string, metricName: string): Promise<number[]> {

@@ -141,13 +141,21 @@ toStartOfHour(TimeUnix), ...`) and daily partitions: a metric reads only its own
   2.6 s at 1 minute, 1.6 s at 15 minutes). A materialized series id column would cut it 2-5x, but
   needs a schema change, which is out of scope: the plugin works on the exporter's tables as they
   are.
-- Editor lookups cover the whole range, so every metric and label of the range is offered, but read
-  only cheap columns: the metric list groups the `LowCardinality` metric name (names, types and
-  monotonicity) and joins units and descriptions from the last 10 minutes only (a picked metric
-  without one gets them from a lookup on that metric); label keys read the maps' `keys`
-  sub-columns. On 20.3M points over 24 hours the list went from 408 MB read / 20 MB of memory (6 hour
-  window) to 123 MB / 18 MB for the full range, label keys from 950 MB to 123 MB. The export interval
-  and shared series check still reads the last 15 minutes.
+- The metric list reads the primary index instead of the points. The tables are sorted by
+  `(ServiceName, MetricName, toStartOfHour(TimeUnix), ...)`, and `mergeTreeIndex()` (ClickHouse
+  24.4+) returns those values at the start of every granule of 8192 rows. A metric can only be
+  missing from the index when all its rows sit inside one granule that starts with another metric,
+  so the list also reads `(ServiceName, MetricName) NOT IN` the index's pairs: ClickHouse skips every
+  granule whose pair is the same throughout and known, and reads only granules where the pair
+  changes. The cost follows the number of services and metrics per part, not the number of rows.
+  Units, descriptions and monotonicity come from the last 10 minutes of the range, and a picked
+  metric without them gets them from its first point in the range (`LIMIT 1`). Without
+  `mergeTreeIndex()` or with tables sorted another way, the list scans the `LowCardinality` metric
+  name column over the range instead. On 20.3M points over 24 hours: 408 MB read for 6 hours before,
+  0.5M rows / 1.3 MB for the full range now (the scan fallback: 20.4M rows / 102 MB), the same list;
+  a metric with three points hidden inside another metric's granule is found too.
+- Label keys read the maps' `keys` sub-columns over the whole range (950 MB to 123 MB over 24
+  hours). The export interval and shared series check still reads the last 15 minutes.
 - Lookups run with the data source's lookup settings: at most 50M rows and 10 seconds (or the user
   profile's lower limits) with `read_overflow_mode = 'break'`, 2 threads and 1 GB of memory with
   GROUP BY spilling past half of it. A user whose profile limits rows gets a partial list instead of

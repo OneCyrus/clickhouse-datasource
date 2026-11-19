@@ -94,9 +94,18 @@ const parseMetricOptionValue = (value: string): { type: MetricType; name: string
   return { type: value.slice(0, separator) as MetricType, name: value.slice(separator + 1) };
 };
 
-const describeMetric = (entry: Pick<MetricCatalogEntry, 'type' | 'unit' | 'description' | 'isMonotonic'>): string => {
+const describeMetric = (
+  entry: Pick<MetricCatalogEntry, 'type' | 'unit' | 'description' | 'isMonotonic' | 'hasInfo'>
+): string => {
+  // Without info the list cannot tell a counter from an up-down counter yet.
   const kind =
-    entry.type === MetricType.Sum ? (entry.isMonotonic ? 'Counter' : 'Up-down counter') : metricTypeLabels[entry.type];
+    entry.type === MetricType.Sum
+      ? entry.hasInfo === false
+        ? metricTypeLabels[entry.type]
+        : entry.isMonotonic
+          ? 'Counter'
+          : 'Up-down counter'
+      : metricTypeLabels[entry.type];
   return [kind, entry.unit && `unit ${entry.unit}`, entry.description].filter(Boolean).join(' · ');
 };
 
@@ -198,7 +207,12 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
   const [reloadKey, setReloadKey] = useState(0);
   const [optionsOpen, setOptionsOpen] = useState(false);
   // Unit and description of a picked metric the list had none for.
-  const [pickedInfo, setPickedInfo] = useState<{ name: string; unit: string; description: string }>();
+  const [pickedInfo, setPickedInfo] = useState<{
+    name: string;
+    unit: string;
+    description: string;
+    isMonotonic: boolean;
+  }>();
 
   const tables = useMetricTables(datasource);
   const catalog = useMetricCatalog(datasource, rangeKey, reloadKey);
@@ -278,7 +292,7 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     const features: MetricTableFeatures = await datasource.getMetricTableFeatures(database, table).catch(() => ({}));
     const jsonAttributes = Boolean(features.jsonAttributes);
     // The metric list reads units and descriptions from the last minutes of the range only.
-    const needsInfo = !entry.unit && !entry.description;
+    const needsInfo = entry.hasInfo === false;
     const [labels, reportedQuantiles, metricHealth, info] = await Promise.all([
       metric?.name
         ? datasource.fetchMetricLabelKeys(database, table, name, jsonAttributes).catch(() => [])
@@ -287,7 +301,9 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
         ? datasource.fetchSummaryQuantiles(database, table, name).catch(() => [])
         : Promise.resolve([]),
       datasource.fetchMetricHealth(database, table, name, type, features).catch(() => undefined),
-      needsInfo ? datasource.fetchMetricInfo(database, table, name).catch(() => undefined) : Promise.resolve(undefined),
+      needsInfo
+        ? datasource.fetchMetricInfo(database, table, name, type).catch(() => undefined)
+        : Promise.resolve(undefined),
     ]);
     if (pick !== lastPick.current) {
       return;
@@ -334,8 +350,8 @@ export const MetricsQueryEditor = (props: MetricsQueryEditorProps) => {
     ? catalog.value.find((e) => e.name === metric.name && e.type === metric.type)
     : undefined;
   const currentEntry =
-    listedEntry && !listedEntry.description && pickedInfo?.name === listedEntry.name
-      ? { ...listedEntry, description: pickedInfo.description }
+    listedEntry && listedEntry.hasInfo === false && pickedInfo?.name === listedEntry.name
+      ? { ...listedEntry, ...pickedInfo, hasInfo: true }
       : listedEntry;
 
   const labelOptions = useMemo(() => {
