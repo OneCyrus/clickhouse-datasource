@@ -136,10 +136,24 @@ const MAP_KEY_PROBE_ROW_SAMPLE = 100000;
 // with a known time column, so they prune instead of scanning the full column.
 const ADHOC_PROBE_TIME_WINDOW = 'INTERVAL 6 HOUR';
 
-/** Rows a field value count reads at most before it returns the counts so far. */
-const FACET_MAX_ROWS = 50_000_000;
-/** Seconds a field value count runs at most before it returns the counts so far. */
-const FACET_MAX_SECONDS = 10;
+/** Rows an editor lookup (value counts, metric list, label keys) reads at most. */
+const LOOKUP_MAX_ROWS = 50_000_000;
+/** Seconds an editor lookup runs at most. */
+const LOOKUP_MAX_SECONDS = 10;
+
+/** What the connecting user's settings profile allows editor lookups to do. */
+interface ReadLimits {
+  /** False for readonly=1 users, who cannot pass settings with a query. */
+  canSetSettings: boolean;
+  /** The profile's max_rows_to_read, 0 when unlimited. */
+  maxRows: number;
+  /** The profile's max_execution_time in seconds, 0 when unlimited. */
+  maxSeconds: number;
+}
+
+/** True for an error about passing settings the user may not change. */
+const isSettingsError = (err: unknown): boolean =>
+  err instanceof Error && /readonly|Cannot modify|Cannot override|setting .* should|constraint/i.test(err.message);
 
 /** A value of a field and the number of rows holding it. */
 export interface FieldValueCount {
@@ -1334,17 +1348,86 @@ export class Datasource
    * nothing empty gets cached.
    */
   private async fetchMetricsFrame(rawSql: string): Promise<DataFrame> {
-    const response = await firstValueFrom(
-      this.query({
-        targets: [{ rawSql, format: 1, refId: 'metrics-metadata' }],
-        range: (getTemplateSrv() as any).timeRange,
-      } as DataQueryRequest<CHQuery>)
-    );
-    const error = response.errors?.[0];
-    if (error) {
-      throw new Error(error.message || 'Query failed');
+    return this.runLookup(rawSql, 'metrics-metadata');
+  }
+
+  private readLimits?: Promise<ReadLimits>;
+
+  /**
+   * The read limits of the connecting user, looked up once. Lookups never raise them: an
+   * administrator's max_rows_to_read stays the ceiling.
+   */
+  private getReadLimits(): Promise<ReadLimits> {
+    if (!this.readLimits) {
+      const rawSql =
+        "SELECT getSetting('readonly') AS readonly, getSetting('max_rows_to_read') AS max_rows, " +
+        "getSetting('max_execution_time') AS max_seconds";
+      this.readLimits = this.runLookup(rawSql, 'read-limits', undefined, false).then(
+        (frame) => {
+          const value = (name: string) => Number(frame.fields.find((f) => f.name === name)?.values[0] ?? 0);
+          return {
+            canSetSettings: value('readonly') !== 1,
+            maxRows: value('max_rows'),
+            maxSeconds: value('max_seconds'),
+          };
+        },
+        () => ({ canSetSettings: false, maxRows: 0, maxSeconds: 0 })
+      );
     }
-    return response.data[0] || { fields: [], length: 0 };
+    return this.readLimits;
+  }
+
+  /**
+   * The SETTINGS clause that keeps an editor lookup within bounds: at most LOOKUP_MAX_ROWS rows (or
+   * the profile's lower limit) and LOOKUP_MAX_SECONDS, returning what it read so far instead of
+   * failing. 'break' also applies to the profile's max_bytes_to_read, so a user whose profile
+   * limits reads gets partial lists rather than "Limit for rows or bytes to read exceeded".
+   */
+  private async getLookupSettings(): Promise<string> {
+    const limits = await this.getReadLimits();
+    if (!limits.canSetSettings) {
+      return '';
+    }
+    const rows = limits.maxRows > 0 ? Math.min(limits.maxRows, LOOKUP_MAX_ROWS) : LOOKUP_MAX_ROWS;
+    const seconds = limits.maxSeconds > 0 ? Math.min(limits.maxSeconds, LOOKUP_MAX_SECONDS) : LOOKUP_MAX_SECONDS;
+    return (
+      ` SETTINGS max_rows_to_read = ${rows}, read_overflow_mode = 'break', ` +
+      `max_execution_time = ${seconds}, timeout_overflow_mode = 'break'`
+    );
+  }
+
+  /**
+   * Runs a query of the editor itself (not a panel query) as a table, bounded by
+   * getLookupSettings. A failed query rejects instead of resolving with no rows, so the editor
+   * shows the error rather than an empty list. When the profile refuses the settings, the query
+   * runs without them.
+   */
+  private async runLookup(rawSql: string, refId: string, range?: TimeRange, bounded = true): Promise<DataFrame> {
+    const run = async (sql: string) => {
+      const response = await firstValueFrom(
+        this.query({
+          targets: [{ rawSql: sql, format: 1, refId }],
+          range: range || (getTemplateSrv() as any).timeRange,
+        } as DataQueryRequest<CHQuery>)
+      );
+      const error = response.errors?.[0];
+      if (error) {
+        throw new Error(error.message || 'Query failed');
+      }
+      return response.data[0] || { fields: [], length: 0 };
+    };
+    const settings = bounded && !/^\s*SHOW\b/i.test(rawSql) ? await this.getLookupSettings() : '';
+    if (!settings) {
+      return run(rawSql);
+    }
+    try {
+      return await run(rawSql + settings);
+    } catch (err) {
+      if (isSettingsError(err)) {
+        return run(rawSql);
+      }
+      throw err;
+    }
   }
 
   /** The values of a metadata query's column, by name. */
@@ -1595,9 +1678,9 @@ export class Datasource
    * feeds the field filters of the logs and traces editors, so the conditions normally hold the time
    * range macros and the other filters of the query (a facet).
    *
-   * Counting is bounded so a facet never costs more than the query it refines: past
-   * FACET_MAX_ROWS rows or FACET_MAX_SECONDS seconds ClickHouse stops reading and the counts are a
-   * sample. A user whose profile forbids changing settings (readonly=1) gets the unbounded query.
+   * Counting is bounded (see getLookupSettings): past the row or time limit ClickHouse stops
+   * reading and the counts are a sample. A user whose profile forbids changing settings (readonly=1)
+   * gets the unbounded query.
    */
   async fetchFieldValueCounts(
     database: string,
@@ -1616,31 +1699,10 @@ export class Datasource
     ]
       .filter(Boolean)
       .join(' ');
-    const bounded = `${base} SETTINGS max_rows_to_read = ${FACET_MAX_ROWS}, read_overflow_mode = 'break', max_execution_time = ${FACET_MAX_SECONDS}, timeout_overflow_mode = 'break'`;
-    const run = async (rawSql: string) => {
-      const response = await firstValueFrom(
-        this.query({
-          targets: [{ rawSql, format: 1, refId: 'field-values' }],
-          range: range || (getTemplateSrv() as any).timeRange,
-        } as DataQueryRequest<CHQuery>)
-      );
-      const error = response.errors?.[0];
-      if (error) {
-        throw new Error(error.message || 'Query failed');
-      }
-      const frame: DataFrame = response.data[0] || { fields: [], length: 0 };
-      const values = frame.fields.find((f) => f.name === 'value')?.values ?? [];
-      const counts = frame.fields.find((f) => f.name === 'count')?.values ?? [];
-      return values.map((value, i) => ({ value: String(value ?? ''), count: Number(counts[i] ?? 0) }));
-    };
-    try {
-      return await run(bounded);
-    } catch (err) {
-      if (err instanceof Error && /readonly|Cannot modify|setting/i.test(err.message)) {
-        return run(base);
-      }
-      throw err;
-    }
+    const frame = await this.runLookup(base, 'field-values', range);
+    const values = frame.fields.find((f) => f.name === 'value')?.values ?? [];
+    const counts = frame.fields.find((f) => f.name === 'count')?.values ?? [];
+    return values.map((value, k) => ({ value: String(value ?? ''), count: Number(counts[k] ?? 0) }));
   }
 
   async fetchEntities() {
