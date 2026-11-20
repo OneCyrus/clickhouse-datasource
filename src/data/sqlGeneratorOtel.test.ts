@@ -269,3 +269,61 @@ describe('trace search in trace scope', () => {
     expect(sql).not.toContain('as status');
   });
 });
+
+describe('OTel logs, newest first', () => {
+  const otelLogs = (overrides: Partial<QueryBuilderOptions> = {}) =>
+    logsOptions({
+      columns: [
+        { name: 'Timestamp', hint: ColumnHint.Time },
+        { name: 'Body', hint: ColumnHint.LogMessage },
+        { name: 'SeverityText', hint: ColumnHint.LogLevel },
+        { name: 'LogAttributes', hint: ColumnHint.LogAttributes },
+      ],
+      filters: [
+        {
+          filterType: 'custom',
+          key: '',
+          hint: ColumnHint.Time,
+          type: 'datetime',
+          condition: 'AND',
+          operator: FilterOperator.WithInGrafanaTimeRange,
+        } as Filter,
+      ],
+      orderBy: [{ name: '', hint: ColumnHint.Time, dir: OrderByDirection.DESC }],
+      limit: 1000,
+      meta: { otelEnabled: true },
+      ...overrides,
+    });
+
+  it('finds the newest timestamps first and reads whole lines only from the oldest of them on', () => {
+    expect(generateSql(otelLogs())).toBe(
+      'WITH __gf_newest AS (SELECT Timestamp as "timestamp" FROM "otel"."otel_logs" ' +
+        'WHERE ( timestamp >= $__fromTime AND timestamp <= $__toTime ) ORDER BY timestamp DESC LIMIT 1000) ' +
+        'SELECT Timestamp as "timestamp", Body as "body", SeverityText as "level", LogAttributes FROM "otel"."otel_logs" ' +
+        'WHERE ( timestamp >= $__fromTime AND timestamp <= $__toTime ) AND "Timestamp" >= (SELECT min(timestamp) FROM __gf_newest) ' +
+        'ORDER BY timestamp DESC LIMIT 1000'
+    );
+  });
+
+  it('selects the aliases the filters read in the first step', () => {
+    const level: Filter = {
+      filterType: 'custom',
+      key: '',
+      hint: ColumnHint.LogLevel,
+      type: 'string',
+      condition: 'AND',
+      operator: FilterOperator.Equals,
+      value: 'error',
+    };
+    const sql = generateSql(otelLogs({ filters: [...otelLogs().filters!, level] }));
+    expect(sql).toContain('WITH __gf_newest AS (SELECT Timestamp as "timestamp", SeverityText as "level" FROM');
+  });
+
+  it('keeps the plain query for another order, without a limit, or outside OTel', () => {
+    expect(generateSql(otelLogs({ orderBy: [{ name: 'SeverityText', dir: OrderByDirection.ASC }] }))).not.toContain(
+      '__gf_newest'
+    );
+    expect(generateSql(otelLogs({ limit: 0 }))).not.toContain('__gf_newest');
+    expect(generateSql(otelLogs({ meta: {} }))).not.toContain('__gf_newest');
+  });
+});

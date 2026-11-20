@@ -556,27 +556,65 @@ const generateLogsQuery = (_options: QueryBuilderOptions): string => {
     return '';
   }
 
+  const whereConditions = getWhereConditions(options);
+  const hintsToGroup = new Set([ColumnHint.FilterTime, ColumnHint.Time]);
+  const orderBy = getOrderBy(options, hintsToGroup);
+  const limitClause = getLimit(options.limit);
+
+  // Newest lines first: find the newest LIMIT timestamps reading only the time and filter columns,
+  // then read whole lines (message and attribute maps, the wide columns) only from the oldest of
+  // them on. Otherwise ClickHouse reads the wide columns of every line in the range to keep the
+  // newest ones, unless it can read in sort key order and materialize lazily (recent versions on
+  // the current exporter schema). Ties at that oldest timestamp are read too; the outer ORDER BY
+  // and LIMIT keep the same lines.
+  // OTel logs carry the wide attribute maps; other logs queries keep their SQL as it was.
+  const newestFirst =
+    Boolean(options.meta?.otelEnabled) &&
+    logTime !== undefined &&
+    limitClause !== '' &&
+    (options.orderBy || []).length > 0 &&
+    (options.orderBy || []).every(
+      (o) => (o.hint === ColumnHint.Time || o.hint === ColumnHint.FilterTime) && o.dir === OrderByDirection.DESC
+    );
+  if (newestFirst) {
+    // Filters on the message, level or trace ID roles read their select alias.
+    const aliased = [logMessage, logLevel, traceId].filter(
+      (c): c is SelectedColumn => c !== undefined && new RegExp(`\\b${c.alias}\\b`).test(whereConditions)
+    );
+    const topParts = [getColumnIdentifier(logTime), ...aliased.map(getColumnIdentifier)];
+    const top = concatQueryParts([
+      'SELECT',
+      topParts.join(', '),
+      'FROM',
+      getTableIdentifier(database, table),
+      whereConditions ? `WHERE ${whereConditions}` : '',
+      `ORDER BY ${orderBy}`,
+      limitClause,
+    ]);
+    queryParts.push(`WITH __gf_newest AS (${top})`);
+  }
+
   queryParts.push('SELECT');
   queryParts.push(selectPartsSql);
   queryParts.push('FROM');
   queryParts.push(getTableIdentifier(database, table));
 
-  const whereConditions = getWhereConditions(options);
-  if (whereConditions) {
+  const timeBound = newestFirst
+    ? `${escapeIdentifier(logTime!.name)} >= (SELECT min(${logTime!.alias}) FROM __gf_newest)`
+    : '';
+  const conditions = [whereConditions, timeBound].filter(Boolean).join(' AND ');
+  if (conditions) {
     queryParts.push('WHERE');
-    queryParts.push(whereConditions);
+    queryParts.push(conditions);
   }
 
-  const hintsToGroup = new Set([ColumnHint.FilterTime, ColumnHint.Time]);
-  const orderBy = getOrderBy(options, hintsToGroup);
   if (orderBy) {
     queryParts.push('ORDER BY');
     queryParts.push(orderBy);
   }
 
-  const limit = getLimit(options.limit);
-  if (limit !== '') {
-    queryParts.push(limit);
+  if (limitClause !== '') {
+    queryParts.push(limitClause);
   }
 
   return concatQueryParts(queryParts);
